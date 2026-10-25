@@ -29,13 +29,15 @@
 
 ## GitHub and release
 
-- **Repository:** local folder only; no Git repository found.
-- **Branch / PR:** none.
+- **Repository:** local Git repository initialized; no remote exists or matching GitHub repository was found in the authenticated account. Waiting for the user to choose a destination or authorize creation of a new repository and its visibility.
+- **Branch / PR:** `main`; no PR.
 - **Commit convention:** Conventional Commits
 - **CI:** none.
-- **Release method:** undecided.
-- **Latest release:** none.
-- **Release verification:** none.
+- **Local commit:** `feb7f86 chore: prepare MacShot v0.4.0 release`.
+- **Release method:** GitHub Release planned after the destination repository is selected.
+- **Prepared asset:** `output/release/MacShot-v0.4.0-windows-x64.zip` with SHA-256 sidecar; contains the Windows x64 executable and README. Cross-build and ZIP contents verified, but Windows runtime remains unverified.
+- **Latest release:** none; no remote publication performed.
+- **Release verification:** package metadata and checksum verified locally; upload and Windows download/run await repository selection.
 
 ## Deployment decision
 
