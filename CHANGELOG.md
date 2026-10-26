@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 — 2026-10-26
+
+- Use opaque Windows windows for the main app and range selector to avoid transparent-window rendering and input issues. macOS transparency remains enabled.
+
 ## 0.4.1 — 2026-10-26
 
 - Added a tray-menu command to reopen the main window on macOS and Windows.

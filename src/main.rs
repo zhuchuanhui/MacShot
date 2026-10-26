@@ -2401,7 +2401,7 @@ impl MacShot {
             .with_min_inner_size(self.region_overlay_size)
             .with_max_inner_size(self.region_overlay_size)
             .with_decorations(false)
-            .with_transparent(true)
+            .with_transparent(cfg!(target_os = "macos"))
             .with_always_on_top()
             .with_mouse_passthrough(false)
             .with_resizable(false);
@@ -3995,7 +3995,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 640.0])
-            .with_transparent(true)
+            .with_transparent(cfg!(target_os = "macos"))
             .with_icon(application_icon()),
         ..Default::default()
     };
