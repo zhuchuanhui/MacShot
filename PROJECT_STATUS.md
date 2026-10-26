@@ -297,3 +297,8 @@ deployment:
 - The MacShot window is visible again and its status reports that continuous capture ended. Restored the filename prefix to `evidence` in the UI and confirmed saved preferences; timestamp and completion notice remain on, annotation color/width remain red/3, and capture target remains active-window.
 - The two CUA-injected Option+Shift+S presses produced one 780×146 PNG (`qa-continuous-20261026-084824-930-003.png`) of the then-active Codex window. Removed this exact QA artifact; the evidence folder returned to its original 14 files. This verifies that at least one system-wide shortcut reached capture, but does not prove physical repeated-key queue order.
 - Public v0.4.0 Release assets are available and the anonymous ZIP download matched the published SHA-256. No Windows device has downloaded/launched it yet according to the observed release asset count at this check.
+
+## Continuous-capture queue retest — 2026-10-26
+
+- Prepared a temporary test with the Calculator target and `qa-sequence` filename prefix, then started continuous capture. Two CUA `Option+Shift+S` inputs produced no file after 2.5 seconds; CUA input is not a reliable substitute for physical global-hotkey input, so the queue remains unverified.
+- Restored the saved preferences file to `capture_target=active` and `filename_prefix=evidence`. The running MacShot process remains hidden in continuous mode and may still hold its temporary in-memory target/prefix until the user ends the mode; no `qa-sequence-*` output was created. The user was told to end continuous capture from the status-menu item before further testing.
