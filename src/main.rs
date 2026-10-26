@@ -74,6 +74,12 @@ struct MacShot {
     region_drag_current: Option<egui::Pos2>,
     region_overlay_position: egui::Pos2,
     region_overlay_size: egui::Vec2,
+    #[cfg(target_os = "windows")]
+    region_snapshot_tx: Sender<Result<image::RgbaImage, String>>,
+    #[cfg(target_os = "windows")]
+    region_snapshot_rx: Receiver<Result<image::RgbaImage, String>>,
+    #[cfg(target_os = "windows")]
+    region_background_texture: Option<egui::TextureHandle>,
     save_folder: Option<PathBuf>,
     evidence_files: Vec<PathBuf>,
     timestamp_enabled: bool,
@@ -94,14 +100,19 @@ struct MacShot {
     hotkey_tx: Sender<GlobalHotKeyEvent>,
     hotkey_initialized: bool,
     _tray_icon: Option<TrayIcon>,
+    tray_capture_status_item: Option<MenuItem>,
     tray_recording_status_item: Option<MenuItem>,
     tray_recording_state: Option<bool>,
     tray_recording_seconds: Option<u64>,
+    tray_capture_status_state: Option<(bool, bool, bool, u64, u64)>,
     tray_initialized: bool,
     tray_action_rx: Receiver<TrayAction>,
     tray_action_tx: Sender<TrayAction>,
     capture_sequence: u64,
     last_capture_sequence: u64,
+    continuous_capture_saved_count: u64,
+    continuous_capture_failed_count: u64,
+    continuous_capture_session_active: bool,
     recording_sequence: u64,
     capture_notice: Option<CaptureNotice>,
     recording_rx: Receiver<RecordingEvent>,
@@ -142,6 +153,28 @@ enum CaptureTarget {
     AllDisplays,
     Display(usize),
     Window(u32),
+}
+
+fn capture_target_preflight_error(
+    target: CaptureTarget,
+    recording: bool,
+    recording_starting: bool,
+    monitor_count: usize,
+    windows: &[WindowChoice],
+) -> Option<&'static str> {
+    if recording || recording_starting {
+        Some("録画を終了してからスクリーンショットを撮影してください。")
+    } else {
+        match target {
+            CaptureTarget::Display(index) if index >= monitor_count => {
+                Some("撮影できる画面が見つかりません。画面収録の許可を確認してください。")
+            }
+            CaptureTarget::Window(id) if !windows.iter().any(|window| window.id == id) => {
+                Some("撮影対象のウィンドウが見つかりません。ウィンドウ一覧を更新してください。")
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -188,6 +221,7 @@ type CaptureResult = Result<(PathBuf, image::RgbaImage, String, u64), String>;
 
 #[derive(Clone, Copy)]
 enum TrayAction {
+    ShowWindow,
     Capture,
     CaptureActiveWindow,
     CaptureAllDisplays,
@@ -209,6 +243,54 @@ const DEFAULT_RECORDING_HOTKEY: &str = "Alt+Shift+KeyR";
 fn recording_time_label(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn continuous_capture_status_label(
+    mode_active: bool,
+    session_active: bool,
+    capture_in_progress: bool,
+    saved_count: u64,
+    failed_count: u64,
+) -> String {
+    if mode_active && capture_in_progress {
+        format!("連続撮影中 — 撮影中・保存{saved_count}枚・失敗{failed_count}件")
+    } else if mode_active && failed_count > 0 {
+        format!("連続撮影中 — 保存{saved_count}枚・失敗{failed_count}件")
+    } else if mode_active && saved_count > 0 {
+        format!("連続撮影中 — {saved_count}枚保存済み")
+    } else if mode_active {
+        "連続撮影中 — 保存待ち".into()
+    } else if session_active {
+        format!("撮影終了待ち — 保存{saved_count}枚・失敗{failed_count}件")
+    } else if saved_count > 0 {
+        format!("前回の連続撮影 — {saved_count}枚保存・失敗{failed_count}件")
+    } else if failed_count > 0 {
+        format!("前回の連続撮影 — 保存0枚・失敗{failed_count}件")
+    } else {
+        "連続撮影 — 停止中".into()
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn continuous_capture_title(
+    mode_active: bool,
+    capture_in_progress: bool,
+    saved_count: u64,
+    failed_count: u64,
+) -> Option<String> {
+    if !mode_active {
+        None
+    } else if capture_in_progress {
+        Some("撮影中".into())
+    } else if saved_count > 0 && failed_count > 0 {
+        Some(format!("✓{saved_count}!{failed_count}"))
+    } else if saved_count > 0 {
+        Some(format!("✓{saved_count}"))
+    } else if failed_count > 0 {
+        Some(format!("!{failed_count}"))
+    } else {
+        Some("連続".into())
+    }
 }
 
 fn make_tray_icon(recording: bool) -> Icon {
@@ -305,6 +387,8 @@ impl Default for MacShot {
             status = "画面収録の許可を設定してください。撮影画面の案内から要求できます。".into();
         }
         let (capture_tx, capture_rx) = mpsc::channel();
+        #[cfg(target_os = "windows")]
+        let (region_snapshot_tx, region_snapshot_rx) = mpsc::channel();
         let (hotkey_tx, hotkey_rx) = mpsc::channel();
         let (tray_action_tx, tray_action_rx) = mpsc::channel();
         let (recording_tx, recording_rx) = mpsc::channel();
@@ -356,6 +440,12 @@ impl Default for MacShot {
             region_drag_current: None,
             region_overlay_position: egui::Pos2::ZERO,
             region_overlay_size: egui::Vec2::ZERO,
+            #[cfg(target_os = "windows")]
+            region_snapshot_tx,
+            #[cfg(target_os = "windows")]
+            region_snapshot_rx,
+            #[cfg(target_os = "windows")]
+            region_background_texture: None,
             save_folder,
             evidence_files: Vec::new(),
             timestamp_enabled,
@@ -376,14 +466,19 @@ impl Default for MacShot {
             hotkey_tx,
             hotkey_initialized: false,
             _tray_icon: None,
+            tray_capture_status_item: None,
             tray_recording_status_item: None,
             tray_recording_state: None,
             tray_recording_seconds: None,
+            tray_capture_status_state: None,
             tray_initialized: false,
             tray_action_rx,
             tray_action_tx,
             capture_sequence: 0,
             last_capture_sequence: 0,
+            continuous_capture_saved_count: 0,
+            continuous_capture_failed_count: 0,
+            continuous_capture_session_active: false,
             recording_sequence: 0,
             capture_notice: None,
             recording_rx,
@@ -1652,6 +1747,8 @@ impl MacShot {
             return;
         }
         self.tray_initialized = true;
+        let show_window_item =
+            MenuItem::with_id("macshot.window.show", "MacShotを開く", true, None);
         let capture_area_item =
             MenuItem::with_id("macshot.capture.area", "範囲を選択して撮影…", true, None);
         let capture_active_item = MenuItem::with_id(
@@ -1680,6 +1777,8 @@ impl MacShot {
             None,
         );
         let capture_submenu = Submenu::new("スクリーンショット", true);
+        let capture_status_item =
+            MenuItem::with_id("macshot.capture.status", "連続撮影 — 停止中", false, None);
         let recording_status_item =
             MenuItem::with_id("macshot.recording.status", "録画時間 00:00", false, None);
         let recording_item = MenuItem::with_id("macshot.record", "録画開始／停止", true, None);
@@ -1696,7 +1795,9 @@ impl MacShot {
             return;
         }
         let menu = match Menu::with_items(&[
+            &show_window_item,
             &capture_submenu,
+            &capture_status_item,
             &recording_status_item,
             &recording_item,
             &quit_item,
@@ -1711,6 +1812,7 @@ impl MacShot {
         let sender = self.tray_action_tx.clone();
         let recording_stop_tx = Arc::clone(&self.recording_stop_tx);
         let repaint = ctx.clone();
+        let show_window_id = show_window_item.id().0.clone();
         let capture_area_id = capture_area_item.id().0.clone();
         let capture_active_id = capture_active_item.id().0.clone();
         let capture_all_id = capture_all_item.id().0.clone();
@@ -1726,6 +1828,7 @@ impl MacShot {
                 return;
             }
             let action = match event.id.0.as_str() {
+                id if id == show_window_id => Some(TrayAction::ShowWindow),
                 id if id == capture_area_id => Some(TrayAction::CaptureRegion),
                 id if id == capture_active_id => Some(TrayAction::CaptureActiveWindow),
                 id if id == capture_all_id => Some(TrayAction::CaptureAllDisplays),
@@ -1750,6 +1853,7 @@ impl MacShot {
         let builder = builder.with_icon(icon);
         match builder.build() {
             Ok(tray) => {
+                self.tray_capture_status_item = Some(capture_status_item);
                 self.tray_recording_status_item = Some(recording_status_item);
                 self._tray_icon = Some(tray);
                 self.update_tray_recording_status();
@@ -1767,12 +1871,22 @@ impl MacShot {
         } else {
             0
         };
-        if self.tray_recording_state == Some(active) && self.tray_recording_seconds == Some(seconds)
+        let capture_status_state = (
+            self.continuous_capture,
+            self.continuous_capture_session_active,
+            self.capture_in_progress,
+            self.continuous_capture_saved_count,
+            self.continuous_capture_failed_count,
+        );
+        if self.tray_recording_state == Some(active)
+            && self.tray_recording_seconds == Some(seconds)
+            && self.tray_capture_status_state == Some(capture_status_state)
         {
             return;
         }
         self.tray_recording_state = Some(active);
         self.tray_recording_seconds = Some(seconds);
+        self.tray_capture_status_state = Some(capture_status_state);
         let label = if active {
             format!(
                 "録画中 {}",
@@ -1784,29 +1898,58 @@ impl MacShot {
         if let Some(item) = &self.tray_recording_status_item {
             item.set_text(label);
         }
+        if let Some(item) = &self.tray_capture_status_item {
+            item.set_text(continuous_capture_status_label(
+                self.continuous_capture,
+                self.continuous_capture_session_active,
+                self.capture_in_progress,
+                self.continuous_capture_saved_count,
+                self.continuous_capture_failed_count,
+            ));
+        }
         if let Some(tray) = &self._tray_icon {
-            #[cfg(target_os = "macos")]
-            tray.set_title(
-                active.then(|| format!("● {}", recording_time_label(Duration::from_secs(seconds)))),
-            );
             let icon = make_tray_icon(active);
             #[cfg(target_os = "macos")]
-            let result = tray.set_icon_templated(Some(icon));
+            let result = tray.set_icon_templated(if self.continuous_capture {
+                None
+            } else {
+                Some(icon)
+            });
             #[cfg(not(target_os = "macos"))]
             let result = tray.set_icon(Some(icon));
             if let Err(error) = result {
                 self.status = format!("メニューバーアイコンを更新できません: {error}");
             }
+            #[cfg(target_os = "macos")]
+            tray.set_title(if active {
+                Some(format!(
+                    "● {}",
+                    recording_time_label(Duration::from_secs(seconds))
+                ))
+            } else {
+                continuous_capture_title(
+                    self.continuous_capture,
+                    self.capture_in_progress,
+                    self.continuous_capture_saved_count,
+                    self.continuous_capture_failed_count,
+                )
+            });
         }
     }
 
     fn handle_tray_actions(&mut self, ctx: &egui::Context) {
         while let Ok(action) = self.tray_action_rx.try_recv() {
             match action {
+                TrayAction::ShowWindow => {
+                    self.status = "MacShotのウィンドウを表示しました。".into();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
                 TrayAction::Capture => {
                     if self.recording || self.recording_starting {
-                        self.status =
-                            "録画を終了してからスクリーンショットを撮影してください。".into();
+                        self.report_capture_failure(
+                            "録画を終了してからスクリーンショットを撮影してください。",
+                        );
                     } else {
                         self.begin_capture(ctx);
                     }
@@ -2093,9 +2236,36 @@ impl MacShot {
         self.begin_capture_for(ctx, self.capture_target, None);
     }
 
+    fn report_capture_failure(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        if self.continuous_capture_session_active {
+            self.continuous_capture_failed_count =
+                self.continuous_capture_failed_count.saturating_add(1);
+            self.update_tray_recording_status();
+        }
+    }
+
+    fn advance_capture_queue(&mut self, ctx: &egui::Context) {
+        while let Some(next_target) = self.capture_queue.pop_front() {
+            self.begin_capture_for(ctx, next_target, None);
+            if self.capture_in_progress {
+                return;
+            }
+        }
+        if !self.continuous_capture {
+            self.continuous_capture_session_active = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        self.update_tray_recording_status();
+    }
+
     fn toggle_continuous_capture(&mut self, ctx: &egui::Context) {
         self.continuous_capture = !self.continuous_capture;
         if self.continuous_capture {
+            self.continuous_capture_saved_count = 0;
+            self.continuous_capture_failed_count = 0;
+            self.continuous_capture_session_active = true;
             self.status = format!(
                 "連続撮影中です。{} を押すたびに順番に保存します。メニューバーから終了できます。",
                 self.capture_hotkey_text
@@ -2105,21 +2275,23 @@ impl MacShot {
         } else {
             self.status = "連続撮影を終了しました。".into();
             if !self.capture_in_progress && self.capture_queue.is_empty() {
+                self.continuous_capture_session_active = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
+        self.update_tray_recording_status();
     }
 
     fn begin_region_selection(&mut self, ctx: &egui::Context) {
         if self.recording || self.recording_starting || self.capture_in_progress {
-            self.status = "録画または撮影が終わってから範囲撮影を開始してください。".into();
+            self.report_capture_failure("録画または撮影が終わってから範囲撮影を開始してください。");
             return;
         }
         let monitors = match Monitor::all() {
             Ok(monitors) => monitors,
             Err(error) => {
-                self.status = format!("画面を確認できません: {error}");
+                self.report_capture_failure(format!("画面を確認できません: {error}"));
                 return;
             }
         };
@@ -2128,15 +2300,15 @@ impl MacShot {
             .find(|monitor| monitor.is_primary().unwrap_or(false))
             .or_else(|| monitors.first())
         else {
-            self.status = "撮影できる画面が見つかりません。".into();
+            self.report_capture_failure("撮影できる画面が見つかりません。");
             return;
         };
         let Ok(width) = monitor.width() else {
-            self.status = "画面サイズを確認できません。".into();
+            self.report_capture_failure("画面サイズを確認できません。");
             return;
         };
         let Ok(height) = monitor.height() else {
-            self.status = "画面サイズを確認できません。".into();
+            self.report_capture_failure("画面サイズを確認できません。");
             return;
         };
         #[cfg(target_os = "macos")]
@@ -2169,10 +2341,55 @@ impl MacShot {
         self.region_overlay_size = egui::vec2(overlay_width, overlay_height);
         self.region_drag_start = None;
         self.region_drag_current = None;
-        self.region_selecting = true;
         self.status = "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。".into();
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        ctx.request_repaint();
+        #[cfg(target_os = "windows")]
+        {
+            self.region_background_texture = None;
+            let sender = self.region_snapshot_tx.clone();
+            let repaint = ctx.clone();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            thread::spawn(move || {
+                // Capture the desktop after the main window has been hidden. Windows may
+                // composite a transparent child viewport as black, so use this image as
+                // the selector's opaque background instead of relying on transparency.
+                thread::sleep(Duration::from_millis(350));
+                let result = capture_target_image(CaptureTarget::PrimaryDisplay);
+                let _ = sender.send(result);
+                repaint.request_repaint();
+            });
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.region_selecting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.request_repaint();
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn handle_region_snapshot(&mut self, ctx: &egui::Context) {
+        while let Ok(result) = self.region_snapshot_rx.try_recv() {
+            match result {
+                Ok(image) => {
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [image.width() as usize, image.height() as usize],
+                        image.as_raw(),
+                    );
+                    self.region_background_texture = Some(ctx.load_texture(
+                        "macshot-region-background",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                    self.region_selecting = true;
+                }
+                Err(error) => {
+                    self.status = format!("範囲選択の背景を撮影できません: {error}");
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+            }
+            ctx.request_repaint();
+        }
     }
 
     fn show_region_overlay(&mut self, ctx: &egui::Context) {
@@ -2220,6 +2437,15 @@ impl MacShot {
                         self.region_drag_current = pointer.or(self.region_drag_current);
                     }
                     let painter = ui.painter();
+                    #[cfg(target_os = "windows")]
+                    if let Some(texture) = &self.region_background_texture {
+                        painter.image(
+                            texture.id(),
+                            screen,
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
                     let selection = self
                         .region_drag_start
                         .zip(self.region_drag_current)
@@ -2320,6 +2546,10 @@ impl MacShot {
         });
         if let Some(selection) = action {
             self.region_selecting = false;
+            #[cfg(target_os = "windows")]
+            {
+                self.region_background_texture = None;
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             if let Some(bounds) = selection {
@@ -2347,23 +2577,15 @@ impl MacShot {
             );
             return;
         }
-        if self.recording || self.recording_starting {
-            self.status = "録画を終了してからスクリーンショットを撮影してください。".into();
+        if let Some(message) = capture_target_preflight_error(
+            target,
+            self.recording,
+            self.recording_starting,
+            self.monitors.len(),
+            &self.windows,
+        ) {
+            self.report_capture_failure(message);
             return;
-        }
-        match target {
-            CaptureTarget::Display(index) if index >= self.monitors.len() => {
-                self.status =
-                    "撮影できる画面が見つかりません。画面収録の許可を確認してください。".into();
-                return;
-            }
-            CaptureTarget::Window(id) if !self.windows.iter().any(|window| window.id == id) => {
-                self.status =
-                    "撮影対象のウィンドウが見つかりません。ウィンドウ一覧を更新してください。"
-                        .into();
-                return;
-            }
-            _ => {}
         }
 
         self.capture_sequence += 1;
@@ -2380,6 +2602,7 @@ impl MacShot {
         self.capture_in_progress = true;
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.update_tray_recording_status();
 
         thread::spawn(move || {
             // Give the window manager time to reveal the previously active application.
@@ -2413,6 +2636,10 @@ impl MacShot {
             match result {
                 Ok((path, image, timestamp, sequence)) => {
                     self.status = format!("撮影 {} 枚目を保存しました ({timestamp})", sequence);
+                    if self.continuous_capture_session_active {
+                        self.continuous_capture_saved_count =
+                            self.continuous_capture_saved_count.saturating_add(1);
+                    }
                     if self.show_capture_notice && !self.continuous_capture {
                         self.capture_notice = Some(CaptureNotice {
                             sequence,
@@ -2436,14 +2663,13 @@ impl MacShot {
                 }
                 Err(error) => {
                     self.status = capture_failure_message(&error);
+                    if self.continuous_capture_session_active {
+                        self.continuous_capture_failed_count =
+                            self.continuous_capture_failed_count.saturating_add(1);
+                    }
                 }
             }
-            if let Some(next_target) = self.capture_queue.pop_front() {
-                self.begin_capture_for(ctx, next_target, None);
-            } else if !self.continuous_capture {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            }
+            self.advance_capture_queue(ctx);
         }
     }
 
@@ -3631,6 +3857,8 @@ impl eframe::App for MacShot {
         self.handle_hotkey_requests(ctx);
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
+        #[cfg(target_os = "windows")]
+        self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);
         self.update_tray_recording_status();
         if self.recording || self.recording_starting {
@@ -3837,6 +4065,67 @@ mod tests {
         assert_eq!(recording_time_label(Duration::from_secs(9)), "00:09");
         assert_eq!(recording_time_label(Duration::from_secs(61)), "01:01");
         assert_eq!(recording_time_label(Duration::from_secs(3_600)), "60:00");
+    }
+
+    #[test]
+    fn continuous_capture_status_shows_saved_count_and_completion() {
+        assert_eq!(
+            continuous_capture_status_label(true, true, false, 0, 0),
+            "連続撮影中 — 保存待ち"
+        );
+        assert_eq!(
+            continuous_capture_status_label(true, true, true, 1, 0),
+            "連続撮影中 — 撮影中・保存1枚・失敗0件"
+        );
+        assert_eq!(
+            continuous_capture_status_label(true, true, false, 2, 0),
+            "連続撮影中 — 2枚保存済み"
+        );
+        assert_eq!(
+            continuous_capture_status_label(true, true, false, 1, 2),
+            "連続撮影中 — 保存1枚・失敗2件"
+        );
+        assert_eq!(
+            continuous_capture_status_label(false, true, true, 2, 1),
+            "撮影終了待ち — 保存2枚・失敗1件"
+        );
+        assert_eq!(
+            continuous_capture_status_label(false, false, false, 2, 1),
+            "前回の連続撮影 — 2枚保存・失敗1件"
+        );
+        assert_eq!(
+            continuous_capture_status_label(false, false, false, 0, 0),
+            "連続撮影 — 停止中"
+        );
+        assert_eq!(
+            continuous_capture_status_label(false, false, false, 0, 1),
+            "前回の連続撮影 — 保存0枚・失敗1件"
+        );
+    }
+
+    #[test]
+    fn continuous_capture_menu_bar_title_confirms_each_saved_image() {
+        assert_eq!(continuous_capture_title(false, false, 0, 0), None);
+        assert_eq!(
+            continuous_capture_title(true, false, 0, 0),
+            Some("連続".into())
+        );
+        assert_eq!(
+            continuous_capture_title(true, true, 0, 0),
+            Some("撮影中".into())
+        );
+        assert_eq!(
+            continuous_capture_title(true, false, 3, 0),
+            Some("✓3".into())
+        );
+        assert_eq!(
+            continuous_capture_title(true, false, 0, 1),
+            Some("!1".into())
+        );
+        assert_eq!(
+            continuous_capture_title(true, false, 3, 1),
+            Some("✓3!1".into())
+        );
     }
 
     #[test]
@@ -4128,6 +4417,30 @@ mod tests {
         assert_eq!(
             capture_failure_message("ScreenCaptureKit: TCCを拒否しました。"),
             "macOSから画面収録を拒否されました。「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」でMacShotを許可してください。一覧にない場合は「＋」からMacShot.appを追加してオンにし、MacShotを再起動します。既にオンの場合は一度オフ→オンしてから再起動してください。"
+        );
+    }
+
+    #[test]
+    fn continuous_capture_preflight_rejects_stale_targets_and_recording() {
+        let windows = [WindowChoice {
+            id: 9,
+            title: "Calculator".into(),
+        }];
+        assert_eq!(
+            capture_target_preflight_error(CaptureTarget::Display(2), false, false, 2, &windows),
+            Some("撮影できる画面が見つかりません。画面収録の許可を確認してください。")
+        );
+        assert_eq!(
+            capture_target_preflight_error(CaptureTarget::Window(10), false, false, 2, &windows),
+            Some("撮影対象のウィンドウが見つかりません。ウィンドウ一覧を更新してください。")
+        );
+        assert_eq!(
+            capture_target_preflight_error(CaptureTarget::ActiveWindow, true, false, 2, &windows),
+            Some("録画を終了してからスクリーンショットを撮影してください。")
+        );
+        assert_eq!(
+            capture_target_preflight_error(CaptureTarget::Window(9), false, false, 2, &windows),
+            None
         );
     }
 
