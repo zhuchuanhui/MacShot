@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.7 — 2026-10-27
+
+- Move the GIF / MP4 recordings list above the long image list and label the Evidence page as images and recordings so saved videos are easier to find.
+- Prevent screenshots, edits, GIFs, and MP4s from overwriting an existing file when generated names collide; add a `-copy-N` suffix and keep edited images grouped with their source.
+- Keep GIF and MP4 first-frame previews readable at the bottom of the recordings list, automatically scroll them into view when selected, and preserve their aspect ratio up to 720×405.
+- Add a live permission panel for macOS screen/system-audio and microphone access, with direct settings links and refresh; microphone access can be requested from the panel.
+- Add a Finder reveal action so users can locate MacShot.app while adding it to macOS Screen & System Audio Recording settings.
+- Add Windows microphone-device status and a shortcut to Windows microphone privacy settings.
+- Restore the macOS main window and reject late results when screen capture exceeds the 15-second timeout; count timed-out continuous captures as failures and clear already-stopped sessions from the menu-bar status.
+- Add a macOS bundle check to detect missing microphone or screen-capture usage descriptions and invalid signatures before distribution.
+- Explain how to enable microphone access when MP4 recording fails because macOS denied the microphone.
+- Exclude the macOS "Software Cursor" overlay from captureable windows so active-window capture does not save a blank cursor-only image.
+- Keep MP4 video and system-audio recording available when microphone access is not authorized; show a clear system-audio-only status and never request microphone access during recording.
+- Keep the microphone warning in the recording-complete notification so users know when an MP4 contains system audio without microphone audio.
+- Show the result of the macOS microphone-permission request in the app, and clarify that MP4 continues with system audio only when microphone access is unavailable.
+- Distinguish undecided and denied microphone states, label the undecided result accurately, and match the available action to the detected state.
+
 ## 0.4.6 — 2026-10-26
 
 - Add a persistent GIF / MP4 (H.264) recording-format choice for macOS and Windows.

@@ -1,12 +1,12 @@
-# MacShot 0.4.6
+# MacShot 0.4.7
 
 画面エビデンスの撮影・編集・画像比較ツールです。明るい背景に半透明の白いカード、柔らかな光彩、丸みのある操作部品を重ねたガラス調UIです。撮影対象は範囲選択、アクティブウィンドウ、メイン画面、全画面、個別画面、または一覧から選んだウィンドウです。範囲選択は画面上でドラッグし、選択範囲の外側だけを暗く表示します。選択箇所は明るいまま、枠とサイズを表示します。macOSではメニューバーからDockまで選択できます。撮影と録画のグローバルショートカットは設定画面から変更できます。連続撮影を開始するとMacShotを隠し、設定した撮影ショートカットを押すたびに画像を順番に保存します。macOSでは連続撮影中にカメラアイコンを状態表示に切り替え、「撮影中」「✓3」「!1」のように進行状況や保存枚数、失敗件数を表示します。通知領域メニュー（Windows）またはメニューバーのメニュー（macOS）にも、現在または前回の連続撮影で保存した枚数と失敗件数が表示されます。本体を表示するにはメニューの「MacShotを開く」、連続撮影を終了するには「連続撮影モードを開始／終了」を選びます。保存待ちの撮影が終わるとウィンドウが戻ります。撮影画像は時刻と連番をファイル名・画像内に記録し、通常撮影後は完了ウィンドウを表示します。プレビューでは範囲切り出し、赤枠、矢印を編集してPNG保存できます。編集版は元画像と同じ撮影日時・連番を使うため、編集保存後も証跡一覧の順番を保ちます。2枚のPNG/JPEGは左右、50%重ね合わせ、赤い差分表示で比較できます。メニューバー（Windowsでは通知領域）のスクリーンショットメニューから範囲、アクティブウィンドウ、全画面、設定中の撮影対象、連続撮影の開始／終了を選べます。画面録画は設定からGIFまたはMP4（H.264）を選んで保存できます。MP4は標準（10fps・6Mbps）、高（15fps・12Mbps）、最高（30fps・20Mbps）から画質を選べます。録画対象は選択した画面または対象ウィンドウのある画面です。全画面を選んだ場合はメイン画面を録画します。録画は1画面です。MP4にはシステム音声とマイク音声をAACでまとめて収録します。macOSでは画面収録とマイクの許可が必要です。GIFは音声なしです。証跡一覧の「録画一覧」で保存済みGIF／MP4の一覧、先頭フレーム、再生時間、ファイルサイズを確認できます。録画全体は「ファイルを開く」から標準の再生アプリで再生します。保存先を指定しない場合は `~/Pictures/MacShot` に保存します。
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.4.6-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.6/MacShot-v0.4.6-macos-arm64.zip)
-- Windows x64: [MacShot-v0.4.6-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.6/MacShot-v0.4.6-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.6)
+- macOS Apple Silicon (arm64): [MacShot-v0.4.7-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.7/MacShot-v0.4.7-macos-arm64.zip)
+- Windows x64: [MacShot-v0.4.7-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.7/MacShot-v0.4.7-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.7)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動してください。署名済みですが、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。
@@ -14,6 +14,8 @@ macOS版はZIPを展開して `MacShot.app` をアプリケーションフォル
 Windows版はZIPを展開して `MacShot.exe` を起動してください。MP4録画ではWindowsの既定の再生デバイス音声と既定のマイクを収録します。マイクが入らない場合はWindowsの「設定 > プライバシーとセキュリティ > マイク」でデスクトップアプリのアクセスを許可してください。
 
 ## 対応形式
+
+設定画面の「権限とデバイス」で、画面収録・システム音声とマイクの状態を個別に確認し、状態を更新できます。macOSでは画面収録の設定を直接開けます。「FinderでMacShotを表示」で実行中のアプリの場所を開き、一覧へのドラッグを試せます。ドラッグできない場合は設定画面の「＋」から表示されたMacShot.appを選んでください。マイクは設定画面から許可を要求でき、許可／拒否の結果が画面下に表示されます。許可されていない場合、MP4はマイクへのアクセスを求めず、システム音声のみで録画します。録画中と保存完了の通知に、マイク音声が含まれないことを表示します。許可後はシステム音声とマイクを録音します。Windowsでは既定マイクの検出結果を表示し、マイクのプライバシー設定を開けます。Windowsのデスクトップアプリ権限自体はOS設定で確認してください。
 
 - MacShot独自の画面録画: GIF、MP4（H.264）
 - 撮影済み画像の読み込み・編集・比較: PNG、JPEG
@@ -29,6 +31,12 @@ macOSでは「macOS標準の撮影・録画」から標準スクリーンショ�
 ```sh
 cargo run
 cargo build --release
+```
+
+macOSアプリを配布する前に、権限説明文と署名を検証してください。
+
+```sh
+scripts/verify_macos_bundle.sh output/MacShot.app
 ```
 
 macOS版はmacOS 14以降に対応し、実行ファイルもmacOS 14を最低バージョンとしてビルドします（ScreenCaptureKitの単一画像撮影APIがmacOS 14以降で利用可能なためです）。Windows x64版は `output/Windows/MacShot.exe` にあります。macOSで画面撮影を使うには画面収録の許可が必要です。許可がない場合、撮影画面の「画面収録設定を開く」ボタンから該当するシステム設定を直接開けます。設定でMacShotをオンにした後、MacShotを再起動してください。オンでも許可エラーが続く場合は、一度オフ→オンしてから再起動してください。macOSの仕様上、許可スイッチの操作はユーザーが行います。Windows v0.4.3とv0.4.4では、PNG保存後も本体画面が戻らない問題が実機で報告されました。v0.4.5では撮影時にウィンドウを最小化し、撮影後に復元する方式へ変更しました。実機でご確認ください。

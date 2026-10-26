@@ -1,11 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use ab_glyph::{FontRef, PxScale};
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
 use bytes::Bytes;
 use chrono::Local;
+#[cfg(target_os = "windows")]
+use cpal::traits::HostTrait;
 use eframe::egui;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageEncoder, Rgba};
 use imageproc::{
     drawing::{
         draw_filled_rect_mut, draw_hollow_rect_mut, draw_line_segment_mut, draw_text_mut, text_size,
@@ -16,6 +20,10 @@ use mp4::{
     AacConfig, AudioObjectType, AvcConfig, ChannelConfig, FourCC, Mp4Config, Mp4Sample, Mp4Writer,
     SampleFreqIndex, TrackConfig,
 };
+#[cfg(target_os = "macos")]
+use objc2_06::runtime::Bool as ObjcBool;
+#[cfg(target_os = "macos")]
+use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use openh264::decoder::Decoder as H264Decoder;
 use openh264::{
     OpenH264API,
@@ -28,12 +36,12 @@ use screencapturekit::{
     shareable_content::{SCShareableContent, SCShareableContentInfo, SCWindow},
     stream::{configuration::SCStreamConfiguration, content_filter::SCContentFilter},
 };
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
-#[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::VecDeque,
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
     sync::{
@@ -60,6 +68,15 @@ unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MicrophonePermission {
+    Authorized,
+    NotDetermined,
+    Denied,
+    Restricted,
+}
+
 fn screen_recording_access_granted() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -69,6 +86,105 @@ fn screen_recording_access_granted() -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         true
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission() -> MicrophonePermission {
+    // SAFETY: AVFoundation exposes this process-wide immutable media type constant.
+    let Some(audio_type) = (unsafe { AVMediaTypeAudio }) else {
+        return MicrophonePermission::Restricted;
+    };
+    // SAFETY: AVFoundation documents this class method as a read-only check.
+    let status = unsafe { AVCaptureDevice::authorizationStatusForMediaType(audio_type) };
+    match status {
+        AVAuthorizationStatus::Authorized => MicrophonePermission::Authorized,
+        AVAuthorizationStatus::NotDetermined => MicrophonePermission::NotDetermined,
+        AVAuthorizationStatus::Denied => MicrophonePermission::Denied,
+        AVAuthorizationStatus::Restricted => MicrophonePermission::Restricted,
+        _ => MicrophonePermission::Restricted,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn should_capture_microphone(permission: MicrophonePermission) -> bool {
+    permission == MicrophonePermission::Authorized
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission_action_label(permission: MicrophonePermission) -> Option<&'static str> {
+    match permission {
+        MicrophonePermission::NotDetermined => Some("macOSに許可を確認"),
+        MicrophonePermission::Denied => Some("設定でMacShotを許可"),
+        MicrophonePermission::Authorized | MicrophonePermission::Restricted => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission_result_message(granted: bool) -> &'static str {
+    if granted {
+        "マイクの許可を確認しました。次のMP4録画からマイク音声を含めます。"
+    } else {
+        "マイクの許可は拒否されました。MP4はシステム音声のみで録画します。必要ならマイク設定でMacShotを許可してください。"
+    }
+}
+
+fn append_recording_warning(status: &str, warning: Option<&str>) -> String {
+    warning.map_or_else(
+        || status.to_string(),
+        |warning| format!("{status} — {warning}"),
+    )
+}
+
+fn screen_permission_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        if screen_recording_access_granted() {
+            "許可済み"
+        } else {
+            "未許可、またはmacOSへの反映待ち"
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windowsでは個別の画面収録許可は不要です"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "このOSでは状態を確認できません"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission_label_for(permission: MicrophonePermission) -> String {
+    match permission {
+        MicrophonePermission::Authorized => "許可済み".into(),
+        MicrophonePermission::NotDetermined => "状態未決定（MP4はシステム音声のみ）".into(),
+        MicrophonePermission::Denied => {
+            "拒否されています（MP4はシステム音声のみ）。マイク設定で許可してください".into()
+        }
+        MicrophonePermission::Restricted => "このMacではマイク利用が制限されています".into(),
+    }
+}
+
+fn microphone_permission_label() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        microphone_permission_label_for(microphone_permission())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        match cpal::default_host().default_input_device() {
+            Some(device) => format!(
+                "既定のマイク: {}（Windowsのプライバシー設定も確認）",
+                device
+            ),
+            None => "既定のマイクが見つかりません".into(),
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "このOSでは状態を確認できません".into()
     }
 }
 
@@ -125,6 +241,7 @@ struct MacShot {
     recording_preview_image: Option<DynamicImage>,
     recording_preview_texture: Option<egui::TextureHandle>,
     recording_preview_details: Option<String>,
+    scroll_to_recording_preview: bool,
     timestamp_enabled: bool,
     filename_prefix: String,
     show_capture_notice: bool,
@@ -133,9 +250,7 @@ struct MacShot {
     status: String,
     capture_in_progress: bool,
     active_capture_sequence: Option<u64>,
-    #[cfg(target_os = "windows")]
     capture_deadline: Option<Instant>,
-    #[cfg(target_os = "windows")]
     capture_cancel: Option<Arc<AtomicBool>>,
     capture_tx: Sender<CaptureResult>,
     capture_rx: Receiver<CaptureResult>,
@@ -172,7 +287,10 @@ struct MacShot {
     recording: bool,
     recording_starting: bool,
     recording_started_at: Option<Instant>,
-    recording_notice: Option<(PathBuf, String)>,
+    recording_notice: Option<(PathBuf, String, Option<String>)>,
+    recording_warning: Option<String>,
+    #[cfg(target_os = "macos")]
+    microphone_permission_result: Arc<Mutex<Option<bool>>>,
     record_pending_stop: bool,
     #[cfg(target_os = "windows")]
     quit_after_recording: bool,
@@ -289,7 +407,10 @@ enum TrayAction {
 }
 
 enum RecordingEvent {
-    Started { path: PathBuf },
+    Started {
+        path: PathBuf,
+        microphone_warning: Option<String>,
+    },
     Finished(Result<PathBuf, String>),
 }
 
@@ -610,6 +731,7 @@ impl Default for MacShot {
             recording_preview_image: None,
             recording_preview_texture: None,
             recording_preview_details: None,
+            scroll_to_recording_preview: false,
             timestamp_enabled,
             filename_prefix,
             show_capture_notice,
@@ -618,9 +740,7 @@ impl Default for MacShot {
             status,
             capture_in_progress: false,
             active_capture_sequence: None,
-            #[cfg(target_os = "windows")]
             capture_deadline: None,
-            #[cfg(target_os = "windows")]
             capture_cancel: None,
             capture_tx,
             capture_rx,
@@ -658,6 +778,9 @@ impl Default for MacShot {
             recording_starting: false,
             recording_started_at: None,
             recording_notice: None,
+            recording_warning: None,
+            #[cfg(target_os = "macos")]
+            microphone_permission_result: Arc::new(Mutex::new(None)),
             record_pending_stop: false,
             #[cfg(target_os = "windows")]
             quit_after_recording: false,
@@ -912,6 +1035,24 @@ fn recording_files(folder: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn recording_preview_display_size(
+    image_width: u32,
+    image_height: u32,
+    available_width: f32,
+) -> egui::Vec2 {
+    if image_width == 0 || image_height == 0 {
+        return egui::Vec2::ZERO;
+    }
+
+    const MAX_WIDTH: f32 = 720.0;
+    const MAX_HEIGHT: f32 = 405.0;
+    let max_width = available_width.clamp(1.0, MAX_WIDTH);
+    let scale = (max_width / image_width as f32)
+        .min(MAX_HEIGHT / image_height as f32)
+        .min(1.0);
+    egui::vec2(image_width as f32 * scale, image_height as f32 * scale)
+}
+
 fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
     let extension = path
         .extension()
@@ -1045,7 +1186,7 @@ fn format_file_size(bytes: u64) -> String {
 }
 
 fn parse_evidence_identity(path: &Path) -> Option<(String, u64)> {
-    let stem = path.file_stem()?.to_str()?;
+    let stem = strip_collision_suffix(path.file_stem()?.to_str()?);
     let stem = stem
         .strip_suffix("-crop")
         .or_else(|| stem.strip_suffix("-marked"))
@@ -1088,6 +1229,7 @@ fn evidence_sort_key(path: &Path) -> (String, u64, u8, String) {
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let stem = strip_collision_suffix(stem);
     let edit_order = u8::from(stem.ends_with("-crop") || stem.ends_with("-marked"));
     (
         stamp,
@@ -1157,6 +1299,61 @@ fn new_recording_path_for_format(
     ))
 }
 
+fn strip_collision_suffix(stem: &str) -> &str {
+    stem.rsplit_once("-copy-")
+        .filter(|(_, number)| {
+            !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+        })
+        .map_or(stem, |(base, _)| base)
+}
+
+fn create_unique_file(folder: &Path, preferred: &Path) -> Result<(PathBuf, std::fs::File), String> {
+    let stem = preferred
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "保存ファイル名を作成できません。".to_string())?;
+    let extension = preferred
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+
+    for copy_number in 1..=u32::MAX {
+        let path = if copy_number == 1 {
+            preferred.to_path_buf()
+        } else {
+            folder.join(format!("{stem}-copy-{copy_number}{extension}"))
+        };
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err("同じ名前のファイルが多すぎるため保存できません。".into())
+}
+
+fn save_png_without_overwrite(
+    folder: &Path,
+    preferred: &Path,
+    image: &image::RgbaImage,
+) -> Result<PathBuf, String> {
+    let (path, mut file) = create_unique_file(folder, preferred)?;
+    let result = image::codecs::png::PngEncoder::new(&mut file).write_image(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::Rgba8,
+    );
+    if let Err(error) = result {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        return Err(error.to_string());
+    }
+    Ok(path)
+}
+
 fn gif_delay_centiseconds(elapsed: Duration) -> u16 {
     elapsed.as_millis().div_ceil(10).clamp(1, u16::MAX as u128) as u16
 }
@@ -1209,12 +1406,30 @@ fn capture_failure_message(error: &str) -> String {
     }
 }
 
+fn capture_timeout_message() -> &'static str {
+    "撮影が15秒以内に完了しませんでした。画面収録の許可と他の撮影アプリを確認してください。画面は再表示されています。"
+}
+
 fn recording_failure_message(error: &str) -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(message) = microphone_permission_failure_message(
+        error,
+        microphone_permission() == MicrophonePermission::Denied,
+    ) {
+        return message;
+    }
     if cfg!(target_os = "macos") && error.contains("TCC") && error.contains("拒否") {
         capture_failure_message(error)
     } else {
         format!("録画できませんでした: {error}")
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn microphone_permission_failure_message(error: &str, denied: bool) -> Option<String> {
+    (denied && error.contains("マイク")).then(|| {
+        "マイクの使用が拒否されています。「システム設定 > プライバシーとセキュリティ > マイク」でMacShotを許可し、権限状態を更新してから再試行してください。".into()
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1349,7 +1564,7 @@ fn is_captureable_screen_capture_window(window: &SCWindow) -> bool {
     let Some(title) = window.title() else {
         return false;
     };
-    if title.trim().is_empty() {
+    if !is_captureable_screen_capture_title(&title) {
         return false;
     }
     if window
@@ -1360,6 +1575,12 @@ fn is_captureable_screen_capture_window(window: &SCWindow) -> bool {
     }
     let frame = window.frame();
     frame.size.width >= 120.0 && frame.size.height >= 80.0
+}
+
+#[cfg(target_os = "macos")]
+fn is_captureable_screen_capture_title(title: &str) -> bool {
+    let title = title.trim();
+    !title.is_empty() && !title.eq_ignore_ascii_case("Software Cursor")
 }
 
 #[cfg(target_os = "macos")]
@@ -1959,7 +2180,6 @@ fn record_screen(
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
 ) {
-    let partial_path = new_recording_path_for_format(&folder, &file_timestamp, sequence, format);
     let result = match format {
         RecordingFormat::Gif => record_screen_to_gif(
             target,
@@ -1981,9 +2201,6 @@ fn record_screen(
             ctx.clone(),
         ),
     };
-    if result.is_err() {
-        let _ = std::fs::remove_file(partial_path);
-    }
     let _ = event_tx.send(RecordingEvent::Finished(result));
     ctx.request_repaint();
 }
@@ -2006,11 +2223,15 @@ fn record_screen_to_gif(
     }
     let width = first.width() as u16;
     let height = first.height() as u16;
-    let path =
+    let preferred_path =
         new_recording_path_for_format(&folder, &file_timestamp, sequence, RecordingFormat::Gif);
-    let _ = event_tx.send(RecordingEvent::Started { path: path.clone() });
+    let (path, file) = create_unique_file(&folder, &preferred_path)?;
+    let mut partial_file = PartialRecordingFile::new(path.clone());
+    let _ = event_tx.send(RecordingEvent::Started {
+        path: path.clone(),
+        microphone_warning: None,
+    });
 
-    let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
     let mut encoder =
         gif::Encoder::new(file, width, height, &[]).map_err(|error| error.to_string())?;
     encoder
@@ -2059,6 +2280,7 @@ fn record_screen_to_gif(
         .map_err(|error| error.to_string())?
         .sync_all()
         .map_err(|error| error.to_string())?;
+    partial_file.keep();
     Ok(path)
 }
 
@@ -2165,11 +2387,19 @@ fn record_screen_to_mp4(
     } else {
         first
     };
-    let audio_capture = recording_audio::AudioCaptureSession::start()?;
+    #[cfg(target_os = "macos")]
+    let include_microphone = should_capture_microphone(microphone_permission());
+    #[cfg(target_os = "windows")]
+    let include_microphone = true;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let include_microphone = false;
+    let audio_capture = recording_audio::AudioCaptureSession::start(include_microphone)?;
+    let microphone_warning = audio_capture.microphone_warning().map(str::to_owned);
     let mut audio_mixer = recording_audio::AudioMixer::new();
     let mut aac_encoder = recording_audio::create_aac_encoder()?;
-    let path =
+    let preferred_path =
         new_recording_path_for_format(&folder, &file_timestamp, sequence, RecordingFormat::Mp4);
+    let (path, file) = create_unique_file(&folder, &preferred_path)?;
     let mut partial_file = PartialRecordingFile::new(path.clone());
     let mut h264 = H264Encoder::with_api_config(
         OpenH264API::from_source(),
@@ -2193,7 +2423,6 @@ fn record_screen_to_mp4(
         ],
         timescale: 1000,
     };
-    let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
     let mut writer = Mp4Writer::write_start(file, &config).map_err(|error| error.to_string())?;
     writer
         .add_track(&TrackConfig::from(AvcConfig {
@@ -2213,7 +2442,10 @@ fn record_screen_to_mp4(
     writer
         .add_track(&audio_track)
         .map_err(|error| error.to_string())?;
-    let _ = event_tx.send(RecordingEvent::Started { path: path.clone() });
+    let _ = event_tx.send(RecordingEvent::Started {
+        path: path.clone(),
+        microphone_warning,
+    });
     let mut frame_index = 0u64;
     let frame_interval = quality.frame_interval();
     let frame_duration_ms = quality.frame_duration_ms();
@@ -2724,6 +2956,109 @@ impl MacShot {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn reveal_macshot_app(&mut self) {
+        let app_path = std::env::current_exe().ok().and_then(|executable| {
+            executable
+                .ancestors()
+                .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+                .map(Path::to_path_buf)
+        });
+        let Some(app_path) = app_path else {
+            self.status =
+                "MacShot.appの場所を特定できません。アプリケーション版からお試しください。".into();
+            return;
+        };
+        match Command::new("open").arg("-R").arg(&app_path).status() {
+            Ok(status) if status.success() => {
+                self.status = format!("FinderでMacShot.appを表示しました: {}", app_path.display());
+            }
+            Ok(status) => self.status = format!("Finderでアプリを表示できませんでした ({status})"),
+            Err(error) => self.status = format!("Finderでアプリを表示できません: {error}"),
+        }
+    }
+
+    fn open_microphone_settings(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let settings_url = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone";
+            match Command::new("open").arg(settings_url).status() {
+                Ok(status) if status.success() => {
+                    self.status =
+                        "マイク設定を開きました。変更後に「権限状態を更新」を押してください。"
+                            .into();
+                }
+                Ok(status) => self.status = format!("マイク設定を開けませんでした ({status})"),
+                Err(error) => self.status = format!("マイク設定を開けません: {error}"),
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            match Command::new("explorer")
+                .arg("ms-settings:privacy-microphone")
+                .status()
+            {
+                Ok(status) if status.success() => {
+                    self.status = "Windowsのマイク設定を開きました。デスクトップアプリのアクセスを確認してください。".into();
+                }
+                Ok(status) => self.status = format!("マイク設定を開けませんでした ({status})"),
+                Err(error) => self.status = format!("マイク設定を開けません: {error}"),
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            self.status = "マイク設定への移動はこのOSでは利用できません。".into();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn request_microphone_permission(&mut self, ctx: &egui::Context) {
+        match microphone_permission() {
+            MicrophonePermission::Authorized => {
+                self.status = "マイクは既に許可されています。".into();
+                return;
+            }
+            MicrophonePermission::Denied => {
+                self.status = "マイクが拒否されています。設定でMacShotを許可してください。".into();
+                self.open_microphone_settings();
+                return;
+            }
+            MicrophonePermission::Restricted => {
+                self.status =
+                    "このMacではマイク利用が制限されています。管理者に確認してください。".into();
+                return;
+            }
+            MicrophonePermission::NotDetermined => {}
+        }
+        // SAFETY: AVFoundation exposes this process-wide immutable media type constant.
+        let Some(audio_type) = (unsafe { AVMediaTypeAudio }) else {
+            self.status = "macOSのマイク許可を確認できません。マイク設定を開いてください。".into();
+            return;
+        };
+        let repaint = ctx.clone();
+        let permission_result = self.microphone_permission_result.clone();
+        let callback = RcBlock::new(move |granted: ObjcBool| {
+            if let Ok(mut result) = permission_result.lock() {
+                *result = Some(granted.as_bool());
+            }
+            repaint.request_repaint();
+        });
+        // SAFETY: The callback matches AVFoundation's documented completion-handler signature.
+        unsafe {
+            AVCaptureDevice::requestAccessForMediaType_completionHandler(audio_type, &callback);
+        }
+        self.status =
+            "macOSのマイク許可を要求しました。表示された確認画面で許可してください。".into();
+    }
+
+    fn refresh_permission_status(&mut self) {
+        self.status = format!(
+            "権限状態 — 画面・システム音声: {} ／ マイク: {}",
+            screen_permission_label(),
+            microphone_permission_label()
+        );
+    }
+
     fn toggle_recording(&mut self, ctx: &egui::Context) {
         if self.recording || self.recording_starting {
             self.stop_recording();
@@ -2789,14 +3124,20 @@ impl MacShot {
     fn handle_recording_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.recording_rx.try_recv() {
             match event {
-                RecordingEvent::Started { path } => {
+                RecordingEvent::Started {
+                    path,
+                    microphone_warning,
+                } => {
                     self.recording_starting = false;
                     self.recording = true;
                     self.recording_started_at = Some(Instant::now());
-                    self.status = format!(
+                    self.recording_warning = microphone_warning;
+                    let status = format!(
                         "録画中 — {}。メニューバーまたは録画ショートカットで終了",
                         path.display()
                     );
+                    self.status =
+                        append_recording_warning(&status, self.recording_warning.as_deref());
                     if self.record_pending_stop {
                         self.stop_recording();
                     }
@@ -2805,6 +3146,7 @@ impl MacShot {
                     self.recording = false;
                     self.recording_starting = false;
                     self.recording_started_at = None;
+                    let recording_warning = self.recording_warning.take();
                     if let Ok(mut recording_stop_tx) = self.recording_stop_tx.lock() {
                         *recording_stop_tx = None;
                     }
@@ -2819,8 +3161,10 @@ impl MacShot {
                     match result {
                         Ok(path) => {
                             let finished_at = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                            self.status = format!("録画を保存しました ({finished_at})");
-                            self.recording_notice = Some((path, finished_at));
+                            let status = format!("録画を保存しました ({finished_at})");
+                            self.status =
+                                append_recording_warning(&status, recording_warning.as_deref());
+                            self.recording_notice = Some((path, finished_at, recording_warning));
                         }
                         Err(error) => self.status = recording_failure_message(&error),
                     }
@@ -3380,9 +3724,7 @@ impl MacShot {
         let timestamp_enabled = self.timestamp_enabled;
         let sender = self.capture_tx.clone();
         let ctx = ctx.clone();
-        #[cfg(target_os = "windows")]
         let cancelled = Arc::new(AtomicBool::new(false));
-        #[cfg(target_os = "windows")]
         {
             self.capture_deadline = Some(Instant::now() + Duration::from_secs(15));
             self.capture_cancel = Some(cancelled.clone());
@@ -3400,37 +3742,43 @@ impl MacShot {
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
         minimize_main_window_for_capture(&ctx);
         self.update_tray_recording_status();
-        #[cfg(target_os = "windows")]
         ctx.request_repaint_after(Duration::from_millis(100));
 
         thread::spawn(move || {
             // Give the window manager time to reveal the previously active application.
             thread::sleep(Duration::from_millis(350));
-            let capture = capture_target_image(target).and_then(|image| {
-                #[cfg(target_os = "windows")]
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err("撮影は時間切れのためキャンセルされました。".to_string());
-                }
-                std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-                let path =
-                    new_evidence_path(&folder, &filename_prefix, &file_timestamp, sequence, "");
-                let mut image = if let Some(bounds) = region {
-                    crop_normalized(&image, bounds).ok_or_else(|| {
-                        "選択範囲が小さすぎます。ドラッグして範囲を選択してください。".to_string()
-                    })?
-                } else {
-                    image
-                };
-                if timestamp_enabled {
-                    stamp_timestamp(&mut image, &timestamp);
-                }
-                #[cfg(target_os = "windows")]
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err("撮影は時間切れのためキャンセルされました。".to_string());
-                }
-                image.save(&path).map_err(|e| e.to_string())?;
-                Ok((path, image, timestamp, sequence))
-            });
+            let capture = if cancelled.load(Ordering::Relaxed) {
+                Err(capture_timeout_message().to_string())
+            } else {
+                capture_target_image(target).and_then(|image| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Err(capture_timeout_message().to_string());
+                    }
+                    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+                    let path =
+                        new_evidence_path(&folder, &filename_prefix, &file_timestamp, sequence, "");
+                    let mut image = if let Some(bounds) = region {
+                        crop_normalized(&image, bounds).ok_or_else(|| {
+                            "選択範囲が小さすぎます。ドラッグして範囲を選択してください。"
+                                .to_string()
+                        })?
+                    } else {
+                        image
+                    };
+                    if timestamp_enabled {
+                        stamp_timestamp(&mut image, &timestamp);
+                    }
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Err(capture_timeout_message().to_string());
+                    }
+                    let path = save_png_without_overwrite(&folder, &path, &image)?;
+                    if cancelled.load(Ordering::Relaxed) {
+                        let _ = std::fs::remove_file(&path);
+                        return Err(capture_timeout_message().to_string());
+                    }
+                    Ok((path, image, timestamp, sequence))
+                })
+            };
 
             let _ = sender.send((sequence, capture));
             ctx.request_repaint();
@@ -3438,13 +3786,15 @@ impl MacShot {
     }
 
     fn handle_capture_results(&mut self, ctx: &egui::Context) {
+        // Resolve an expired deadline before consuming results so a late result
+        // cannot win a race with the next UI update.
+        self.handle_capture_timeout(ctx);
         while let Ok((sequence, result)) = self.capture_rx.try_recv() {
             if self.active_capture_sequence != Some(sequence) {
                 continue;
             }
             self.capture_in_progress = false;
             self.active_capture_sequence = None;
-            #[cfg(target_os = "windows")]
             {
                 self.capture_deadline = None;
                 if let Some(cancelled) = self.capture_cancel.take() {
@@ -3492,7 +3842,6 @@ impl MacShot {
         }
     }
 
-    #[cfg(target_os = "windows")]
     fn handle_capture_timeout(&mut self, ctx: &egui::Context) {
         if self
             .capture_deadline
@@ -3505,8 +3854,16 @@ impl MacShot {
             self.capture_in_progress = false;
             self.active_capture_sequence = None;
             self.capture_queue.clear();
-            self.status = "撮影が時間切れになりました。画面収録の許可と他の撮影アプリを確認してください。MacShotは終了せずに再試行できます。".into();
+            if self.continuous_capture_session_active {
+                self.continuous_capture_failed_count =
+                    self.continuous_capture_failed_count.saturating_add(1);
+            }
+            if !self.continuous_capture {
+                self.continuous_capture_session_active = false;
+            }
+            self.status = capture_timeout_message().into();
             restore_main_window(ctx);
+            self.update_tray_recording_status();
         }
         if self.capture_deadline.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -3605,10 +3962,13 @@ impl MacShot {
             sequence,
             "-crop",
         );
-        if let Err(error) = cropped.save(&path) {
-            self.status = format!("切り出し画像を保存できません: {error}");
-            return false;
-        }
+        let path = match save_png_without_overwrite(&folder, &path, &cropped) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = format!("切り出し画像を保存できません: {error}");
+                return false;
+            }
+        };
         self.left_path = Some(path.clone());
         self.left_image = Some(DynamicImage::ImageRgba8(cropped));
         self.left_texture = None;
@@ -3660,10 +4020,13 @@ impl MacShot {
             sequence,
             "-marked",
         );
-        if let Err(error) = output.save(&path) {
-            self.status = format!("注釈画像を保存できません: {error}");
-            return false;
-        }
+        let path = match save_png_without_overwrite(&folder, &path, &output) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = format!("注釈画像を保存できません: {error}");
+                return false;
+            }
+        };
         self.left_path = Some(path.clone());
         self.left_image = Some(DynamicImage::ImageRgba8(output));
         self.left_texture = None;
@@ -3713,6 +4076,26 @@ impl MacShot {
             texture.as_ref().unwrap().id(),
             egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale),
         ));
+    }
+
+    fn show_recording_preview_image(
+        ui: &mut egui::Ui,
+        image: &DynamicImage,
+        texture: &mut Option<egui::TextureHandle>,
+    ) -> egui::Response {
+        let size = [image.width() as usize, image.height() as usize];
+        if texture.is_none() {
+            let rgba = image.to_rgba8();
+            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            *texture = Some(ui.ctx().load_texture(
+                "recording-preview",
+                color,
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        let display_size =
+            recording_preview_display_size(image.width(), image.height(), ui.available_width());
+        ui.image((texture.as_ref().unwrap().id(), display_size))
     }
 
     fn show_croppable_image(&mut self, ui: &mut egui::Ui) {
@@ -4189,7 +4572,7 @@ impl MacShot {
                             .strong(),
                     );
                     ui.label(
-                        egui::RichText::new("MacShotをオンにして再起動してください。既にオンでも案内が消えない場合は、一度オフ→オンして再起動します。")
+                        egui::RichText::new("権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。")
                             .size(12.0)
                             .color(TEXT_MUTED),
                     );
@@ -4197,6 +4580,13 @@ impl MacShot {
                     ui.horizontal_wrapped(|ui| {
                         if ui.add(primary_button("画面収録設定を開く")).clicked() {
                             self.open_screen_recording_settings();
+                        }
+                        #[cfg(target_os = "macos")]
+                        if ui.button("FinderでMacShotを表示").clicked() {
+                            self.reveal_macshot_app();
+                        }
+                        if ui.button("権限状態を更新").clicked() {
+                            self.refresh_permission_status();
                         }
                     });
                 });
@@ -4455,8 +4845,15 @@ impl MacShot {
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("撮影済みの証跡").size(24.0).strong());
-                ui.label(egui::RichText::new("編集を始めたら、保存して次へで連続作業できます。元画像を残して編集版を保存します。").color(TEXT_MUTED));
+                ui.label(
+                    egui::RichText::new("撮影済みの画像・録画")
+                        .size(24.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new("録画は一覧からプレビュー、画像は編集して保存できます。")
+                        .color(TEXT_MUTED),
+                );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("▣  保存先を開く").clicked() {
@@ -4475,6 +4872,64 @@ impl MacShot {
         ui.add_space(14.0);
         glass_frame().show(ui, |ui| {
             ui.label(egui::RichText::new(folder.display().to_string()).size(11.0).color(TEXT_MUTED));
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
+                ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
+            });
+            ui.label(egui::RichText::new("録画を選ぶと、最初のフレームと長さをアプリ内で確認できます。動画全体の再生は録画を開くボタンから行えます。").size(11.0).color(TEXT_MUTED));
+            ui.add_space(8.0);
+            if self.recording_files.is_empty() {
+                ui.label(egui::RichText::new("保存された録画はありません。録画後に「更新」を押してください。").color(TEXT_MUTED));
+            } else {
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    let files = self.recording_files.clone();
+                    for path in files {
+                        let selected = self.recording_preview_path.as_ref() == Some(&path);
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(selected, format!("▶  {name}")).clicked() {
+                                match recording_preview(&path) {
+                                    Ok((image, details)) => {
+                                        self.recording_preview_path = Some(path.clone());
+                                        self.recording_preview_image = Some(image);
+                                        self.recording_preview_texture = None;
+                                        self.recording_preview_details = Some(details.clone());
+                                        self.scroll_to_recording_preview = true;
+                                        self.status = format!("録画を読み込みました: {details}");
+                                    }
+                                    Err(error) => self.status = format!("録画を読み込めませんでした: {error}"),
+                                }
+                            }
+                            if ui.small_button("ファイルを開く").clicked() {
+                                #[cfg(target_os = "macos")]
+                                let command = "open";
+                                #[cfg(target_os = "windows")]
+                                let command = "explorer";
+                                let _ = std::process::Command::new(command).arg(&path).spawn();
+                            }
+                        });
+                    }
+                });
+                if let (Some(path), Some(image)) = (&self.recording_preview_path, &self.recording_preview_image) {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).strong());
+                    if let Some(details) = &self.recording_preview_details {
+                        ui.label(egui::RichText::new(details).size(11.0).color(TEXT_MUTED));
+                    }
+                    ui.add_space(6.0);
+                    let response = Self::show_recording_preview_image(
+                        ui,
+                        image,
+                        &mut self.recording_preview_texture,
+                    );
+                    if self.scroll_to_recording_preview {
+                        self.scroll_to_recording_preview = false;
+                        ui.scroll_to_rect(response.rect, Some(egui::Align::BOTTOM));
+                    }
+                }
+            }
+            ui.add_space(16.0);
             ui.separator();
             if self.evidence_files.is_empty() {
                 ui.vertical_centered(|ui| {
@@ -4520,61 +4975,14 @@ impl MacShot {
                     }
                 });
             }
-            ui.add_space(16.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
-                ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
-            });
-            ui.label(egui::RichText::new("録画を選ぶと、最初のフレームと長さをアプリ内で確認できます。動画全体の再生は録画を開くボタンから行えます。").size(11.0).color(TEXT_MUTED));
-            ui.add_space(8.0);
-            if self.recording_files.is_empty() {
-                ui.label(egui::RichText::new("保存された録画はありません。録画後に「更新」を押してください。").color(TEXT_MUTED));
-            } else {
-                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                    let files = self.recording_files.clone();
-                    for path in files {
-                        let selected = self.recording_preview_path.as_ref() == Some(&path);
-                        let name = path.file_name().unwrap_or_default().to_string_lossy();
-                        ui.horizontal(|ui| {
-                            if ui.selectable_label(selected, format!("▶  {name}")).clicked() {
-                                match recording_preview(&path) {
-                                    Ok((image, details)) => {
-                                        self.recording_preview_path = Some(path.clone());
-                                        self.recording_preview_image = Some(image);
-                                        self.recording_preview_texture = None;
-                                        self.recording_preview_details = Some(details.clone());
-                                        self.status = format!("録画を読み込みました: {details}");
-                                    }
-                                    Err(error) => self.status = format!("録画を読み込めませんでした: {error}"),
-                                }
-                            }
-                            if ui.small_button("ファイルを開く").clicked() {
-                                #[cfg(target_os = "macos")]
-                                let command = "open";
-                                #[cfg(target_os = "windows")]
-                                let command = "explorer";
-                                let _ = std::process::Command::new(command).arg(&path).spawn();
-                            }
-                        });
-                    }
-                });
-                if let (Some(path), Some(image)) = (&self.recording_preview_path, &self.recording_preview_image) {
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).strong());
-                    if let Some(details) = &self.recording_preview_details {
-                        ui.label(egui::RichText::new(details).size(11.0).color(TEXT_MUTED));
-                    }
-                    ui.add_space(6.0);
-                    Self::show_image(ui, image, &mut self.recording_preview_texture, "recording-preview");
-                }
-            }
         });
     }
 
     fn show_settings_page(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("設定").size(24.0).strong());
         ui.label(egui::RichText::new("MacShotを自分の撮影手順に合わせます。").color(TEXT_MUTED));
+        ui.add_space(14.0);
+        self.show_permission_panel(ui);
         ui.add_space(14.0);
         ui.columns(2, |columns| {
             glass_frame().show(&mut columns[0], |ui| {
@@ -4669,7 +5077,7 @@ impl MacShot {
                         .color(TEXT_MUTED),
                 );
                 ui.label(
-                    egui::RichText::new("MP4はシステム音声とマイク音声をまとめて記録します。マイクの使用許可が必要です。GIFは音声なしです。")
+                    egui::RichText::new("MP4はシステム音声を記録し、許可がある場合はマイク音声も含めます。マイクを使えない場合もシステム音声のみで録画できます。GIFは音声なしです。")
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
@@ -4759,6 +5167,93 @@ impl MacShot {
             });
         });
     }
+
+    fn show_permission_panel(&mut self, ui: &mut egui::Ui) {
+        glass_frame().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("権限とデバイス").size(18.0).strong());
+                if ui.button("↻  権限状態を更新").clicked() {
+                    self.refresh_permission_status();
+                }
+            });
+            ui.add_space(6.0);
+
+            let screen_granted = screen_recording_access_granted();
+            ui.horizontal_wrapped(|ui| {
+                ui.label("画面収録・システム音声");
+                if screen_granted {
+                    ui.colored_label(egui::Color32::from_rgb(38, 132, 88), "許可済み");
+                } else {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(190, 105, 32),
+                        "未許可、またはmacOSへの反映待ち",
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    if ui.button("画面・音声の設定を開く").clicked() {
+                        self.open_screen_recording_settings();
+                    }
+                    if ui.button("FinderでMacShotを表示").clicked() {
+                        self.reveal_macshot_app();
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                ui.label(egui::RichText::new("Windowsでは個別の画面収録許可は不要です").color(TEXT_MUTED));
+            });
+
+            let microphone = microphone_permission_label();
+            #[cfg(target_os = "macos")]
+            let ctx = ui.ctx().clone();
+            #[cfg(target_os = "macos")]
+            let microphone_state = microphone_permission();
+            ui.horizontal_wrapped(|ui| {
+                ui.label("マイク");
+                #[cfg(target_os = "macos")]
+                {
+                    let permitted = microphone_state == MicrophonePermission::Authorized;
+                    ui.colored_label(
+                        if permitted {
+                            egui::Color32::from_rgb(38, 132, 88)
+                        } else {
+                            egui::Color32::from_rgb(190, 105, 32)
+                        },
+                        microphone,
+                    );
+                }
+                #[cfg(target_os = "windows")]
+                ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                #[cfg(target_os = "macos")]
+                if let Some(label) = microphone_permission_action_label(microphone_state)
+                    && ui.button(label).clicked()
+                {
+                    if microphone_state == MicrophonePermission::Denied {
+                        self.open_microphone_settings();
+                    } else {
+                        self.request_microphone_permission(&ctx);
+                    }
+                }
+                if ui.button("マイク設定を開く").clicked() {
+                    self.open_microphone_settings();
+                }
+            });
+
+            #[cfg(target_os = "macos")]
+            ui.label(
+                egui::RichText::new("一覧にMacShotがない場合は設定の「＋」から追加します。「FinderでMacShotを表示」で場所を開き、一覧へのドラッグも試せます。追加後に許可をオンにしてください。マイク許可の要求結果は画面下に表示されます。権限変更後は状態を更新してください。")
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+            #[cfg(target_os = "windows")]
+            ui.label(
+                egui::RichText::new("MP4は既定の再生デバイスとマイクを使います。Windowsのマイク設定でデスクトップアプリへのアクセスも確認してください。")
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+        });
+    }
 }
 
 fn compare_empty_state(ui: &mut egui::Ui, message: &str) {
@@ -4776,6 +5271,12 @@ impl eframe::App for MacShot {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if let Ok(mut result) = self.microphone_permission_result.lock()
+            && let Some(granted) = result.take()
+        {
+            self.status = microphone_permission_result_message(granted).into();
+        }
         #[cfg(target_os = "windows")]
         if ctx.input(|input| input.viewport().close_requested()) {
             if self.recording || self.recording_starting {
@@ -4801,8 +5302,6 @@ impl eframe::App for MacShot {
         self.handle_hotkey_requests(ctx);
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
-        #[cfg(target_os = "windows")]
-        self.handle_capture_timeout(ctx);
         #[cfg(target_os = "windows")]
         self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);
@@ -4911,7 +5410,7 @@ impl eframe::App for MacShot {
                 self.capture_notice = None;
             }
         }
-        if let Some((path, timestamp)) = &self.recording_notice {
+        if let Some((path, timestamp, warning)) = &self.recording_notice {
             let mut open = true;
             egui::Window::new("録画を保存しました")
                 .id(egui::Id::new("recording_complete_notice"))
@@ -4928,6 +5427,9 @@ impl eframe::App for MacShot {
                     );
                     ui.label(timestamp);
                     ui.label(path.display().to_string());
+                    if let Some(warning) = warning {
+                        ui.label(warning);
+                    }
                 });
             if !open {
                 self.recording_notice = None;
@@ -4979,6 +5481,60 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_preview_display_size_stays_useful_at_the_bottom_of_the_page() {
+        assert_eq!(
+            recording_preview_display_size(320, 180, 2_000.0),
+            egui::vec2(320.0, 180.0)
+        );
+        assert_eq!(
+            recording_preview_display_size(1_920, 1_080, 2_000.0),
+            egui::vec2(720.0, 405.0)
+        );
+        let portrait = recording_preview_display_size(400, 800, 640.0);
+        assert!((portrait.x - 202.5).abs() < 0.01);
+        assert!((portrait.y - 405.0).abs() < 0.01);
+        assert_eq!(
+            recording_preview_display_size(0, 180, 640.0),
+            egui::Vec2::ZERO
+        );
+    }
+
+    #[test]
+    fn recording_preview_widget_keeps_its_size_when_vertical_space_is_low() {
+        let context = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 120.0),
+            )),
+            ..Default::default()
+        };
+        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            320,
+            180,
+            Rgba([40_u8, 160, 220, 255]),
+        ));
+        let mut texture = None;
+        let mut remaining_height = None;
+        let mut rendered_size = None;
+
+        let _ = context.run(input, |context| {
+            egui::CentralPanel::default().show(context, |ui| {
+                ui.add_space(75.0);
+                remaining_height = Some(ui.available_height());
+                rendered_size = Some(
+                    MacShot::show_recording_preview_image(ui, &image, &mut texture)
+                        .rect
+                        .size(),
+                );
+            });
+        });
+
+        assert!(remaining_height.unwrap() < 30.0);
+        assert_eq!(rendered_size.unwrap(), egui::vec2(320.0, 180.0));
+    }
 
     struct TestDirectory(PathBuf);
 
@@ -5153,11 +5709,16 @@ mod tests {
     fn evidence_sort_keeps_original_before_its_edits() {
         let original = evidence_sort_key(Path::new("capture-20261025-123456-789-012.png"));
         let crop = evidence_sort_key(Path::new("capture-20261025-123456-789-012-crop.png"));
+        let repeated_crop =
+            evidence_sort_key(Path::new("capture-20261025-123456-789-012-crop-copy-2.png"));
         let marked = evidence_sort_key(Path::new("capture-20261025-123456-789-012-marked.png"));
 
         assert_eq!(original.0, crop.0);
         assert_eq!(original.1, crop.1);
         assert!(original.2 < crop.2);
+        assert_eq!(crop.0, repeated_crop.0);
+        assert_eq!(crop.1, repeated_crop.1);
+        assert_eq!(crop.2, repeated_crop.2);
         assert!(original.2 < marked.2);
     }
 
@@ -5203,6 +5764,57 @@ mod tests {
             new_recording_path(folder, "20261025-121314-015", 1000),
             folder.join("recording-20261025-121314-015-1000.gif")
         );
+    }
+
+    #[test]
+    fn repeated_png_saves_choose_a_new_path_without_overwriting() {
+        let directory = TestDirectory::new("unique-png-paths");
+        let preferred = new_evidence_path(
+            directory.path(),
+            "evidence",
+            "20261025-120001-123",
+            4,
+            "-crop",
+        );
+        let original = image::RgbaImage::from_pixel(2, 1, Rgba([255, 0, 0, 255]));
+        let repeated = image::RgbaImage::from_pixel(2, 1, Rgba([0, 0, 255, 255]));
+
+        let first = save_png_without_overwrite(directory.path(), &preferred, &original).unwrap();
+        let second = save_png_without_overwrite(directory.path(), &preferred, &repeated).unwrap();
+
+        assert_eq!(first, preferred);
+        assert_eq!(
+            second.file_name().unwrap(),
+            "evidence-20261025-120001-123-004-crop-copy-2.png"
+        );
+        assert_eq!(
+            parse_evidence_identity(&first),
+            parse_evidence_identity(&second)
+        );
+        assert_eq!(
+            image::open(first).unwrap().to_rgba8().get_pixel(0, 0),
+            &Rgba([255, 0, 0, 255])
+        );
+        assert_eq!(
+            image::open(second).unwrap().to_rgba8().get_pixel(0, 0),
+            &Rgba([0, 0, 255, 255])
+        );
+    }
+
+    #[test]
+    fn repeated_recording_reservations_do_not_reuse_existing_paths() {
+        let directory = TestDirectory::new("unique-recording-paths");
+        let preferred = new_recording_path(directory.path(), "20261025-120001-123", 1);
+        let (first, mut first_file) = create_unique_file(directory.path(), &preferred).unwrap();
+        first_file.write_all(b"existing recording").unwrap();
+        let (second, _second_file) = create_unique_file(directory.path(), &preferred).unwrap();
+
+        assert_eq!(first, preferred);
+        assert_eq!(
+            second.file_name().unwrap(),
+            "recording-20261025-120001-123-001-copy-2.gif"
+        );
+        assert_eq!(std::fs::read(first).unwrap(), b"existing recording");
     }
 
     #[test]
@@ -5278,6 +5890,15 @@ mod tests {
         assert!(has_captureable_window_size(708, 464));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn screen_capture_filter_rejects_software_cursor_overlay() {
+        assert!(!is_captureable_screen_capture_title("Software Cursor"));
+        assert!(!is_captureable_screen_capture_title(" software cursor "));
+        assert!(!is_captureable_screen_capture_title("   "));
+        assert!(is_captureable_screen_capture_title("Settings"));
+    }
+
     #[test]
     fn gif_frame_delay_tracks_elapsed_capture_time() {
         assert_eq!(gif_delay_centiseconds(Duration::from_millis(1)), 1);
@@ -5329,6 +5950,19 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert!(files.iter().any(|path| path.ends_with("clip.gif")));
         assert!(files.iter().any(|path| path.ends_with("movie.mp4")));
+    }
+
+    #[test]
+    fn recording_preview_reports_truncated_media_instead_of_panicking() {
+        let directory = TestDirectory::new("truncated-recordings");
+        for name in ["truncated.gif", "truncated.mp4"] {
+            let path = directory.path().join(name);
+            std::fs::write(&path, b"incomplete recording").unwrap();
+            assert!(
+                recording_preview(&path).is_err(),
+                "{name} should be rejected"
+            );
+        }
     }
 
     #[test]
@@ -5390,6 +6024,109 @@ mod tests {
         let (image, details) = recording_preview(&path).unwrap();
         assert_eq!(image.dimensions(), (64, 48));
         assert!(details.contains("MP4・H.264・0.20秒"));
+    }
+
+    #[test]
+    fn mp4_mux_preserves_both_h264_video_and_aac_audio_tracks() {
+        let directory = TestDirectory::new("mp4-audio-video");
+        let path = directory.path().join("audio-video.mp4");
+        let frame = image::RgbaImage::from_pixel(64, 48, Rgba([80, 140, 220, 255]));
+        let mut video_encoder = H264Encoder::with_api_config(
+            OpenH264API::from_source(),
+            EncoderConfig::new()
+                .bitrate(BitRate::from_bps(250_000))
+                .max_frame_rate(FrameRate::from_hz(10.0))
+                .usage_type(UsageType::ScreenContentRealTime),
+        )
+        .unwrap();
+        let (sps, pps, initial_packets) = prime_h264_encoder(&mut video_encoder, &frame).unwrap();
+        let mut audio_encoder = recording_audio::create_aac_encoder().unwrap();
+        let mut audio_packets = Vec::new();
+        for block in 0..10 {
+            let start = block * 1_024;
+            let samples = (start..start + 1_024)
+                .flat_map(|sample| {
+                    let value = (sample as f32 * 440.0 * std::f32::consts::TAU
+                        / recording_audio::sample_rate() as f32)
+                        .sin()
+                        * 0.2;
+                    [value, value]
+                })
+                .collect();
+            audio_packets.extend(
+                recording_audio::encode_block(&mut *audio_encoder, start, samples).unwrap(),
+            );
+        }
+        audio_packets.extend(recording_audio::finish_encoder(&mut *audio_encoder).unwrap());
+        assert!(!audio_packets.is_empty());
+
+        let config = Mp4Config {
+            major_brand: "isom".parse().unwrap(),
+            minor_version: 512,
+            compatible_brands: vec!["isom".parse().unwrap(), "avc1".parse().unwrap()],
+            timescale: 1_000,
+        };
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = Mp4Writer::write_start(file, &config).unwrap();
+        writer
+            .add_track(&TrackConfig::from(AvcConfig {
+                width: 64,
+                height: 48,
+                seq_param_set: sps,
+                pic_param_set: pps,
+            }))
+            .unwrap();
+        let mut audio_track = TrackConfig::from(AacConfig {
+            bitrate: recording_audio::bitrate(),
+            profile: AudioObjectType::AacLowComplexity,
+            freq_index: SampleFreqIndex::Freq48000,
+            chan_conf: ChannelConfig::Stereo,
+        });
+        audio_track.timescale = recording_audio::sample_rate();
+        writer.add_track(&audio_track).unwrap();
+
+        let mut frame_index = 0;
+        for packet in initial_packets {
+            if !packet.sample.is_empty() {
+                write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
+                frame_index += 1;
+            }
+        }
+        let packet = encode_h264_frame(&mut video_encoder, &frame).unwrap();
+        write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
+        write_mp4_audio_samples(&mut writer, audio_packets).unwrap();
+        writer.write_end().unwrap();
+        writer.into_writer().sync_all().unwrap();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let size = file.metadata().unwrap().len();
+        let mut reader = mp4::Mp4Reader::read_header(file, size).unwrap();
+        let video_id = *reader
+            .tracks()
+            .iter()
+            .find(|(_, track)| track.media_type().unwrap() == mp4::MediaType::H264)
+            .map(|(id, _)| id)
+            .unwrap();
+        let audio_id = *reader
+            .tracks()
+            .iter()
+            .find(|(_, track)| track.media_type().unwrap() == mp4::MediaType::AAC)
+            .map(|(id, _)| id)
+            .unwrap();
+        let video_count = reader.sample_count(video_id).unwrap();
+        let audio_count = reader.sample_count(audio_id).unwrap();
+        assert!(video_count >= 2);
+        assert!(audio_count >= 1);
+        let audio_samples: Vec<_> = (1..=audio_count)
+            .map(|sample_id| reader.read_sample(audio_id, sample_id).unwrap().unwrap())
+            .collect();
+        assert!(audio_samples.iter().all(|sample| !sample.bytes.is_empty()));
+        assert!(
+            audio_samples
+                .windows(2)
+                .all(|pair| pair[0].start_time < pair[1].start_time)
+        );
+        assert!(reader.duration().as_millis() >= 200);
     }
 
     #[test]
@@ -5488,6 +6225,57 @@ mod tests {
     }
 
     #[test]
+    fn expired_capture_deadline_wins_over_a_queued_late_result() {
+        let mut app = MacShot::default();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        app.capture_in_progress = true;
+        app.active_capture_sequence = Some(42);
+        app.capture_deadline = Some(Instant::now() - Duration::from_millis(1));
+        app.capture_cancel = Some(cancelled.clone());
+        app.capture_queue.push_back(CaptureTarget::PrimaryDisplay);
+        app.continuous_capture_session_active = true;
+        app.capture_tx
+            .send((42, Err("late capture failure".to_string())))
+            .unwrap();
+
+        app.handle_capture_results(&egui::Context::default());
+
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(!app.capture_in_progress);
+        assert_eq!(app.active_capture_sequence, None);
+        assert!(app.capture_queue.is_empty());
+        assert_eq!(app.continuous_capture_failed_count, 1);
+        assert!(!app.continuous_capture_session_active);
+        assert_eq!(
+            app.tray_capture_status_state,
+            Some((false, false, false, 0, 1))
+        );
+        assert_eq!(app.status, capture_timeout_message());
+    }
+
+    #[test]
+    fn timed_out_continuous_capture_keeps_mode_active_and_updates_failure_count() {
+        let mut app = MacShot {
+            continuous_capture: true,
+            continuous_capture_session_active: true,
+            capture_in_progress: true,
+            active_capture_sequence: Some(43),
+            capture_deadline: Some(Instant::now() - Duration::from_millis(1)),
+            ..MacShot::default()
+        };
+
+        app.handle_capture_timeout(&egui::Context::default());
+
+        assert!(app.continuous_capture);
+        assert!(app.continuous_capture_session_active);
+        assert_eq!(app.continuous_capture_failed_count, 1);
+        assert_eq!(
+            app.tray_capture_status_state,
+            Some((true, true, false, 0, 1))
+        );
+    }
+
+    #[test]
     fn recording_permission_failure_shows_the_same_settings_guidance() {
         assert!(recording_failure_message(
             "ScreenCaptureKit: Content unavailable: ユーザがアプリケーションを拒否しました (TCC)"
@@ -5496,6 +6284,77 @@ mod tests {
         assert_eq!(
             recording_failure_message("録画する画面が見つかりません。"),
             "録画できませんでした: 録画する画面が見つかりません。"
+        );
+    }
+
+    #[test]
+    fn denied_microphone_recording_error_points_to_microphone_settings() {
+        let message = microphone_permission_failure_message(
+            "マイクを開始できません: permission denied",
+            true,
+        )
+        .unwrap();
+        assert!(message.contains("プライバシーとセキュリティ > マイク"));
+        assert!(message.contains("権限状態を更新"));
+        assert!(microphone_permission_failure_message("画面収録が拒否されました", true).is_none());
+        assert!(microphone_permission_failure_message("マイクを開始できません", false).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn microphone_permission_result_explains_both_outcomes() {
+        assert!(microphone_permission_result_message(true).contains("マイク音声を含めます"));
+        let denied = microphone_permission_result_message(false);
+        assert!(denied.contains("システム音声のみ"));
+        assert!(denied.contains("マイク設定"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn microphone_permission_action_matches_the_os_status() {
+        assert_eq!(
+            microphone_permission_action_label(MicrophonePermission::NotDetermined),
+            Some("macOSに許可を確認")
+        );
+        assert_eq!(
+            microphone_permission_action_label(MicrophonePermission::Denied),
+            Some("設定でMacShotを許可")
+        );
+        assert_eq!(
+            microphone_permission_action_label(MicrophonePermission::Authorized),
+            None
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn undetermined_microphone_state_is_not_misreported_as_a_denial() {
+        let label = microphone_permission_label_for(MicrophonePermission::NotDetermined);
+        assert!(label.contains("状態未決定"));
+        assert!(!label.contains("拒否"));
+        assert!(label.contains("システム音声のみ"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn microphone_capture_is_skipped_without_authorization() {
+        assert!(should_capture_microphone(MicrophonePermission::Authorized));
+        assert!(!should_capture_microphone(
+            MicrophonePermission::NotDetermined
+        ));
+        assert!(!should_capture_microphone(MicrophonePermission::Denied));
+        assert!(!should_capture_microphone(MicrophonePermission::Restricted));
+    }
+
+    #[test]
+    fn recording_permission_warning_survives_in_status() {
+        assert_eq!(
+            append_recording_warning("録画を保存しました", Some("システム音声のみ")),
+            "録画を保存しました — システム音声のみ"
+        );
+        assert_eq!(
+            append_recording_warning("録画を保存しました", None),
+            "録画を保存しました"
         );
     }
 

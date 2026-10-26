@@ -34,70 +34,22 @@ struct PcmChunk {
 pub struct AudioCaptureSession {
     system_capture: scrcap::CaptureDesc,
     system_rx: crossbeam_channel::Receiver<AudioFrame>,
-    mic_stream: cpal::Stream,
-    mic_rx: Receiver<PcmChunk>,
-    mic_error_rx: Receiver<String>,
-    mic_dropped: Arc<AtomicBool>,
+    mic_stream: Option<cpal::Stream>,
+    mic_rx: Option<Receiver<PcmChunk>>,
+    mic_error_rx: Option<Receiver<String>>,
+    mic_dropped: Option<Arc<AtomicBool>>,
+    microphone_warning: Option<String>,
+}
+
+struct MicrophoneCapture {
+    stream: cpal::Stream,
+    receiver: Receiver<PcmChunk>,
+    error_receiver: Receiver<String>,
+    dropped: Arc<AtomicBool>,
 }
 
 impl AudioCaptureSession {
-    pub fn start() -> Result<Self, String> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| "マイク入力デバイスが見つかりません。".to_string())?;
-        let supported = device
-            .default_input_config()
-            .map_err(|error| format!("マイクの設定を取得できません: {error}"))?;
-        let sample_rate = supported.sample_rate();
-        let channels = supported.channels() as usize;
-        if channels == 0 || sample_rate == 0 {
-            return Err("マイクの音声形式が不正です。".into());
-        }
-
-        let (mic_tx, mic_rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
-        let (mic_error_tx, mic_error_rx) = mpsc::channel();
-        let mic_dropped = Arc::new(AtomicBool::new(false));
-        let dropped_flag = mic_dropped.clone();
-        let callback_tx = mic_tx.clone();
-        let callback_error_tx = mic_error_tx.clone();
-        let sample_format = supported.sample_format();
-        let stream = device
-            .build_input_stream_raw(
-                supported.config(),
-                sample_format,
-                move |data, info| {
-                    let Some(raw) = sample_data_as_f32(data, sample_format) else {
-                        let _ = callback_error_tx.send("マイクの音声形式を変換できません。".into());
-                        return;
-                    };
-                    let samples = convert_to_stereo_48khz(&raw, channels, sample_rate);
-                    if samples.is_empty() {
-                        return;
-                    }
-                    let timestamp_ns =
-                        info.timestamp().capture.as_nanos().min(i64::MAX as u128) as i64;
-                    if callback_tx
-                        .try_send(PcmChunk {
-                            timestamp_ns,
-                            start_sample: 0,
-                            samples,
-                        })
-                        .is_err()
-                    {
-                        dropped_flag.store(true, Ordering::Relaxed);
-                    }
-                },
-                move |error| {
-                    let _ = mic_error_tx.send(format!("マイク収録が停止しました: {error}"));
-                },
-                None,
-            )
-            .map_err(|error| format!("マイクを開始できません: {error}"))?;
-        stream
-            .play()
-            .map_err(|error| format!("マイクを開始できません: {error}"))?;
-
+    pub fn start(include_microphone: bool) -> Result<Self, String> {
         let system_capture = CaptureConfig {
             video: VideoConfig {
                 channel_capacity: 1,
@@ -116,24 +68,62 @@ impl AudioCaptureSession {
             .cloned()
             .ok_or_else(|| "システム音声の入力を開始できません。".to_string())?;
 
+        let (microphone, microphone_warning) = if include_microphone {
+            match start_microphone() {
+                Ok(microphone) => (Some(microphone), None),
+                Err(error) => (
+                    None,
+                    Some(format!(
+                        "{error}。システム音声のみを録音しています。マイク設定を確認してください。"
+                    )),
+                ),
+            }
+        } else {
+            (
+                None,
+                Some("マイク未許可のため、システム音声のみを録音しています。".into()),
+            )
+        };
+
+        let (mic_stream, mic_rx, mic_error_rx, mic_dropped) = match microphone {
+            Some(capture) => (
+                Some(capture.stream),
+                Some(capture.receiver),
+                Some(capture.error_receiver),
+                Some(capture.dropped),
+            ),
+            None => (None, None, None, None),
+        };
         Ok(Self {
             system_capture,
             system_rx,
-            mic_stream: stream,
+            mic_stream,
             mic_rx,
             mic_error_rx,
             mic_dropped,
+            microphone_warning,
         })
     }
 
+    pub fn microphone_warning(&self) -> Option<&str> {
+        self.microphone_warning.as_deref()
+    }
+
     fn check_health(&self) -> Result<(), String> {
-        if self.mic_dropped.load(Ordering::Relaxed) {
+        if self
+            .mic_dropped
+            .as_ref()
+            .is_some_and(|dropped| dropped.load(Ordering::Relaxed))
+        {
             return Err("マイク音声が混み合って一部を受け取れませんでした。録画を停止して再試行してください。".into());
         }
-        match self.mic_error_rx.try_recv() {
-            Ok(error) => Err(error),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(()),
+        if let Some(receiver) = &self.mic_error_rx {
+            match receiver.try_recv() {
+                Ok(error) => return Err(error),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+            }
         }
+        Ok(())
     }
 
     pub fn drain_into(&self, mixer: &mut AudioMixer) -> Result<(), String> {
@@ -141,16 +131,83 @@ impl AudioCaptureSession {
         while let Ok(frame) = self.system_rx.try_recv() {
             mixer.push_system(frame)?;
         }
-        while let Ok(chunk) = self.mic_rx.try_recv() {
-            mixer.push_mic(chunk);
+        if let Some(receiver) = &self.mic_rx {
+            while let Ok(chunk) = receiver.try_recv() {
+                mixer.push_mic(chunk);
+            }
         }
         Ok(())
     }
 
     fn stop(&self) {
-        let _ = self.mic_stream.pause();
+        if let Some(stream) = &self.mic_stream {
+            let _ = stream.pause();
+        }
         self.system_capture.terminate();
     }
+}
+
+fn start_microphone() -> Result<MicrophoneCapture, String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or_else(|| "マイク入力デバイスが見つかりません。".to_string())?;
+    let supported = device
+        .default_input_config()
+        .map_err(|error| format!("マイクの設定を取得できません: {error}"))?;
+    let sample_rate = supported.sample_rate();
+    let channels = supported.channels() as usize;
+    if channels == 0 || sample_rate == 0 {
+        return Err("マイクの音声形式が不正です。".into());
+    }
+
+    let (mic_tx, mic_rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
+    let (mic_error_tx, mic_error_rx) = mpsc::channel();
+    let mic_dropped = Arc::new(AtomicBool::new(false));
+    let dropped_flag = mic_dropped.clone();
+    let callback_tx = mic_tx.clone();
+    let callback_error_tx = mic_error_tx.clone();
+    let sample_format = supported.sample_format();
+    let stream = device
+        .build_input_stream_raw(
+            supported.config(),
+            sample_format,
+            move |data, info| {
+                let Some(raw) = sample_data_as_f32(data, sample_format) else {
+                    let _ = callback_error_tx.send("マイクの音声形式を変換できません。".into());
+                    return;
+                };
+                let samples = convert_to_stereo_48khz(&raw, channels, sample_rate);
+                if samples.is_empty() {
+                    return;
+                }
+                let timestamp_ns = info.timestamp().capture.as_nanos().min(i64::MAX as u128) as i64;
+                if callback_tx
+                    .try_send(PcmChunk {
+                        timestamp_ns,
+                        start_sample: 0,
+                        samples,
+                    })
+                    .is_err()
+                {
+                    dropped_flag.store(true, Ordering::Relaxed);
+                }
+            },
+            move |error| {
+                let _ = mic_error_tx.send(format!("マイク収録が停止しました: {error}"));
+            },
+            None,
+        )
+        .map_err(|error| format!("マイクを開始できません: {error}"))?;
+    stream
+        .play()
+        .map_err(|error| format!("マイクを開始できません: {error}"))?;
+    Ok(MicrophoneCapture {
+        stream,
+        receiver: mic_rx,
+        error_receiver: mic_error_rx,
+        dropped: mic_dropped,
+    })
 }
 
 pub struct AudioMixer {

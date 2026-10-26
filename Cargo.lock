@@ -2640,9 +2640,10 @@ checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 
 [[package]]
 name = "macshot"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "ab_glyph",
+ "block2 0.6.2",
  "bytes",
  "chrono",
  "cpal",
@@ -2654,7 +2655,9 @@ dependencies = [
  "imageproc",
  "mp4",
  "objc2 0.5.3",
+ "objc2 0.6.5",
  "objc2-app-kit 0.2.2",
+ "objc2-av-foundation",
  "objc2-foundation 0.2.2",
  "openh264",
  "pollster",
