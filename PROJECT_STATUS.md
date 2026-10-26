@@ -11,8 +11,8 @@
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.5 is public. Windows capture, recording, and range selection minimize the main window instead of hiding it, then unminimize it after the operation or on timeout.
-- **Next step:** The user tested v0.4.4 and again confirmed that the full-display PNG saved but the preview and main window did not return after 15 seconds; the process remained responsive. Retest v0.4.5's full-display capture and confirm the window returns from its minimized state. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
+- **Current state:** v0.4.5 is public. Initial Windows device testing confirms full-display screenshot and range-selection cancellation return to the main window; the Windows × ends the process. Notification-area Exit and the remaining editing, comparison, continuous-capture, and recording flows are not yet fully confirmed.
+- **Next step:** Confirm the notification-area Exit command, then use the PNGs created in `C:/Users/zhuch/Pictures/MacShot` to validate evidence refresh, editing, and comparison. Also test continuous capture and GIF recording. MP4/MOV conversion is not included.
 - **Verification:** v0.4.5 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `5550811c2bae8c6d08c2dd1e7e885bc20682eb385467a10bea62e75038398a4f`; Windows `7c7a277f6267b534a838fa105896b28f434f38d5abf8d62ec93b31af5190acd6`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.5 runtime behavior remains unverified. 2026-10-26.
 - **Local artifact:** `output/release/MacShot-v0.4.5-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
 
@@ -46,7 +46,7 @@
 - **v0.4.4 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `42fef64714e34c3c4256dad087e27856ac255c38f0bb3c524a9811a12933f33c`; Windows `7af4d6addf8dd8b8051912b575b7287d645d64cb779494bf42444d144e398c2a`. The macOS bundle is signed but not notarized.
 - **Latest release:** [v0.4.5](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.5), published 2026-10-26 from tag `v0.4.5` at commit `d5d4b45`.
 - **v0.4.5 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `5550811c2bae8c6d08c2dd1e7e885bc20682eb385467a10bea62e75038398a4f`; Windows `7c7a277f6267b534a838fa105896b28f434f38d5abf8d62ec93b31af5190acd6`. The macOS bundle is signed but not notarized.
-- **Windows runtime:** v0.4.3 and v0.4.4 were tested on a Windows device. Both saved a full-display PNG but left the responsive process without a visible main window; v0.4.3 also showed a shortcut registration conflict and its × left the process in the tray. v0.4.5 changes to minimize/restore, but still needs a Windows retest.
+- **Windows runtime:** v0.4.3 and v0.4.4 saved full-display PNGs but left the responsive process without a visible main window. v0.4.5 testing confirmed the startup shortcut warning is gone, full-display capture minimizes and restores the window with its preview, the × ends the process, and range-selection background/Esc return work. Tray-icon disappearance and selecting the tray Exit item are not confirmed.
 
 ## Deployment decision
 
@@ -363,4 +363,10 @@ deployment:
 
 - The user tested v0.4.4 and confirmed a full-display PNG saved to `C:/Users/zhuch/Pictures/MacShot/evidence-20261026-152926-925-001.png`, but preview and main window did not return after 15 seconds. The process remained responsive; timeout recovery did not become visible.
 - v0.4.5 now minimizes the Windows main window instead of making it invisible during screenshots, recording, continuous capture, and range-selection preparation. Restoration clears the minimized state and focuses the main window.
-- The Windows x64 and macOS arm64 v0.4.5 release assets passed cross-build and bundle signature checks; fresh downloads matched both SHA-256 sidecars. Runtime confirmation remains pending.
+- The Windows x64 and macOS arm64 v0.4.5 release assets passed cross-build and bundle signature checks; fresh downloads matched both SHA-256 sidecars.
+
+## Windows v0.4.5 initial device verification — 2026-10-26
+
+- The user confirmed v0.4.4 was no longer running, then launched v0.4.5 without a shortcut warning. Full-display capture minimized the app and saved `C:/Users/zhuch/Pictures/MacShot/evidence-20261026-154711-949-001.png`; the preview and main window were back within 15 seconds.
+- The user confirmed the window × ended the process and range selection showed the desktop background and returned to the main window after Esc. They did not confirm tray-icon disappearance or select the tray-menu Exit action.
+- Remaining Windows checks: tray Exit; evidence-list refresh; editing and saving; comparison modes; continuous-capture start/stop; GIF recording start/stop and output.
