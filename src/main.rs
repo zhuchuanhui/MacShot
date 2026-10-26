@@ -65,6 +65,20 @@ fn should_show_screen_permission_banner(
     !access_granted && !editing_existing_image
 }
 
+fn minimize_main_window_for_capture(ctx: &egui::Context) {
+    #[cfg(target_os = "windows")]
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    #[cfg(not(target_os = "windows"))]
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+}
+
+fn restore_main_window(ctx: &egui::Context) {
+    #[cfg(target_os = "windows")]
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
 struct MacShot {
     monitors: Vec<Monitor>,
     windows: Vec<WindowChoice>,
@@ -1995,8 +2009,7 @@ impl MacShot {
             match action {
                 TrayAction::ShowWindow => {
                     self.status = "MacShotのウィンドウを表示しました。".into();
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    restore_main_window(ctx);
                 }
                 TrayAction::Capture => {
                     if self.recording || self.recording_starting {
@@ -2115,7 +2128,7 @@ impl MacShot {
         self.recording_starting = true;
         self.record_pending_stop = false;
         self.status = format!("録画を開始しています（GIF・{}枚目）…", sequence);
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        minimize_main_window_for_capture(ctx);
         let sender = self.recording_tx.clone();
         let context = ctx.clone();
         thread::spawn(move || {
@@ -2169,9 +2182,10 @@ impl MacShot {
                     self.record_pending_stop = false;
                     let should_show_window =
                         should_show_window_after_recording(self.continuous_capture);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(should_show_window));
                     if should_show_window {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        restore_main_window(ctx);
+                    } else {
+                        minimize_main_window_for_capture(ctx);
                     }
                     match result {
                         Ok(path) => {
@@ -2347,8 +2361,7 @@ impl MacShot {
         }
         if !self.continuous_capture {
             self.continuous_capture_session_active = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            restore_main_window(ctx);
         }
         self.update_tray_recording_status();
     }
@@ -2364,13 +2377,12 @@ impl MacShot {
                 self.capture_hotkey_text
             );
             self.capture_notice = None;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            minimize_main_window_for_capture(ctx);
         } else {
             self.status = "連続撮影を終了しました。".into();
             if !self.capture_in_progress && self.capture_queue.is_empty() {
                 self.continuous_capture_session_active = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                restore_main_window(ctx);
             }
         }
         self.update_tray_recording_status();
@@ -2421,7 +2433,7 @@ impl MacShot {
             self.status =
                 "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。".into();
             self.region_selecting = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            minimize_main_window_for_capture(ctx);
             ctx.request_repaint();
         }
     }
@@ -2443,7 +2455,7 @@ impl MacShot {
                     let sender = self.region_snapshot_tx.clone();
                     let repaint = ctx.clone();
                     self.region_selection_deadline = Some(Instant::now() + Duration::from_secs(15));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    minimize_main_window_for_capture(ctx);
                     thread::spawn(move || {
                         // Let Windows reveal the desktop before taking the selector backdrop.
                         thread::sleep(Duration::from_millis(350));
@@ -2455,8 +2467,7 @@ impl MacShot {
                 Err(error) => {
                     self.region_selection_deadline = None;
                     self.status = format!("画面を確認できません: {error}");
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    restore_main_window(ctx);
                 }
             }
         }
@@ -2467,8 +2478,7 @@ impl MacShot {
             self.region_selection_deadline = None;
             self.region_geometry_pending = false;
             self.status = "範囲選択の準備が時間切れになりました。画面収録の許可と他の撮影アプリを確認して、もう一度お試しください。".into();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            restore_main_window(ctx);
         }
         while let Ok(result) = self.region_snapshot_rx.try_recv() {
             if self.region_selection_deadline.is_none() {
@@ -2490,8 +2500,7 @@ impl MacShot {
                 }
                 Err(error) => {
                     self.status = format!("範囲選択の背景を撮影できません: {error}");
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    restore_main_window(ctx);
                 }
             }
             ctx.request_repaint();
@@ -2691,8 +2700,7 @@ impl MacShot {
             {
                 self.region_background_texture = None;
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            restore_main_window(ctx);
             if let Some(bounds) = selection {
                 self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(bounds));
             } else {
@@ -2752,15 +2760,14 @@ impl MacShot {
             thread::spawn(move || {
                 thread::sleep(Duration::from_secs(15));
                 if !watchdog_cancelled.load(Ordering::Relaxed) {
-                    watchdog_context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    watchdog_context.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    restore_main_window(&watchdog_context);
                     watchdog_context.request_repaint();
                 }
             });
         }
         self.capture_in_progress = true;
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        minimize_main_window_for_capture(&ctx);
         self.update_tray_recording_status();
         #[cfg(target_os = "windows")]
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -2867,8 +2874,7 @@ impl MacShot {
             self.active_capture_sequence = None;
             self.capture_queue.clear();
             self.status = "撮影が時間切れになりました。画面収録の許可と他の撮影アプリを確認してください。MacShotは終了せずに再試行できます。".into();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            restore_main_window(ctx);
         }
         if self.capture_deadline.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));

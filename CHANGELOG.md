@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.5 — 2026-10-26
+
+- Minimize the Windows main window during capture instead of hiding it; restore it after capture, recording, cancellation, or timeout.
+- Apply the same minimize/restore behavior to continuous capture and range-selection preparation.
+
 ## 0.4.4 — 2026-10-26
 
 - Restore the Windows window after capture with both a repaint timer and an independent watchdog.
