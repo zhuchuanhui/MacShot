@@ -11,10 +11,10 @@
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.3 is public. Windows monitor discovery and capture now run off the UI thread, with a 15-second timeout that restores the main window. All previous capabilities remain as described below.
-- **Next step:** The user reports that multiple actions in the Windows v0.4.2 app do not respond and that Task Manager is needed to exit. Retest v0.4.3 on Windows: open and close the app, select a screenshot target, and confirm the main window returns on timeout. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
-- **Verification:** v0.4.3 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `5c510fdfe4b75e64c358d86f5bf298343858e833b1e41bd44f5cb175f9582d17`; Windows `9e254416af32e7e20cccfef1c076be94a2ea639832fa85b134d8086afd655f35`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.3 runtime behavior remains unverified on a Windows device. 2026-10-26.
-- **Local artifact:** `output/release/MacShot-v0.4.3-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
+- **Current state:** v0.4.4 is public. Windows capture now has an independent watchdog that asks the hidden window to reappear; the Windows × and tray Exit command terminate the process, and shortcut registration handles each key separately.
+- **Next step:** The user tested v0.4.3 and reported that a full-display PNG saved but neither the preview nor main window returned after 15 seconds. The Windows × hid the app in the tray, and a shortcut registration warning appeared. Retest v0.4.4 for capture preview, window/process exit, and shortcut behavior. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
+- **Verification:** v0.4.4 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `42fef64714e34c3c4256dad087e27856ac255c38f0bb3c524a9811a12933f33c`; Windows `7af4d6addf8dd8b8051912b575b7287d645d64cb779494bf42444d144e398c2a`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.4 runtime behavior remains unverified. 2026-10-26.
+- **Local artifact:** `output/release/MacShot-v0.4.4-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
 
 ## Continuous capture and evidence ordering — 2026-10-25
 
@@ -40,9 +40,11 @@
 - **v0.4.1 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Published ZIP hashes were verified against a fresh download: macOS `a1d0d3fca650cffd8767ed41c3df7c5cf97b99a51ef58b546f337a7402e5c41f`; Windows `458c2e48118187a4c0e7d0b033a09a2208c2ae421fbf59188eb4efe2a48f5e58`. The macOS bundle is signed but not notarized.
 - **Latest release:** [v0.4.2](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.2), published 2026-10-26 from tag `v0.4.2` at commit `cc4671a`.
 - **v0.4.2 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Hashes were verified against fresh downloads: macOS `3f86dfbcce2e793808510248bf0939146d2de0e35062eac6588de70588efce58`; Windows `d56da196aee6b3d00ad23e8cef75e88e451d1e39fcdac5cdbf8ea2d210aafecc`. The macOS bundle is signed but not notarized.
-- **Latest release:** [v0.4.3](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.3), published 2026-10-26 from tag `v0.4.3` at commit `cb80f77`.
+- **Previous release:** [v0.4.3](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.3), published 2026-10-26 from tag `v0.4.3` at commit `cb80f77`.
 - **v0.4.3 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `5c510fdfe4b75e64c358d86f5bf298343858e833b1e41bd44f5cb175f9582d17`; Windows `9e254416af32e7e20cccfef1c076be94a2ea639832fa85b134d8086afd655f35`. The macOS bundle is signed but not notarized.
-- **Windows runtime:** the user tested v0.4.2 and confirmed multiple actions do not respond and the app must be ended through Task Manager. v0.4.3 adds background capture work and a timeout recovery, but its runtime still needs to be retested on Windows.
+- **Latest release:** [v0.4.4](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.4), published 2026-10-26 from tag `v0.4.4` at commit `279ec68`.
+- **v0.4.4 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `42fef64714e34c3c4256dad087e27856ac255c38f0bb3c524a9811a12933f33c`; Windows `7af4d6addf8dd8b8051912b575b7287d645d64cb779494bf42444d144e398c2a`. The macOS bundle is signed but not notarized.
+- **Windows runtime:** v0.4.3 was tested on a Windows device: full-display PNG saved, but the preview/window did not return after 15 seconds; × hid the process in the tray; shortcut registration reported a conflict. v0.4.4 includes follow-up fixes but still needs a Windows retest.
 
 ## Deployment decision
 
@@ -348,3 +350,9 @@ deployment:
 - The user tested v0.4.2 and reported that multiple actions still do not respond, and that Task Manager is needed to exit. Windows runtime remains broken on the user's machine.
 - Windows monitor discovery now runs on a worker thread. Region-selection setup and screenshot capture restore/focus the main window and show guidance after a 15-second timeout. Late responses from expired captures are ignored.
 - `cargo fmt --check`, all 29 unit tests, macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The user's Windows retest is required to establish whether this fixes the reported behavior.
+
+## Windows v0.4.3 device feedback and v0.4.4 — 2026-10-26
+
+- The user tested v0.4.3: app and settings opened; closing the window hid it in the tray; settings showed `HotKey already registered`; full-display PNG saved to `C:/Users/zhuch/Pictures/MacShot/evidence-20261026-133050-998-001.png`, but preview and main window did not return after 15 seconds.
+- v0.4.4 starts the repaint timer with the capture, adds a separate 15-second watchdog that requests the window be shown, makes the Windows × and tray Exit terminate the app (after saving an active GIF), and registers capture and recording shortcuts independently.
+- `cargo fmt --check`, all 29 unit tests, macOS/Windows Clippy, macOS release build, and Windows x64 release cross-build passed. Both public release ZIPs were downloaded and matched their SHA-256 sidecars; the macOS signature passed deep/strict verification before and after ZIP extraction. v0.4.4 Windows runtime remains pending.
