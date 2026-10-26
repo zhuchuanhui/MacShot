@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use ab_glyph::{FontRef, PxScale};
+use bytes::Bytes;
 use chrono::Local;
 use eframe::egui;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
@@ -10,6 +11,16 @@ use imageproc::{
         draw_filled_rect_mut, draw_hollow_rect_mut, draw_line_segment_mut, draw_text_mut, text_size,
     },
     rect::Rect as ImageRect,
+};
+use mp4::{
+    AacConfig, AudioObjectType, AvcConfig, ChannelConfig, FourCC, Mp4Config, Mp4Sample, Mp4Writer,
+    SampleFreqIndex, TrackConfig,
+};
+use openh264::decoder::Decoder as H264Decoder;
+use openh264::{
+    OpenH264API,
+    encoder::{BitRate, Encoder as H264Encoder, EncoderConfig, FrameRate, FrameType, UsageType},
+    formats::{RgbaSliceU8, YUVBuffer},
 };
 #[cfg(target_os = "macos")]
 use screencapturekit::{
@@ -39,6 +50,9 @@ use tray_icon::{
 use xcap::Monitor;
 #[cfg(not(target_os = "macos"))]
 use xcap::Window;
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod recording_audio;
 
 #[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -106,6 +120,11 @@ struct MacShot {
     region_background_texture: Option<egui::TextureHandle>,
     save_folder: Option<PathBuf>,
     evidence_files: Vec<PathBuf>,
+    recording_files: Vec<PathBuf>,
+    recording_preview_path: Option<PathBuf>,
+    recording_preview_image: Option<DynamicImage>,
+    recording_preview_texture: Option<egui::TextureHandle>,
+    recording_preview_details: Option<String>,
     timestamp_enabled: bool,
     filename_prefix: String,
     show_capture_notice: bool,
@@ -144,6 +163,8 @@ struct MacShot {
     continuous_capture_failed_count: u64,
     continuous_capture_session_active: bool,
     recording_sequence: u64,
+    recording_format: RecordingFormat,
+    video_quality: VideoQuality,
     capture_notice: Option<CaptureNotice>,
     recording_rx: Receiver<RecordingEvent>,
     recording_tx: Sender<RecordingEvent>,
@@ -270,6 +291,94 @@ enum TrayAction {
 enum RecordingEvent {
     Started { path: PathBuf },
     Finished(Result<PathBuf, String>),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RecordingFormat {
+    #[default]
+    Gif,
+    Mp4,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum VideoQuality {
+    #[default]
+    Standard,
+    High,
+    Best,
+}
+
+impl VideoQuality {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "標準（6 Mbps・10 fps）",
+            Self::High => "高画質（12 Mbps・15 fps）",
+            Self::Best => "最高画質（20 Mbps・30 fps）",
+        }
+    }
+
+    fn bitrate(self) -> u32 {
+        match self {
+            Self::Standard => 6_000_000,
+            Self::High => 12_000_000,
+            Self::Best => 20_000_000,
+        }
+    }
+
+    fn frame_rate(self) -> f32 {
+        match self {
+            Self::Standard => 10.0,
+            Self::High => 15.0,
+            Self::Best => 30.0,
+        }
+    }
+
+    fn frame_interval(self) -> Duration {
+        Duration::from_secs_f64(1.0 / f64::from(self.frame_rate()))
+    }
+
+    fn frame_duration_ms(self) -> u64 {
+        (1000.0 / f64::from(self.frame_rate())).round() as u64
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "high" => Self::High,
+            "best" => Self::Best,
+            _ => Self::Standard,
+        }
+    }
+
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::High => "high",
+            Self::Best => "best",
+        }
+    }
+}
+
+impl RecordingFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Gif => "gif",
+            Self::Mp4 => "mp4",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gif => "GIF",
+            Self::Mp4 => "MP4（H.264）",
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "mp4" => Self::Mp4,
+            _ => Self::Gif,
+        }
+    }
 }
 
 const DEFAULT_CAPTURE_HOTKEY: &str = "Alt+Shift+KeyS";
@@ -466,6 +575,9 @@ impl Default for MacShot {
         let recording_hotkey = recording_hotkey_text
             .parse()
             .unwrap_or_else(|_| DEFAULT_RECORDING_HOTKEY.parse().unwrap());
+        let recording_format =
+            RecordingFormat::from_setting(&load_setting("recording_format", "gif"));
+        let video_quality = VideoQuality::from_setting(&load_setting("video_quality", "standard"));
         Self {
             monitors,
             windows,
@@ -493,6 +605,11 @@ impl Default for MacShot {
             region_background_texture: None,
             save_folder,
             evidence_files: Vec::new(),
+            recording_files: Vec::new(),
+            recording_preview_path: None,
+            recording_preview_image: None,
+            recording_preview_texture: None,
+            recording_preview_details: None,
             timestamp_enabled,
             filename_prefix,
             show_capture_notice,
@@ -531,6 +648,8 @@ impl Default for MacShot {
             continuous_capture_failed_count: 0,
             continuous_capture_session_active: false,
             recording_sequence: 0,
+            recording_format,
+            video_quality,
             capture_notice: None,
             recording_rx,
             recording_tx,
@@ -686,6 +805,8 @@ struct Preferences<'a> {
     annotation_color: &'a str,
     annotation_width: f32,
     save_folder: &'a Path,
+    recording_format: RecordingFormat,
+    video_quality: VideoQuality,
 }
 
 fn save_preferences(preferences: &Preferences<'_>) -> Result<(), String> {
@@ -719,6 +840,18 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         .map_err(|error| error.to_string())?;
     writeln!(file, "save_folder={}", preferences.save_folder.display())
         .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "recording_format={}",
+        preferences.recording_format.extension()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "video_quality={}",
+        preferences.video_quality.setting()
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -751,6 +884,164 @@ fn evidence_images(folder: &Path) -> Vec<PathBuf> {
             .then_with(|| left_key.3.cmp(&right_key.3))
     });
     files
+}
+
+fn recording_files(folder: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<_> = std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(extension.to_ascii_lowercase().as_str(), "gif" | "mp4")
+                })
+        })
+        .collect();
+    files.sort_by(|left, right| {
+        let left_time = std::fs::metadata(left)
+            .and_then(|meta| meta.modified())
+            .ok();
+        let right_time = std::fs::metadata(right)
+            .and_then(|meta| meta.modified())
+            .ok();
+        right_time.cmp(&left_time)
+    });
+    files
+}
+
+fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let file_size = std::fs::metadata(path)
+        .map(|meta| meta.len())
+        .unwrap_or_default();
+    if extension == "gif" {
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        options.skip_frame_decoding(true);
+        let mut decoder = options.read_info(file).map_err(|error| error.to_string())?;
+        let (width, height) = (decoder.width(), decoder.height());
+        let mut frame_count = 0_u64;
+        let mut duration_ms = 0_u64;
+        while let Some(frame) = decoder
+            .read_next_frame()
+            .map_err(|error| error.to_string())?
+        {
+            frame_count += 1;
+            duration_ms += u64::from(frame.delay) * 10;
+        }
+        drop(decoder);
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(file).map_err(|error| error.to_string())?;
+        let first = decoder
+            .read_next_frame()
+            .map_err(|error| error.to_string())?
+            .map(|frame| frame.buffer.to_vec());
+        let pixels = first.ok_or_else(|| "GIFに表示できるフレームがありません。".to_string())?;
+        let image = image::RgbaImage::from_raw(u32::from(width), u32::from(height), pixels)
+            .ok_or_else(|| "GIFのプレビュー画像を読み込めません。".to_string())?;
+        return Ok((
+            DynamicImage::ImageRgba8(image),
+            format!(
+                "GIF・{frame_count}フレーム・{:.2}秒・{}",
+                duration_ms as f64 / 1000.0,
+                format_file_size(file_size)
+            ),
+        ));
+    }
+    if extension != "mp4" {
+        return Err("この録画形式のプレビューには対応していません。".into());
+    }
+
+    use openh264::formats::YUVSource;
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let size = file.metadata().map_err(|error| error.to_string())?.len();
+    let mut reader = mp4::Mp4Reader::read_header(file, size).map_err(|error| error.to_string())?;
+    let track_id = *reader
+        .tracks()
+        .iter()
+        .find(|(_, track)| {
+            track
+                .media_type()
+                .is_ok_and(|kind| kind == mp4::MediaType::H264)
+        })
+        .map(|(id, _)| id)
+        .ok_or_else(|| "MP4にH.264映像トラックがありません。".to_string())?;
+    let track = reader
+        .tracks()
+        .get(&track_id)
+        .ok_or("MP4映像トラックがありません。")?;
+    let avcc = &track
+        .trak
+        .mdia
+        .minf
+        .stbl
+        .stsd
+        .avc1
+        .as_ref()
+        .ok_or("MP4映像情報がありません。")?
+        .avcc;
+    let mut decoder = H264Decoder::new().map_err(|error| error.to_string())?;
+    let mut packet = Vec::new();
+    for nal in avcc
+        .sequence_parameter_sets
+        .iter()
+        .chain(&avcc.picture_parameter_sets)
+    {
+        packet.extend_from_slice(&[0, 0, 0, 1]);
+        packet.extend_from_slice(&nal.bytes);
+    }
+    let _ = decoder.decode(&packet).map_err(|error| error.to_string())?;
+    let sample = reader
+        .read_sample(track_id, 1)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "MP4に映像フレームがありません。".to_string())?;
+    let mut cursor = 0;
+    while cursor + 4 <= sample.bytes.len() {
+        let len = u32::from_be_bytes(sample.bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+        let end = cursor
+            .checked_add(len)
+            .filter(|end| *end <= sample.bytes.len())
+            .ok_or_else(|| "MP4映像データを読み取れません。".to_string())?;
+        packet.extend_from_slice(&[0, 0, 0, 1]);
+        packet.extend_from_slice(&sample.bytes[cursor..end]);
+        cursor = end;
+    }
+    let decoded = decoder
+        .decode(&packet)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "MP4の最初のフレームをデコードできません。".to_string())?;
+    let (width, height) = decoded.dimensions();
+    let mut rgb = vec![0; decoded.rgb8_len()];
+    decoded.write_rgb8(&mut rgb);
+    let image = image::RgbImage::from_raw(width as u32, height as u32, rgb)
+        .ok_or_else(|| "MP4のプレビュー画像を作成できません。".to_string())?;
+    Ok((
+        DynamicImage::ImageRgb8(image),
+        format!(
+            "MP4・H.264・{:.2}秒・{}",
+            reader.duration().as_secs_f64(),
+            format_file_size(file_size)
+        ),
+    ))
+}
+
+fn format_file_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    }
 }
 
 fn parse_evidence_identity(path: &Path) -> Option<(String, u64)> {
@@ -849,8 +1140,21 @@ fn new_evidence_path(
     folder.join(format!("{prefix}-{timestamp}-{sequence:03}{suffix}.png"))
 }
 
+#[cfg(test)]
 fn new_recording_path(folder: &Path, timestamp: &str, sequence: u64) -> PathBuf {
-    folder.join(format!("recording-{timestamp}-{sequence:03}.gif"))
+    new_recording_path_for_format(folder, timestamp, sequence, RecordingFormat::Gif)
+}
+
+fn new_recording_path_for_format(
+    folder: &Path,
+    timestamp: &str,
+    sequence: u64,
+    format: RecordingFormat,
+) -> PathBuf {
+    folder.join(format!(
+        "recording-{timestamp}-{sequence:03}.{}",
+        format.extension()
+    ))
 }
 
 fn gif_delay_centiseconds(elapsed: Duration) -> u16 {
@@ -1643,6 +1947,47 @@ fn monitor_for_recording(target: CaptureTarget) -> Result<Monitor, String> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_screen(
+    target: CaptureTarget,
+    folder: PathBuf,
+    file_timestamp: String,
+    sequence: u64,
+    format: RecordingFormat,
+    quality: VideoQuality,
+    stop_rx: Receiver<()>,
+    event_tx: Sender<RecordingEvent>,
+    ctx: egui::Context,
+) {
+    let partial_path = new_recording_path_for_format(&folder, &file_timestamp, sequence, format);
+    let result = match format {
+        RecordingFormat::Gif => record_screen_to_gif(
+            target,
+            folder,
+            file_timestamp,
+            sequence,
+            stop_rx,
+            event_tx.clone(),
+            ctx.clone(),
+        ),
+        RecordingFormat::Mp4 => record_screen_to_mp4(
+            target,
+            folder,
+            file_timestamp,
+            sequence,
+            quality,
+            stop_rx,
+            event_tx.clone(),
+            ctx.clone(),
+        ),
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(partial_path);
+    }
+    let _ = event_tx.send(RecordingEvent::Finished(result));
+    ctx.request_repaint();
+}
+
 fn record_screen_to_gif(
     target: CaptureTarget,
     folder: PathBuf,
@@ -1651,78 +1996,354 @@ fn record_screen_to_gif(
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
-) {
-    let result = (|| -> Result<PathBuf, String> {
-        std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-        let monitor = monitor_for_recording(target)?;
-        let display_capture = DisplayCapture::new(&monitor)?;
-        let first = display_capture.capture_image()?;
-        if first.width() > u16::MAX as u32 || first.height() > u16::MAX as u32 {
-            return Err("画面サイズがGIFの上限を超えています。".into());
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let monitor = monitor_for_recording(target)?;
+    let display_capture = DisplayCapture::new(&monitor)?;
+    let first = display_capture.capture_image()?;
+    if first.width() > u16::MAX as u32 || first.height() > u16::MAX as u32 {
+        return Err("画面サイズがGIFの上限を超えています。".into());
+    }
+    let width = first.width() as u16;
+    let height = first.height() as u16;
+    let path =
+        new_recording_path_for_format(&folder, &file_timestamp, sequence, RecordingFormat::Gif);
+    let _ = event_tx.send(RecordingEvent::Started { path: path.clone() });
+
+    let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
+    let mut encoder =
+        gif::Encoder::new(file, width, height, &[]).map_err(|error| error.to_string())?;
+    encoder
+        .set_repeat(gif::Repeat::Infinite)
+        .map_err(|error| error.to_string())?;
+
+    let mut first_pixels = first.into_raw();
+    write_gif_frame(&mut encoder, width, height, &mut first_pixels, 10)
+        .map_err(|error| error.to_string())?;
+    let mut last_written = Instant::now();
+    let mut last_status = Instant::now();
+
+    loop {
+        match stop_rx.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
         }
-        let width = first.width() as u16;
-        let height = first.height() as u16;
-        let path = new_recording_path(&folder, &file_timestamp, sequence);
-        let _ = event_tx.send(RecordingEvent::Started { path: path.clone() });
+        if last_status.elapsed() > Duration::from_millis(250) {
+            ctx.request_repaint();
+            last_status = Instant::now();
+        }
+        match stop_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        let frame = display_capture.capture_image()?;
+        if frame.width() != width as u32
+            || frame.height() != height as u32
+            || last_written.elapsed() < Duration::from_millis(100)
+        {
+            continue;
+        }
+        let mut pixels = frame.into_raw();
+        write_gif_frame(
+            &mut encoder,
+            width,
+            height,
+            &mut pixels,
+            gif_delay_centiseconds(last_written.elapsed()),
+        )
+        .map_err(|error| error.to_string())?;
+        last_written = Instant::now();
+    }
+    encoder
+        .into_inner()
+        .map_err(|error| error.to_string())?
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    Ok(path)
+}
 
-        let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
-        let mut encoder =
-            gif::Encoder::new(file, width, height, &[]).map_err(|error| error.to_string())?;
-        encoder
-            .set_repeat(gif::Repeat::Infinite)
-            .map_err(|error| error.to_string())?;
+struct H264Packet {
+    sample: Vec<u8>,
+    sps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+    is_sync: bool,
+}
 
-        let mut first_pixels = first.into_raw();
-        write_gif_frame(&mut encoder, width, height, &mut first_pixels, 10)
-            .map_err(|error| error.to_string())?;
-        let mut last_written = Instant::now();
-        let mut last_status = Instant::now();
+type H264Priming = (Vec<u8>, Vec<u8>, Vec<H264Packet>);
 
-        loop {
-            match stop_rx.try_recv() {
-                Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-            if last_status.elapsed() > Duration::from_millis(250) {
-                ctx.request_repaint();
-                last_status = Instant::now();
-            }
-            match stop_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-            }
-            let frame = display_capture.capture_image()?;
-            if frame.width() != width as u32
-                || frame.height() != height as u32
-                || last_written.elapsed() < Duration::from_millis(100)
-            {
+fn encode_h264_frame(
+    encoder: &mut H264Encoder,
+    frame: &image::RgbaImage,
+) -> Result<H264Packet, String> {
+    let rgb = RgbaSliceU8::new(
+        frame.as_raw(),
+        (frame.width() as usize, frame.height() as usize),
+    );
+    let yuv = YUVBuffer::from_rgb_source(rgb);
+    let encoded = encoder.encode(&yuv).map_err(|error| error.to_string())?;
+    let mut sample = Vec::new();
+    let mut sps = None;
+    let mut pps = None;
+    for layer_index in 0..encoded.num_layers() {
+        let layer = encoded
+            .layer(layer_index)
+            .ok_or_else(|| "H.264フレームを読み取れません。".to_string())?;
+        for nal_index in 0..layer.nal_count() {
+            let nal = layer
+                .nal_unit(nal_index)
+                .ok_or_else(|| "H.264データが不完全です。".to_string())?;
+            let nal = nal
+                .strip_prefix(&[0, 0, 0, 1])
+                .or_else(|| nal.strip_prefix(&[0, 0, 1]))
+                .unwrap_or(nal);
+            let Some(&header) = nal.first() else {
                 continue;
+            };
+            match header & 0x1f {
+                7 => sps = Some(nal.to_vec()),
+                8 => pps = Some(nal.to_vec()),
+                _ => {
+                    let size = u32::try_from(nal.len())
+                        .map_err(|_| "H.264フレームが大きすぎます。".to_string())?;
+                    sample.extend_from_slice(&size.to_be_bytes());
+                    sample.extend_from_slice(nal);
+                }
             }
-            let mut pixels = frame.into_raw();
-            write_gif_frame(
-                &mut encoder,
-                width,
-                height,
-                &mut pixels,
-                gif_delay_centiseconds(last_written.elapsed()),
+        }
+    }
+    Ok(H264Packet {
+        sample,
+        sps,
+        pps,
+        is_sync: encoded.frame_type() == FrameType::IDR,
+    })
+}
+
+fn prime_h264_encoder(
+    encoder: &mut H264Encoder,
+    frame: &image::RgbaImage,
+) -> Result<H264Priming, String> {
+    let mut sps = None;
+    let mut pps = None;
+    let mut packets = Vec::new();
+    for _ in 0..5 {
+        let mut packet = encode_h264_frame(encoder, frame)?;
+        sps = sps.or(packet.sps.take());
+        pps = pps.or(packet.pps.take());
+        packets.push(packet);
+        if packets.iter().any(|packet| !packet.sample.is_empty())
+            && let (Some(sps), Some(pps)) = (sps.take(), pps.take())
+        {
+            return Ok((sps, pps, packets));
+        }
+    }
+    Err("H.264の初期フレームを作成できません。".into())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_screen_to_mp4(
+    target: CaptureTarget,
+    folder: PathBuf,
+    file_timestamp: String,
+    sequence: u64,
+    quality: VideoQuality,
+    stop_rx: Receiver<()>,
+    event_tx: Sender<RecordingEvent>,
+    ctx: egui::Context,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let monitor = monitor_for_recording(target)?;
+    let display_capture = DisplayCapture::new(&monitor)?;
+    let first = display_capture.capture_image()?;
+    let width = first.width() & !1;
+    let height = first.height() & !1;
+    if width < 2 || height < 2 || width > u16::MAX as u32 || height > u16::MAX as u32 {
+        return Err("MP4録画には2〜65535ピクセルの画面サイズが必要です。".into());
+    }
+    let first = if first.width() != width || first.height() != height {
+        image::imageops::crop_imm(&first, 0, 0, width, height).to_image()
+    } else {
+        first
+    };
+    let audio_capture = recording_audio::AudioCaptureSession::start()?;
+    let mut audio_mixer = recording_audio::AudioMixer::new();
+    let mut aac_encoder = recording_audio::create_aac_encoder()?;
+    let path =
+        new_recording_path_for_format(&folder, &file_timestamp, sequence, RecordingFormat::Mp4);
+    let mut partial_file = PartialRecordingFile::new(path.clone());
+    let mut h264 = H264Encoder::with_api_config(
+        OpenH264API::from_source(),
+        EncoderConfig::new()
+            .bitrate(BitRate::from_bps(quality.bitrate()))
+            .max_frame_rate(FrameRate::from_hz(quality.frame_rate()))
+            .usage_type(UsageType::ScreenContentRealTime),
+    )
+    .map_err(|error| error.to_string())?;
+    let (sps, pps, initial_packets) = prime_h264_encoder(&mut h264, &first)?;
+
+    let fourcc = |value: &str| value.parse::<FourCC>().map_err(|error| error.to_string());
+    let config = Mp4Config {
+        major_brand: fourcc("isom")?,
+        minor_version: 512,
+        compatible_brands: vec![
+            fourcc("isom")?,
+            fourcc("iso2")?,
+            fourcc("avc1")?,
+            fourcc("mp41")?,
+        ],
+        timescale: 1000,
+    };
+    let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
+    let mut writer = Mp4Writer::write_start(file, &config).map_err(|error| error.to_string())?;
+    writer
+        .add_track(&TrackConfig::from(AvcConfig {
+            width: width as u16,
+            height: height as u16,
+            seq_param_set: sps,
+            pic_param_set: pps,
+        }))
+        .map_err(|error| error.to_string())?;
+    let mut audio_track = TrackConfig::from(AacConfig {
+        bitrate: recording_audio::bitrate(),
+        profile: AudioObjectType::AacLowComplexity,
+        freq_index: SampleFreqIndex::Freq48000,
+        chan_conf: ChannelConfig::Stereo,
+    });
+    audio_track.timescale = recording_audio::sample_rate();
+    writer
+        .add_track(&audio_track)
+        .map_err(|error| error.to_string())?;
+    let _ = event_tx.send(RecordingEvent::Started { path: path.clone() });
+    let mut frame_index = 0u64;
+    let frame_interval = quality.frame_interval();
+    let frame_duration_ms = quality.frame_duration_ms();
+    for packet in initial_packets {
+        if !packet.sample.is_empty() {
+            write_mp4_sample(&mut writer, frame_index, packet, frame_duration_ms)?;
+            frame_index += 1;
+        }
+    }
+    let mut last_written = Instant::now();
+    let mut last_status = Instant::now();
+    loop {
+        match stop_rx.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        audio_capture.drain_into(&mut audio_mixer)?;
+        for (start, samples) in audio_mixer.take_ready() {
+            let encoded = recording_audio::encode_block(&mut *aac_encoder, start, samples)?;
+            write_mp4_audio_samples(&mut writer, encoded)?;
+        }
+        if last_status.elapsed() > Duration::from_millis(250) {
+            ctx.request_repaint();
+            last_status = Instant::now();
+        }
+        match stop_rx.recv_timeout(frame_interval) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        let frame = display_capture.capture_image()?;
+        if frame.width() != width || frame.height() != height {
+            continue;
+        }
+        if last_written.elapsed() < frame_interval {
+            continue;
+        }
+        let packet = encode_h264_frame(&mut h264, &frame)?;
+        if !packet.sample.is_empty() {
+            write_mp4_sample(&mut writer, frame_index, packet, frame_duration_ms)?;
+            frame_index += 1;
+        }
+        last_written = Instant::now();
+    }
+    if frame_index < 2 {
+        return Err("MP4動画を作るには、1秒以上録画してください。".into());
+    }
+    for (start, samples) in audio_mixer.finish(&audio_capture)? {
+        let encoded = recording_audio::encode_block(&mut *aac_encoder, start, samples)?;
+        write_mp4_audio_samples(&mut writer, encoded)?;
+    }
+    let encoded = recording_audio::finish_encoder(&mut *aac_encoder)?;
+    write_mp4_audio_samples(&mut writer, encoded)?;
+    writer.write_end().map_err(|error| error.to_string())?;
+    writer
+        .into_writer()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    partial_file.keep();
+    Ok(path)
+}
+
+struct PartialRecordingFile {
+    path: PathBuf,
+    keep: bool,
+}
+
+impl PartialRecordingFile {
+    fn new(path: PathBuf) -> Self {
+        Self { path, keep: false }
+    }
+
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for PartialRecordingFile {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn write_mp4_sample<W: std::io::Write + std::io::Seek>(
+    writer: &mut Mp4Writer<W>,
+    frame_index: u64,
+    packet: H264Packet,
+    frame_duration_ms: u64,
+) -> Result<(), String> {
+    if packet.sample.is_empty() {
+        return Ok(());
+    }
+    let duration = u32::try_from(frame_duration_ms)
+        .map_err(|_| "動画フレームの長さが不正です。".to_string())?;
+    writer
+        .write_sample(
+            1,
+            &Mp4Sample {
+                start_time: frame_index * frame_duration_ms,
+                duration,
+                rendering_offset: 0,
+                is_sync: packet.is_sync,
+                bytes: Bytes::from(packet.sample),
+            },
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn write_mp4_audio_samples<W: std::io::Write + std::io::Seek>(
+    writer: &mut Mp4Writer<W>,
+    samples: Vec<zvidlib_core::EncodedSample>,
+) -> Result<(), String> {
+    for sample in samples {
+        let start_time = u64::try_from(sample.pts.max(0))
+            .map_err(|_| "音声の時間情報が不正です。".to_string())?;
+        writer
+            .write_sample(
+                2,
+                &Mp4Sample {
+                    start_time,
+                    duration: sample.duration,
+                    rendering_offset: 0,
+                    is_sync: sample.is_sync,
+                    bytes: Bytes::from(sample.data),
+                },
             )
             .map_err(|error| error.to_string())?;
-            last_written = Instant::now();
-        }
-        encoder
-            .into_inner()
-            .map_err(|error| error.to_string())?
-            .sync_all()
-            .map_err(|error| error.to_string())?;
-        Ok(path)
-    })();
-
-    if let Err(error) = &result {
-        let _ = event_tx.send(RecordingEvent::Finished(Err(error.clone())));
-    } else {
-        let _ = event_tx.send(RecordingEvent::Finished(result));
     }
-    ctx.request_repaint();
+    Ok(())
 }
 
 fn write_gif_frame<W: Write>(
@@ -2118,6 +2739,8 @@ impl MacShot {
         self.recording_sequence += 1;
         let sequence = self.recording_sequence;
         let target = self.capture_target;
+        let format = self.recording_format;
+        let quality = self.video_quality;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         let now = Local::now();
         let file_timestamp = now.format("%Y%m%d-%H%M%S-%3f").to_string();
@@ -2127,16 +2750,22 @@ impl MacShot {
         }
         self.recording_starting = true;
         self.record_pending_stop = false;
-        self.status = format!("録画を開始しています（GIF・{}枚目）…", sequence);
+        self.status = format!(
+            "録画を開始しています（{}・{}枚目）…",
+            format.label(),
+            sequence
+        );
         minimize_main_window_for_capture(ctx);
         let sender = self.recording_tx.clone();
         let context = ctx.clone();
         thread::spawn(move || {
-            record_screen_to_gif(
+            record_screen(
                 target,
                 folder,
                 file_timestamp,
                 sequence,
+                format,
+                quality,
                 stop_rx,
                 sender,
                 context,
@@ -2285,6 +2914,8 @@ impl MacShot {
             annotation_color: &self.annotation_color,
             annotation_width: self.annotation_width,
             save_folder: &folder,
+            recording_format: self.recording_format,
+            video_quality: self.video_quality,
         })
     }
 
@@ -2840,6 +3471,7 @@ impl MacShot {
                     self.left_image = Some(DynamicImage::ImageRgba8(image));
                     let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                     self.evidence_files = evidence_images(&folder);
+                    self.recording_files = recording_files(&folder);
                     self.left_texture = None;
                     self.crop_selection = None;
                     self.crop_drag_start = None;
@@ -3393,6 +4025,7 @@ impl MacShot {
                                 let folder =
                                     self.save_folder.clone().unwrap_or_else(default_save_folder);
                                 self.evidence_files = evidence_images(&folder);
+                                self.recording_files = recording_files(&folder);
                             }
                         }
                     }
@@ -3578,6 +4211,7 @@ impl MacShot {
                     self.page = Page::Evidence;
                     let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                     self.evidence_files = evidence_images(&folder);
+                    self.recording_files = recording_files(&folder);
                 }
                 if let Some(index) = self.editing_index {
                     ui.separator();
@@ -3834,6 +4468,7 @@ impl MacShot {
                 }
                 if ui.button("↻  更新").clicked() {
                     self.evidence_files = evidence_images(&folder);
+                    self.recording_files = recording_files(&folder);
                 }
             });
         });
@@ -3884,6 +4519,55 @@ impl MacShot {
                         ui.add_space(5.0);
                     }
                 });
+            }
+            ui.add_space(16.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
+                ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
+            });
+            ui.label(egui::RichText::new("録画を選ぶと、最初のフレームと長さをアプリ内で確認できます。動画全体の再生は録画を開くボタンから行えます。").size(11.0).color(TEXT_MUTED));
+            ui.add_space(8.0);
+            if self.recording_files.is_empty() {
+                ui.label(egui::RichText::new("保存された録画はありません。録画後に「更新」を押してください。").color(TEXT_MUTED));
+            } else {
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    let files = self.recording_files.clone();
+                    for path in files {
+                        let selected = self.recording_preview_path.as_ref() == Some(&path);
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(selected, format!("▶  {name}")).clicked() {
+                                match recording_preview(&path) {
+                                    Ok((image, details)) => {
+                                        self.recording_preview_path = Some(path.clone());
+                                        self.recording_preview_image = Some(image);
+                                        self.recording_preview_texture = None;
+                                        self.recording_preview_details = Some(details.clone());
+                                        self.status = format!("録画を読み込みました: {details}");
+                                    }
+                                    Err(error) => self.status = format!("録画を読み込めませんでした: {error}"),
+                                }
+                            }
+                            if ui.small_button("ファイルを開く").clicked() {
+                                #[cfg(target_os = "macos")]
+                                let command = "open";
+                                #[cfg(target_os = "windows")]
+                                let command = "explorer";
+                                let _ = std::process::Command::new(command).arg(&path).spawn();
+                            }
+                        });
+                    }
+                });
+                if let (Some(path), Some(image)) = (&self.recording_preview_path, &self.recording_preview_image) {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).strong());
+                    if let Some(details) = &self.recording_preview_details {
+                        ui.label(egui::RichText::new(details).size(11.0).color(TEXT_MUTED));
+                    }
+                    ui.add_space(6.0);
+                    Self::show_image(ui, image, &mut self.recording_preview_texture, "recording-preview");
+                }
             }
         });
     }
@@ -3941,9 +4625,51 @@ impl MacShot {
             glass_frame().show(&mut columns[1], |ui| {
                 ui.label(egui::RichText::new("録画と保存先").size(18.0).strong());
                 ui.add_space(8.0);
-                ui.label("録画は対象ウィンドウのある画面をGIFで保存します。全画面を選ぶとメイン画面を録画します。");
+                ui.label("録画は対象ウィンドウのある画面を保存します。全画面を選ぶとメイン画面を録画します。");
+                ui.horizontal(|ui| {
+                    ui.label("保存形式");
+                    let previous = self.recording_format;
+                    egui::ComboBox::from_id_salt("recording_format")
+                        .selected_text(self.recording_format.label())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.recording_format, RecordingFormat::Gif, "GIF");
+                            ui.selectable_value(&mut self.recording_format, RecordingFormat::Mp4, "MP4（H.264）");
+                        });
+                    if self.recording_format != previous {
+                        if let Err(error) = self.save_preferences() {
+                            self.settings_error = Some(format!("録画形式を保存できません: {error}"));
+                        } else {
+                            self.settings_error = None;
+                            self.status = format!("録画形式を{}に変更しました", self.recording_format.label());
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("MP4画質");
+                    let previous = self.video_quality;
+                    egui::ComboBox::from_id_salt("video_quality")
+                        .selected_text(self.video_quality.label())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.video_quality, VideoQuality::Standard, VideoQuality::Standard.label());
+                            ui.selectable_value(&mut self.video_quality, VideoQuality::High, VideoQuality::High.label());
+                            ui.selectable_value(&mut self.video_quality, VideoQuality::Best, VideoQuality::Best.label());
+                        });
+                    if self.video_quality != previous {
+                        if let Err(error) = self.save_preferences() {
+                            self.settings_error = Some(format!("画質を保存できません: {error}"));
+                        } else {
+                            self.settings_error = None;
+                            self.status = format!("MP4画質を{}に変更しました", self.video_quality.label());
+                        }
+                    }
+                });
                 ui.label(
-                    egui::RichText::new("1画面・10fps・音声なし")
+                    egui::RichText::new("MP4は画面解像度を維持します。画質設定でビットレートとフレームレートを変更できます。")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+                ui.label(
+                    egui::RichText::new("MP4はシステム音声とマイク音声をまとめて記録します。マイクの使用許可が必要です。GIFは音声なしです。")
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
@@ -4288,6 +5014,23 @@ mod tests {
     }
 
     #[test]
+    fn video_quality_presets_change_bitrate_and_frame_rate() {
+        assert_eq!(VideoQuality::Standard.bitrate(), 6_000_000);
+        assert_eq!(VideoQuality::Standard.frame_rate(), 10.0);
+        assert_eq!(VideoQuality::High.bitrate(), 12_000_000);
+        assert_eq!(VideoQuality::High.frame_rate(), 15.0);
+        assert_eq!(VideoQuality::Best.bitrate(), 20_000_000);
+        assert_eq!(VideoQuality::Best.frame_rate(), 30.0);
+        assert_eq!(VideoQuality::Best.frame_interval().as_millis(), 33);
+        assert_eq!(VideoQuality::from_setting("high"), VideoQuality::High);
+        assert_eq!(VideoQuality::from_setting("best").setting(), "best");
+        assert_eq!(
+            VideoQuality::from_setting("unknown"),
+            VideoQuality::Standard
+        );
+    }
+
+    #[test]
     fn continuous_capture_status_shows_saved_count_and_completion() {
         assert_eq!(
             continuous_capture_status_label(true, true, false, 0, 0),
@@ -4474,6 +5217,8 @@ mod tests {
             annotation_color: "blue",
             annotation_width: 3.5,
             save_folder: Path::new("/tmp/MacShot=Evidence"),
+            recording_format: RecordingFormat::Mp4,
+            video_quality: VideoQuality::High,
         };
         let mut serialized = Vec::new();
         write_preferences(&mut serialized, &preferences).unwrap();
@@ -4507,6 +5252,11 @@ mod tests {
         assert_eq!(
             parse_setting(&serialized, "save_folder", "/default"),
             "/tmp/MacShot=Evidence"
+        );
+        assert_eq!(parse_setting(&serialized, "recording_format", "gif"), "mp4");
+        assert_eq!(
+            parse_setting(&serialized, "video_quality", "standard"),
+            "high"
         );
         assert_eq!(
             parse_setting(&serialized, "missing", "fallback"),
@@ -4567,6 +5317,79 @@ mod tests {
         assert_eq!(second.buffer.len(), 8);
         assert_ne!(first_pixels, second.buffer.as_ref());
         assert!(decoder.read_next_frame().unwrap().is_none());
+    }
+
+    #[test]
+    fn recording_list_finds_gif_and_mp4_but_not_images() {
+        let directory = TestDirectory::new("recording-list");
+        for name in ["clip.gif", "movie.mp4", "still.png", "other.mov"] {
+            std::fs::write(directory.path().join(name), b"test").unwrap();
+        }
+        let files = recording_files(directory.path());
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|path| path.ends_with("clip.gif")));
+        assert!(files.iter().any(|path| path.ends_with("movie.mp4")));
+    }
+
+    #[test]
+    fn gif_recording_preview_reads_first_frame_and_duration() {
+        let directory = TestDirectory::new("gif-preview");
+        let path = directory.path().join("clip.gif");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = gif::Encoder::new(file, 2, 1, &[]).unwrap();
+        let mut pixels = vec![220, 20, 30, 255, 220, 20, 30, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut pixels, 15).unwrap();
+        drop(encoder);
+        let (image, details) = recording_preview(&path).unwrap();
+        assert_eq!(image.dimensions(), (2, 1));
+        assert!(details.contains("GIF・1フレーム・0.15秒"));
+    }
+
+    #[test]
+    fn mp4_recording_preview_decodes_first_h264_frame() {
+        let directory = TestDirectory::new("mp4-preview");
+        let path = directory.path().join("clip.mp4");
+        let mut encoder = H264Encoder::with_api_config(
+            OpenH264API::from_source(),
+            EncoderConfig::new()
+                .bitrate(BitRate::from_bps(200_000))
+                .max_frame_rate(FrameRate::from_hz(10.0))
+                .usage_type(UsageType::ScreenContentRealTime),
+        )
+        .unwrap();
+        let frame = image::RgbaImage::from_pixel(64, 48, Rgba([80, 140, 220, 255]));
+        let (sps, pps, initial_packets) = prime_h264_encoder(&mut encoder, &frame).unwrap();
+        let config = Mp4Config {
+            major_brand: "isom".parse().unwrap(),
+            minor_version: 512,
+            compatible_brands: vec!["isom".parse().unwrap(), "avc1".parse().unwrap()],
+            timescale: 1000,
+        };
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = Mp4Writer::write_start(file, &config).unwrap();
+        writer
+            .add_track(&TrackConfig::from(AvcConfig {
+                width: 64,
+                height: 48,
+                seq_param_set: sps,
+                pic_param_set: pps,
+            }))
+            .unwrap();
+        let mut frame_index = 0;
+        for packet in initial_packets {
+            if !packet.sample.is_empty() {
+                write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
+                frame_index += 1;
+            }
+        }
+        let second = encode_h264_frame(&mut encoder, &frame).unwrap();
+        write_mp4_sample(&mut writer, frame_index, second, 100).unwrap();
+        writer.write_end().unwrap();
+        writer.into_writer().sync_all().unwrap();
+
+        let (image, details) = recording_preview(&path).unwrap();
+        assert_eq!(image.dimensions(), (64, 48));
+        assert!(details.contains("MP4・H.264・0.20秒"));
     }
 
     #[test]

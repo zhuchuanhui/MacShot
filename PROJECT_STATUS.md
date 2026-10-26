@@ -4,17 +4,33 @@
 
 - **Name:** MacShot
 - **Problem / intended user:** WinMergeが古く、画面エビデンスの取得と確認を軽く行いたい本人。
-- **MVP:** アクティブウィンドウ、範囲選択、メイン画面、全画面、個別ディスプレイ、または指定ウィンドウを撮影。日時と連番を画像内・ファイル名に記録。変更可能なグローバルショートカットとメニューバー／通知領域メニューから各撮影方式・録画を開始。連続撮影モードではアプリを隠し、ホットキーごとの撮影要求を順番に保存。録画は選択した画面をGIF保存。赤枠・矢印・範囲切り出しをPNG保存し、編集版も元画像と同じ撮影日時・連番で一覧順を維持。PNG/JPEGを左右、重ね合わせ、またはピクセル差分で比較。
+- **MVP:** アクティブウィンドウ、範囲選択、メイン画面、全画面、個別ディスプレイ、または指定ウィンドウを撮影。日時と連番を画像内・ファイル名に記録。変更可能なグローバルショートカットとメニューバー／通知領域メニューから各撮影方式・録画を開始。連続撮影モードではアプリを隠し、ホットキーごとの撮影要求を順番に保存。録画は選択した画面をGIFまたはMP4（H.264）で保存し、証跡一覧から先頭フレームと基本情報を確認可能。赤枠・矢印・範囲切り出しをPNG保存し、編集版も元画像と同じ撮影日時・連番で一覧順を維持。PNG/JPEGを左右、重ね合わせ、またはピクセル差分で比較。
 - **Acceptance criteria:** 撮影対象を選び、ショートカット、ボタン、またはメニューバーのメニューから撮影できる。画像ファイルは日時と連番つきで保存され、プレビューと完了小窓に表示される。ショートカットを設定画面で変更できる。録画を開始・停止してGIF保存できる。赤枠、矢印、範囲切り出しを加えて別PNGに保存できる。
 - **Deferred:** 遅延撮影、インストーラー。撮影画像の履歴一覧と画像ごとの編集導線は実装済み。
 
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.5 is public. Windows device testing confirms full-display screenshot, range-selection cancel, evidence refresh, annotation save, three-image continuous capture, comparison modes, and GIF recording. The window × ends the process. Notification-area Exit remains unverified because the user could not open the tray menu in the test environment.
-- **Next step:** If convenient, verify the notification-area Exit menu. The principal Windows workflows have been exercised. MP4/MOV conversion is not included.
+- **Current state:** v0.4.5 is the latest public release. The v0.4.6 release candidate adds GIF/MP4 (H.264) recording, in-app recording previews, persistent MP4 quality presets (10/15/30 fps, 6/12/20 Mbps), and mixed AAC system-audio/microphone recording on macOS and Windows. Full playback opens the operating system's associated player. Previous Windows device testing confirmed the v0.4.5 GIF workflow; v0.4.6 MP4 runtime, audio permissions, audio sync, and quality presets still need physical-device verification.
+- **Next step:** Publish the locally verified v0.4.6 Mac and Windows packages so the user can test MP4 audio on another PC. Notification-area Exit on Windows remains unverified because the tray menu could not be opened in the earlier test environment.
 - **Verification:** v0.4.5 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `5550811c2bae8c6d08c2dd1e7e885bc20682eb385467a10bea62e75038398a4f`; Windows `7c7a277f6267b534a838fa105896b28f434f38d5abf8d62ec93b31af5190acd6`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.5 runtime behavior remains unverified. 2026-10-26.
-- **Local artifact:** `output/release/MacShot-v0.4.5-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
+- **Local artifact:** public v0.4.5 artifacts remain in `output/release/`; v0.4.6 review builds and checksum-verified release ZIPs are in `output/review-v0.4.6-audio/` and `output/release/`.
+
+## In-app recording review and MP4 export — 2026-10-26
+
+- Added a persistent GIF / MP4 (H.264) setting on both platforms. The Evidence page now has a recordings list; selecting a GIF or MP4 loads its first frame and shows duration and size in the app. “ファイルを開く” starts full playback in the file's associated player.
+- Added GIF scanning/preview and MP4 H.264 sample decoding, with round-trip tests for both preview paths. Corrected OpenH264 RGBA conversion and stripped Annex B start codes before MP4 muxing, found by the MP4 preview regression test.
+- `cargo fmt`, 32 `cargo test` tests, native macOS Clippy, and Windows-target Clippy passed. macOS Apple Silicon and Windows x64 GNU release builds passed. The separate MacShot.app copy was signed and passed deep/strict verification; the Windows file is PE32+ x86-64. The Windows cross-build reported the existing non-fatal `rust-objcopy` missing `libLLVM.dylib` warning. The app has not been run through real screen capture on either OS with MP4 selected; full playback still uses the operating system player. Not committed or published.
+
+## MP4 quality presets — 2026-10-26
+
+- Added persistent Standard (10 fps / 6 Mbps), High (15 fps / 12 Mbps), and Best (30 fps / 20 Mbps) quality presets for MP4 recording. Updated the user guide and changelog.
+- `cargo fmt --check`, 33 `cargo test --all-targets` tests, and `cargo clippy --all-targets -- -D warnings` passed. macOS Apple Silicon and Windows x64 GNU release builds passed; the Windows cross-build emitted the existing non-fatal `rust-objcopy` missing `libLLVM.dylib` warning. Packaged a separate local app at `output/review-v0.4.6-quality/MacShot.app`; its ad-hoc signature passes deep/strict verification. The already-running app instances were left untouched. No physical recording session was run for this build.
+## MP4 system audio and microphone — 2026-10-26
+
+- Added system-audio loopback through ScreenCaptureKit on macOS and WASAPI on Windows, microphone capture through the default input device, and a synchronized 48 kHz stereo mix. Encoded the mix as AAC and muxed it as an audio track beside H.264 video. GIF stays silent.
+- MP4 recording now requests microphone permission when it starts. The macOS app bundle must include `NSMicrophoneUsageDescription`; users must allow microphone access as well as screen and system audio recording. Windows uses the default microphone and the default system render mix.
+- `cargo fmt --check`, `cargo test --all-targets` (38 tests), macOS `cargo clippy --all-targets -- -D warnings`, and macOS plus Windows x64 GNU release builds passed. Audio tests cover mono/stereo conversion, mixing/clipping, source alignment, one-source startup, and native AAC encoding on this Mac. Packaged `output/review-v0.4.6-audio/MacShot.app` includes `NSMicrophoneUsageDescription` and passes deep/strict signature verification; `output/review-v0.4.6-audio/Windows/MacShot.exe` is PE32+ x86-64. A real recording with live system sound and microphone, permission prompts, sustained recording, and AV sync still needs testing on the packaged Mac and Windows app. The change is local only and not released.
 
 ## Continuous capture and evidence ordering — 2026-10-25
 

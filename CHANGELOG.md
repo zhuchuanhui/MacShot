@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.6 — 2026-10-26
+
+- Add a persistent GIF / MP4 (H.264) recording-format choice for macOS and Windows.
+- Add MP4 quality presets: Standard (10 fps / 6 Mbps), High (15 fps / 12 Mbps), and Best (30 fps / 20 Mbps).
+- Record system audio and microphone together as AAC audio in MP4 on macOS and Windows.
+- Add a recordings list to Evidence, with in-app first-frame, duration, and file-size previews for GIF and MP4. Full playback opens the system's associated player.
+- Correct H.264 input to use RGBA pixels and remove Annex B start codes before MP4 sample muxing.
+
 ## 0.4.5 — 2026-10-26
 
 - Minimize the Windows main window during capture instead of hiding it; restore it after capture, recording, cancellation, or timeout.
