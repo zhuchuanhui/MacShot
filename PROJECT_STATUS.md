@@ -11,10 +11,10 @@
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.3 source addresses Windows capture operations that could leave the app hidden and unresponsive: display discovery and capture now run off the UI thread, and a 15-second timeout restores the main window. v0.4.2 remains the latest public release until v0.4.3 packages are published. All previous capabilities remain as described below.
+- **Current state:** v0.4.3 is public. Windows monitor discovery and capture now run off the UI thread, with a 15-second timeout that restores the main window. All previous capabilities remain as described below.
 - **Next step:** The user reports that multiple actions in the Windows v0.4.2 app do not respond and that Task Manager is needed to exit. Retest v0.4.3 on Windows: open and close the app, select a screenshot target, and confirm the main window returns on timeout. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
-- **Verification:** v0.4.3 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. Windows runtime behavior remains unverified on a Windows device. 2026-10-26.
-- **Local artifact:** `output/MacShot.app`; `output/Windows/MacShot.exe`.
+- **Verification:** v0.4.3 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `5c510fdfe4b75e64c358d86f5bf298343858e833b1e41bd44f5cb175f9582d17`; Windows `9e254416af32e7e20cccfef1c076be94a2ea639832fa85b134d8086afd655f35`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.3 runtime behavior remains unverified on a Windows device. 2026-10-26.
+- **Local artifact:** `output/release/MacShot-v0.4.3-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
 
 ## Continuous capture and evidence ordering — 2026-10-25
 
@@ -40,7 +40,9 @@
 - **v0.4.1 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Published ZIP hashes were verified against a fresh download: macOS `a1d0d3fca650cffd8767ed41c3df7c5cf97b99a51ef58b546f337a7402e5c41f`; Windows `458c2e48118187a4c0e7d0b033a09a2208c2ae421fbf59188eb4efe2a48f5e58`. The macOS bundle is signed but not notarized.
 - **Latest release:** [v0.4.2](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.2), published 2026-10-26 from tag `v0.4.2` at commit `cc4671a`.
 - **v0.4.2 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Hashes were verified against fresh downloads: macOS `3f86dfbcce2e793808510248bf0939146d2de0e35062eac6588de70588efce58`; Windows `d56da196aee6b3d00ad23e8cef75e88e451d1e39fcdac5cdbf8ea2d210aafecc`. The macOS bundle is signed but not notarized.
-- **Windows runtime:** not yet tested on a Windows device; download, launch, and capture checks remain open.
+- **Latest release:** [v0.4.3](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.3), published 2026-10-26 from tag `v0.4.3` at commit `cb80f77`.
+- **v0.4.3 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `5c510fdfe4b75e64c358d86f5bf298343858e833b1e41bd44f5cb175f9582d17`; Windows `9e254416af32e7e20cccfef1c076be94a2ea639832fa85b134d8086afd655f35`. The macOS bundle is signed but not notarized.
+- **Windows runtime:** the user tested v0.4.2 and confirmed multiple actions do not respond and the app must be ended through Task Manager. v0.4.3 adds background capture work and a timeout recovery, but its runtime still needs to be retested on Windows.
 
 ## Deployment decision
 
