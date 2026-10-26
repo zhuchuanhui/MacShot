@@ -11,9 +11,9 @@
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.2 is public. It adds opaque native windows on Windows while retaining the desktop snapshot behind the range selector; macOS keeps transparent windows. v0.4.1 added the tray-menu restore command. All previous capabilities remain as described below.
-- **Next step:** The user reported v0.4.1 launches but no operation works. Verify basic page/button interaction, screenshot, range selection, and tray restore on Windows v0.4.2. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
-- **Verification:** `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed for v0.4.2. The Apple Silicon app was re-signed and deep/strict verified; its ZIP retained the signature after extraction. The Windows executable is PE32+ x86-64. Both public ZIPs were downloaded and their hashes matched the sidecars: macOS `3f86dfbcce2e793808510248bf0939146d2de0e35062eac6588de70588efce58`; Windows `d56da196aee6b3d00ad23e8cef75e88e451d1e39fcdac5cdbf8ea2d210aafecc`. The Windows cross-link step emitted the known non-fatal `rust-objcopy` warning about missing `libLLVM.dylib`. Windows v0.4.2 runtime is unverified. GIF recording remains limited to one monitor per file, 10 fps, without audio. 2026-10-26.
+- **Current state:** v0.4.3 source addresses Windows capture operations that could leave the app hidden and unresponsive: display discovery and capture now run off the UI thread, and a 15-second timeout restores the main window. v0.4.2 remains the latest public release until v0.4.3 packages are published. All previous capabilities remain as described below.
+- **Next step:** The user reports that multiple actions in the Windows v0.4.2 app do not respond and that Task Manager is needed to exit. Retest v0.4.3 on Windows: open and close the app, select a screenshot target, and confirm the main window returns on timeout. The custom recorder saves GIF, still-image editing supports PNG/JPEG, and MP4/MOV conversion is not included.
+- **Verification:** v0.4.3 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. Windows runtime behavior remains unverified on a Windows device. 2026-10-26.
 - **Local artifact:** `output/MacShot.app`; `output/Windows/MacShot.exe`.
 
 ## Continuous capture and evidence ordering — 2026-10-25
@@ -340,3 +340,9 @@ deployment:
 - The user tried v0.4.1 and reported that no operations work after launch; the application only starts. The exact distinction between no button response and capture-only failures is still pending.
 - Windows now uses opaque native windows for both the main window and the range selector. The range-selector background is still painted from a primary-display snapshot captured after hiding the main window. This removes transparent-window composition and alpha hit-testing as possible causes; Windows runtime confirmation is required before calling it fixed.
 - The macOS branch retains transparent windows. v0.4.2 source, local signed macOS app, PE32+ Windows executable, and both checksummed ZIPs have been published at GitHub Release v0.4.2. The downloaded Windows and Mac ZIP hashes match their sidecars. The v0.4.2 Windows runtime remains unverified.
+
+## Windows capture timeout and v0.4.3 — 2026-10-26
+
+- The user tested v0.4.2 and reported that multiple actions still do not respond, and that Task Manager is needed to exit. Windows runtime remains broken on the user's machine.
+- Windows monitor discovery now runs on a worker thread. Region-selection setup and screenshot capture restore/focus the main window and show guidance after a 15-second timeout. Late responses from expired captures are ignored.
+- `cargo fmt --check`, all 29 unit tests, macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The user's Windows retest is required to establish whether this fixes the reported behavior.

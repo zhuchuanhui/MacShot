@@ -19,6 +19,8 @@ use screencapturekit::{
 };
 #[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::VecDeque,
     io::Write,
@@ -79,6 +81,14 @@ struct MacShot {
     #[cfg(target_os = "windows")]
     region_snapshot_rx: Receiver<Result<image::RgbaImage, String>>,
     #[cfg(target_os = "windows")]
+    region_geometry_tx: Sender<Result<(f32, f32, f32, f32), String>>,
+    #[cfg(target_os = "windows")]
+    region_geometry_rx: Receiver<Result<(f32, f32, f32, f32), String>>,
+    #[cfg(target_os = "windows")]
+    region_selection_deadline: Option<Instant>,
+    #[cfg(target_os = "windows")]
+    region_geometry_pending: bool,
+    #[cfg(target_os = "windows")]
     region_background_texture: Option<egui::TextureHandle>,
     save_folder: Option<PathBuf>,
     evidence_files: Vec<PathBuf>,
@@ -89,6 +99,11 @@ struct MacShot {
     annotation_width: f32,
     status: String,
     capture_in_progress: bool,
+    active_capture_sequence: Option<u64>,
+    #[cfg(target_os = "windows")]
+    capture_deadline: Option<Instant>,
+    #[cfg(target_os = "windows")]
+    capture_cancel: Option<Arc<AtomicBool>>,
     capture_tx: Sender<CaptureResult>,
     capture_rx: Receiver<CaptureResult>,
     _hotkey_manager: Option<GlobalHotKeyManager>,
@@ -217,7 +232,10 @@ enum CompareMode {
     Difference,
 }
 
-type CaptureResult = Result<(PathBuf, image::RgbaImage, String, u64), String>;
+type CaptureResult = (
+    u64,
+    Result<(PathBuf, image::RgbaImage, String, u64), String>,
+);
 
 #[derive(Clone, Copy)]
 enum TrayAction {
@@ -389,6 +407,8 @@ impl Default for MacShot {
         let (capture_tx, capture_rx) = mpsc::channel();
         #[cfg(target_os = "windows")]
         let (region_snapshot_tx, region_snapshot_rx) = mpsc::channel();
+        #[cfg(target_os = "windows")]
+        let (region_geometry_tx, region_geometry_rx) = mpsc::channel();
         let (hotkey_tx, hotkey_rx) = mpsc::channel();
         let (tray_action_tx, tray_action_rx) = mpsc::channel();
         let (recording_tx, recording_rx) = mpsc::channel();
@@ -445,6 +465,14 @@ impl Default for MacShot {
             #[cfg(target_os = "windows")]
             region_snapshot_rx,
             #[cfg(target_os = "windows")]
+            region_geometry_tx,
+            #[cfg(target_os = "windows")]
+            region_geometry_rx,
+            #[cfg(target_os = "windows")]
+            region_selection_deadline: None,
+            #[cfg(target_os = "windows")]
+            region_geometry_pending: false,
+            #[cfg(target_os = "windows")]
             region_background_texture: None,
             save_folder,
             evidence_files: Vec::new(),
@@ -455,6 +483,11 @@ impl Default for MacShot {
             annotation_width,
             status,
             capture_in_progress: false,
+            active_capture_sequence: None,
+            #[cfg(target_os = "windows")]
+            capture_deadline: None,
+            #[cfg(target_os = "windows")]
+            capture_cancel: None,
             capture_tx,
             capture_rx,
             _hotkey_manager: None,
@@ -2288,78 +2321,45 @@ impl MacShot {
             self.report_capture_failure("録画または撮影が終わってから範囲撮影を開始してください。");
             return;
         }
-        let monitors = match Monitor::all() {
-            Ok(monitors) => monitors,
-            Err(error) => {
-                self.report_capture_failure(format!("画面を確認できません: {error}"));
-                return;
-            }
-        };
-        let Some(monitor) = monitors
-            .iter()
-            .find(|monitor| monitor.is_primary().unwrap_or(false))
-            .or_else(|| monitors.first())
-        else {
-            self.report_capture_failure("撮影できる画面が見つかりません。");
-            return;
-        };
-        let Ok(width) = monitor.width() else {
-            self.report_capture_failure("画面サイズを確認できません。");
-            return;
-        };
-        let Ok(height) = monitor.height() else {
-            self.report_capture_failure("画面サイズを確認できません。");
-            return;
-        };
-        #[cfg(target_os = "macos")]
-        let (x, y, overlay_width, overlay_height) = (
-            monitor.x().unwrap_or(0) as f32,
-            monitor.y().unwrap_or(0) as f32,
-            width as f32,
-            height as f32,
-        );
         #[cfg(target_os = "windows")]
-        let (x, y, overlay_width, overlay_height) = (
-            {
-                let scale = monitor.scale_factor().unwrap_or(1.0).max(1.0);
-                monitor.x().unwrap_or(0) as f32 / scale
-            },
-            {
-                let scale = monitor.scale_factor().unwrap_or(1.0).max(1.0);
-                monitor.y().unwrap_or(0) as f32 / scale
-            },
-            {
-                let scale = monitor.scale_factor().unwrap_or(1.0).max(1.0);
-                width as f32 / scale
-            },
-            {
-                let scale = monitor.scale_factor().unwrap_or(1.0).max(1.0);
-                height as f32 / scale
-            },
-        );
-        self.region_overlay_position = egui::pos2(x, y);
-        self.region_overlay_size = egui::vec2(overlay_width, overlay_height);
-        self.region_drag_start = None;
-        self.region_drag_current = None;
-        self.status = "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。".into();
-        #[cfg(target_os = "windows")]
-        {
-            self.region_background_texture = None;
-            let sender = self.region_snapshot_tx.clone();
-            let repaint = ctx.clone();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            thread::spawn(move || {
-                // Capture the desktop after the main window has been hidden. Windows may
-                // composite a transparent child viewport as black, so use this image as
-                // the selector's opaque background instead of relying on transparency.
-                thread::sleep(Duration::from_millis(350));
-                let result = capture_target_image(CaptureTarget::PrimaryDisplay);
-                let _ = sender.send(result);
-                repaint.request_repaint();
-            });
-        }
+        self.begin_region_selection_windows(ctx);
         #[cfg(not(target_os = "windows"))]
         {
+            let monitors = match Monitor::all() {
+                Ok(monitors) => monitors,
+                Err(error) => {
+                    self.report_capture_failure(format!("画面を確認できません: {error}"));
+                    return;
+                }
+            };
+            let Some(monitor) = monitors
+                .iter()
+                .find(|monitor| monitor.is_primary().unwrap_or(false))
+                .or_else(|| monitors.first())
+            else {
+                self.report_capture_failure("撮影できる画面が見つかりません。");
+                return;
+            };
+            let Ok(width) = monitor.width() else {
+                self.report_capture_failure("画面サイズを確認できません。");
+                return;
+            };
+            let Ok(height) = monitor.height() else {
+                self.report_capture_failure("画面サイズを確認できません。");
+                return;
+            };
+            let (x, y, overlay_width, overlay_height) = (
+                monitor.x().unwrap_or(0) as f32,
+                monitor.y().unwrap_or(0) as f32,
+                width as f32,
+                height as f32,
+            );
+            self.region_overlay_position = egui::pos2(x, y);
+            self.region_overlay_size = egui::vec2(overlay_width, overlay_height);
+            self.region_drag_start = None;
+            self.region_drag_current = None;
+            self.status =
+                "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。".into();
             self.region_selecting = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             ctx.request_repaint();
@@ -2368,7 +2368,53 @@ impl MacShot {
 
     #[cfg(target_os = "windows")]
     fn handle_region_snapshot(&mut self, ctx: &egui::Context) {
+        while let Ok(result) = self.region_geometry_rx.try_recv() {
+            if !self.region_geometry_pending {
+                continue;
+            }
+            self.region_geometry_pending = false;
+            match result {
+                Ok((x, y, width, height)) => {
+                    self.region_overlay_position = egui::pos2(x, y);
+                    self.region_overlay_size = egui::vec2(width, height);
+                    self.region_drag_start = None;
+                    self.region_drag_current = None;
+                    self.region_background_texture = None;
+                    let sender = self.region_snapshot_tx.clone();
+                    let repaint = ctx.clone();
+                    self.region_selection_deadline = Some(Instant::now() + Duration::from_secs(15));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    thread::spawn(move || {
+                        // Let Windows reveal the desktop before taking the selector backdrop.
+                        thread::sleep(Duration::from_millis(350));
+                        let result = capture_target_image(CaptureTarget::PrimaryDisplay);
+                        let _ = sender.send(result);
+                        repaint.request_repaint();
+                    });
+                }
+                Err(error) => {
+                    self.region_selection_deadline = None;
+                    self.status = format!("画面を確認できません: {error}");
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+            }
+        }
+        if self
+            .region_selection_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.region_selection_deadline = None;
+            self.region_geometry_pending = false;
+            self.status = "範囲選択の準備が時間切れになりました。画面収録の許可と他の撮影アプリを確認して、もう一度お試しください。".into();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         while let Ok(result) = self.region_snapshot_rx.try_recv() {
+            if self.region_selection_deadline.is_none() {
+                continue;
+            }
+            self.region_selection_deadline = None;
             match result {
                 Ok(image) => {
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(
@@ -2390,6 +2436,41 @@ impl MacShot {
             }
             ctx.request_repaint();
         }
+        if self.region_selection_deadline.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn begin_region_selection_windows(&mut self, ctx: &egui::Context) {
+        self.status =
+            "範囲選択を準備しています…画面の確認に時間がかかる場合は自動で戻ります。".into();
+        self.region_selection_deadline = Some(Instant::now() + Duration::from_secs(15));
+        self.region_geometry_pending = true;
+        let sender = self.region_geometry_tx.clone();
+        let repaint = ctx.clone();
+        thread::spawn(move || {
+            let result = (|| {
+                let monitors = Monitor::all().map_err(|error| error.to_string())?;
+                let monitor = monitors
+                    .iter()
+                    .find(|monitor| monitor.is_primary().unwrap_or(false))
+                    .or_else(|| monitors.first())
+                    .ok_or_else(|| "撮影できる画面が見つかりません".to_string())?;
+                let width = monitor.width().map_err(|error| error.to_string())?;
+                let height = monitor.height().map_err(|error| error.to_string())?;
+                let scale = monitor.scale_factor().unwrap_or(1.0).max(1.0);
+                Ok((
+                    monitor.x().unwrap_or(0) as f32 / scale,
+                    monitor.y().unwrap_or(0) as f32 / scale,
+                    width as f32 / scale,
+                    height as f32 / scale,
+                ))
+            })();
+            let _ = sender.send(result);
+            repaint.request_repaint();
+        });
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 
     fn show_region_overlay(&mut self, ctx: &egui::Context) {
@@ -2590,6 +2671,7 @@ impl MacShot {
 
         self.capture_sequence += 1;
         let sequence = self.capture_sequence;
+        self.active_capture_sequence = Some(sequence);
         self.last_capture_sequence = sequence;
         let captured_at = Local::now();
         let timestamp = captured_at.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -2599,6 +2681,13 @@ impl MacShot {
         let timestamp_enabled = self.timestamp_enabled;
         let sender = self.capture_tx.clone();
         let ctx = ctx.clone();
+        #[cfg(target_os = "windows")]
+        let cancelled = Arc::new(AtomicBool::new(false));
+        #[cfg(target_os = "windows")]
+        {
+            self.capture_deadline = Some(Instant::now() + Duration::from_secs(15));
+            self.capture_cancel = Some(cancelled.clone());
+        }
         self.capture_in_progress = true;
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
@@ -2608,6 +2697,10 @@ impl MacShot {
             // Give the window manager time to reveal the previously active application.
             thread::sleep(Duration::from_millis(350));
             let capture = capture_target_image(target).and_then(|image| {
+                #[cfg(target_os = "windows")]
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("撮影は時間切れのためキャンセルされました。".to_string());
+                }
                 std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
                 let path =
                     new_evidence_path(&folder, &filename_prefix, &file_timestamp, sequence, "");
@@ -2621,18 +2714,31 @@ impl MacShot {
                 if timestamp_enabled {
                     stamp_timestamp(&mut image, &timestamp);
                 }
+                #[cfg(target_os = "windows")]
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err("撮影は時間切れのためキャンセルされました。".to_string());
+                }
                 image.save(&path).map_err(|e| e.to_string())?;
                 Ok((path, image, timestamp, sequence))
             });
 
-            let _ = sender.send(capture);
+            let _ = sender.send((sequence, capture));
             ctx.request_repaint();
         });
     }
 
     fn handle_capture_results(&mut self, ctx: &egui::Context) {
-        while let Ok(result) = self.capture_rx.try_recv() {
+        while let Ok((sequence, result)) = self.capture_rx.try_recv() {
+            if self.active_capture_sequence != Some(sequence) {
+                continue;
+            }
             self.capture_in_progress = false;
+            self.active_capture_sequence = None;
+            #[cfg(target_os = "windows")]
+            {
+                self.capture_deadline = None;
+                self.capture_cancel = None;
+            }
             match result {
                 Ok((path, image, timestamp, sequence)) => {
                     self.status = format!("撮影 {} 枚目を保存しました ({timestamp})", sequence);
@@ -2670,6 +2776,28 @@ impl MacShot {
                 }
             }
             self.advance_capture_queue(ctx);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn handle_capture_timeout(&mut self, ctx: &egui::Context) {
+        if self
+            .capture_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            if let Some(cancelled) = self.capture_cancel.take() {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+            self.capture_deadline = None;
+            self.capture_in_progress = false;
+            self.active_capture_sequence = None;
+            self.capture_queue.clear();
+            self.status = "撮影が時間切れになりました。画面収録の許可と他の撮影アプリを確認してください。MacShotは終了せずに再試行できます。".into();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if self.capture_deadline.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
@@ -3857,6 +3985,8 @@ impl eframe::App for MacShot {
         self.handle_hotkey_requests(ctx);
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
+        #[cfg(target_os = "windows")]
+        self.handle_capture_timeout(ctx);
         #[cfg(target_os = "windows")]
         self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);

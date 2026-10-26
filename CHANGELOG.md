@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 — 2026-10-26
+
+- Keep the Windows app responsive while monitor discovery and screen capture run; restore the main window with guidance after a 15-second timeout.
+- Ignore late capture results after a timeout so they cannot overwrite the current app state.
+
 ## 0.4.2 — 2026-10-26
 
 - Use opaque Windows windows for the main app and range selector to avoid transparent-window rendering and input issues. macOS transparency remains enabled.
