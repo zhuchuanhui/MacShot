@@ -107,6 +107,7 @@ struct MacShot {
     capture_tx: Sender<CaptureResult>,
     capture_rx: Receiver<CaptureResult>,
     _hotkey_manager: Option<GlobalHotKeyManager>,
+    registered_hotkeys: Vec<HotKey>,
     capture_hotkey: HotKey,
     recording_hotkey: HotKey,
     capture_hotkey_text: String,
@@ -138,6 +139,8 @@ struct MacShot {
     recording_started_at: Option<Instant>,
     recording_notice: Option<(PathBuf, String)>,
     record_pending_stop: bool,
+    #[cfg(target_os = "windows")]
+    quit_after_recording: bool,
     page: Page,
     left_path: Option<PathBuf>,
     right_path: Option<PathBuf>,
@@ -491,6 +494,7 @@ impl Default for MacShot {
             capture_tx,
             capture_rx,
             _hotkey_manager: None,
+            registered_hotkeys: Vec::new(),
             capture_hotkey,
             recording_hotkey,
             capture_hotkey_text,
@@ -522,6 +526,8 @@ impl Default for MacShot {
             recording_started_at: None,
             recording_notice: None,
             record_pending_stop: false,
+            #[cfg(target_os = "windows")]
+            quit_after_recording: false,
             page: Page::Capture,
             left_path: None,
             right_path: None,
@@ -1724,16 +1730,31 @@ impl MacShot {
         }
         self.hotkey_initialized = true;
         let manager = match GlobalHotKeyManager::new() {
-            Ok(manager) => manager,
+            Ok(manager) => Some(manager),
             Err(error) => {
-                self.status = format!("撮影ショートカットを設定できません: {error}");
-                return;
+                self.status =
+                    format!("ショートカットを初期化できません。ボタンから操作できます: {error}");
+                None
             }
         };
-        let hotkeys = [self.capture_hotkey, self.recording_hotkey];
-        if let Err(error) = manager.register_all(&hotkeys) {
-            self.status = format!("撮影ショートカットを登録できません: {error}");
-            return;
+        let mut registration_errors = Vec::new();
+        if let Some(manager) = manager.as_ref() {
+            for (name, hotkey) in [
+                ("撮影", self.capture_hotkey),
+                ("録画", self.recording_hotkey),
+            ] {
+                match manager.register(hotkey) {
+                    Ok(()) => self.registered_hotkeys.push(hotkey),
+                    Err(error) => registration_errors.push(format!("{name}: {error}")),
+                }
+            }
+        }
+        self._hotkey_manager = manager;
+        if !registration_errors.is_empty() {
+            self.status = format!(
+                "一部のショートカットを登録できません（{}）。設定画面で別のキーを選べます。ボタンからの操作は使えます。",
+                registration_errors.join("、")
+            );
         }
         let events = GlobalHotKeyEvent::receiver().clone();
         let sender = self.hotkey_tx.clone();
@@ -1755,7 +1776,6 @@ impl MacShot {
                 }
             }
         });
-        self._hotkey_manager = Some(manager);
     }
 
     fn handle_hotkey_requests(&mut self, ctx: &egui::Context) {
@@ -1997,15 +2017,30 @@ impl MacShot {
                 TrayAction::OpenNativeScreenshot => self.open_native_screenshot(),
                 TrayAction::ToggleContinuousCapture => self.toggle_continuous_capture(ctx),
                 TrayAction::ToggleRecording => self.toggle_recording(ctx),
-                TrayAction::Quit => {
-                    if let Ok(stop) = self.recording_stop_tx.lock()
-                        && let Some(stop) = stop.as_ref()
-                    {
-                        let _ = stop.send(());
-                    }
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+                TrayAction::Quit => self.request_quit(ctx),
             }
+        }
+    }
+
+    fn request_quit(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "windows")]
+        {
+            if self.recording || self.recording_starting {
+                self.quit_after_recording = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.stop_recording();
+            } else {
+                std::process::exit(0);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(stop) = self.recording_stop_tx.lock()
+                && let Some(stop) = stop.as_ref()
+            {
+                let _ = stop.send(());
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -2146,6 +2181,10 @@ impl MacShot {
                         }
                         Err(error) => self.status = recording_failure_message(&error),
                     }
+                    #[cfg(target_os = "windows")]
+                    if self.quit_after_recording {
+                        std::process::exit(0);
+                    }
                 }
             }
         }
@@ -2160,20 +2199,33 @@ impl MacShot {
                     return;
                 }
             };
-        if let Some(manager) = &self._hotkey_manager {
-            let previous = [self.capture_hotkey, self.recording_hotkey];
-            if let Err(error) = manager.unregister_all(&previous) {
-                self.settings_error =
-                    Some(format!("現在のショートカットを解除できません: {error}"));
-                return;
-            }
-            if let Err(error) = manager.register_all(&[capture, recording]) {
-                let _ = manager.unregister_all(&[capture, recording]);
-                let _ = manager.register_all(&previous);
-                self.settings_error = Some(format!("ショートカットを登録できません: {error}"));
-                return;
+        let manager = match self._hotkey_manager.take() {
+            Some(manager) => manager,
+            None => match GlobalHotKeyManager::new() {
+                Ok(manager) => manager,
+                Err(error) => {
+                    self.settings_error =
+                        Some(format!("ショートカットを初期化できません: {error}"));
+                    return;
+                }
+            },
+        };
+        if !self.registered_hotkeys.is_empty()
+            && let Err(error) = manager.unregister_all(&self.registered_hotkeys)
+        {
+            self._hotkey_manager = Some(manager);
+            self.settings_error = Some(format!("現在のショートカットを解除できません: {error}"));
+            return;
+        }
+        self.registered_hotkeys.clear();
+        let mut registration_errors = Vec::new();
+        for (name, hotkey) in [("撮影", capture), ("録画", recording)] {
+            match manager.register(hotkey) {
+                Ok(()) => self.registered_hotkeys.push(hotkey),
+                Err(error) => registration_errors.push(format!("{name}: {error}")),
             }
         }
+        self._hotkey_manager = Some(manager);
         self.capture_hotkey = capture;
         self.recording_hotkey = recording;
         let capture_text = canonical_hotkey_text(&capture.to_string());
@@ -2181,9 +2233,17 @@ impl MacShot {
         self.capture_hotkey_text = capture_text.clone();
         self.recording_hotkey_text = recording_text.clone();
         match self.save_preferences() {
-            Ok(()) => {
+            Ok(()) if registration_errors.is_empty() => {
                 self.settings_error = None;
                 self.status = "ショートカットを保存しました。".into();
+            }
+            Ok(()) => {
+                let message = format!(
+                    "設定は保存しましたが、一部のキーは他のアプリと競合して使えません（{}）。別のキーを選んでください。",
+                    registration_errors.join("、")
+                );
+                self.settings_error = Some(message.clone());
+                self.status = message;
             }
             Err(error) => self.settings_error = Some(format!("設定を保存できません: {error}")),
         }
@@ -2687,11 +2747,23 @@ impl MacShot {
         {
             self.capture_deadline = Some(Instant::now() + Duration::from_secs(15));
             self.capture_cancel = Some(cancelled.clone());
+            let watchdog_context = ctx.clone();
+            let watchdog_cancelled = cancelled.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_secs(15));
+                if !watchdog_cancelled.load(Ordering::Relaxed) {
+                    watchdog_context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    watchdog_context.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    watchdog_context.request_repaint();
+                }
+            });
         }
         self.capture_in_progress = true;
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         self.update_tray_recording_status();
+        #[cfg(target_os = "windows")]
+        ctx.request_repaint_after(Duration::from_millis(100));
 
         thread::spawn(move || {
             // Give the window manager time to reveal the previously active application.
@@ -2737,7 +2809,9 @@ impl MacShot {
             #[cfg(target_os = "windows")]
             {
                 self.capture_deadline = None;
-                self.capture_cancel = None;
+                if let Some(cancelled) = self.capture_cancel.take() {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
             }
             match result {
                 Ok((path, image, timestamp, sequence)) => {
@@ -3970,6 +4044,16 @@ impl eframe::App for MacShot {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        if ctx.input(|input| input.viewport().close_requested()) {
+            if self.recording || self.recording_starting {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.quit_after_recording = true;
+                self.stop_recording();
+            } else {
+                std::process::exit(0);
+            }
+        }
         if cfg!(target_os = "macos")
             && screen_recording_access_granted()
             && (self.status.starts_with("画面収録の許可を設定してください")

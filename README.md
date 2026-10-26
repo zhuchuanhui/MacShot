@@ -1,17 +1,17 @@
-# MacShot 0.4.3
+# MacShot 0.4.4
 
 画面エビデンスの撮影・編集・画像比較ツールです。明るい背景に半透明の白いカード、柔らかな光彩、丸みのある操作部品を重ねたガラス調UIです。撮影対象は範囲選択、アクティブウィンドウ、メイン画面、全画面、個別画面、または一覧から選んだウィンドウです。範囲選択は画面上でドラッグし、選択範囲の外側だけを暗く表示します。選択箇所は明るいまま、枠とサイズを表示します。macOSではメニューバーからDockまで選択できます。撮影と録画のグローバルショートカットは設定画面から変更できます。連続撮影を開始するとMacShotを隠し、設定した撮影ショートカットを押すたびに画像を順番に保存します。macOSでは連続撮影中にカメラアイコンを状態表示に切り替え、「撮影中」「✓3」「!1」のように進行状況や保存枚数、失敗件数を表示します。通知領域メニュー（Windows）またはメニューバーのメニュー（macOS）にも、現在または前回の連続撮影で保存した枚数と失敗件数が表示されます。本体を表示するにはメニューの「MacShotを開く」、連続撮影を終了するには「連続撮影モードを開始／終了」を選びます。保存待ちの撮影が終わるとウィンドウが戻ります。撮影画像は時刻と連番をファイル名・画像内に記録し、通常撮影後は完了ウィンドウを表示します。プレビューでは範囲切り出し、赤枠、矢印を編集してPNG保存できます。編集版は元画像と同じ撮影日時・連番を使うため、編集保存後も証跡一覧の順番を保ちます。2枚のPNG/JPEGは左右、50%重ね合わせ、赤い差分表示で比較できます。メニューバー（Windowsでは通知領域）のスクリーンショットメニューから範囲、アクティブウィンドウ、全画面、設定中の撮影対象、連続撮影の開始／終了を選べます。画面録画はGIFで保存し、選択した画面または対象ウィンドウのある画面を録画します。GIFの再生時間には実際のフレーム取得間隔を反映し、取得が遅れた際の早送りを防ぎます。全画面を選んだ場合の録画対象はメイン画面です。保存先を指定しない場合は `~/Pictures/MacShot` に保存します。
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.4.3-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.3/MacShot-v0.4.3-macos-arm64.zip)
-- Windows x64: [MacShot-v0.4.3-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.3/MacShot-v0.4.3-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.3)
+- macOS Apple Silicon (arm64): [MacShot-v0.4.4-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.4/MacShot-v0.4.4-macos-arm64.zip)
+- Windows x64: [MacShot-v0.4.4-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.4.4/MacShot-v0.4.4-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.4)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動してください。Apple Development証明書で署名済みですが、公証はしていません。macOS 14以降のApple Siliconに対応します。
 
-Windows版はZIPを展開して `MacShot.exe` を起動してください。v0.4.3では画面・モニターの確認をバックグラウンドで行い、撮影が15秒以内に終わらない場合は本体ウィンドウへ戻します。Windows実機で動作をご確認ください。
+Windows版はZIPを展開して `MacShot.exe` を起動してください。v0.4.4では撮影が応答しない場合の復帰と終了操作を改善しました。Windows実機で動作をご確認ください。
 
 ## 対応形式
 
@@ -31,7 +31,7 @@ cargo run
 cargo build --release
 ```
 
-macOS版はmacOS 14以降に対応し、実行ファイルもmacOS 14を最低バージョンとしてビルドします（ScreenCaptureKitの単一画像撮影APIがmacOS 14以降で利用可能なためです）。Windows x64版は `output/Windows/MacShot.exe` にあります。macOSで画面撮影を使うには画面収録の許可が必要です。許可がない場合、撮影画面の「画面収録設定を開く」ボタンから該当するシステム設定を直接開けます。設定でMacShotをオンにした後、MacShotを再起動してください。オンでも許可エラーが続く場合は、一度オフ→オンしてから再起動してください。macOSの仕様上、許可スイッチの操作はユーザーが行います。Windows v0.4.2では複数の操作が応答しない問題が実機で報告されました。v0.4.3では撮影処理に15秒のタイムアウトと本体ウィンドウへの復帰を追加しました。v0.4.3のWindows実機確認はこれからです。
+macOS版はmacOS 14以降に対応し、実行ファイルもmacOS 14を最低バージョンとしてビルドします（ScreenCaptureKitの単一画像撮影APIがmacOS 14以降で利用可能なためです）。Windows x64版は `output/Windows/MacShot.exe` にあります。macOSで画面撮影を使うには画面収録の許可が必要です。許可がない場合、撮影画面の「画面収録設定を開く」ボタンから該当するシステム設定を直接開けます。設定でMacShotをオンにした後、MacShotを再起動してください。オンでも許可エラーが続く場合は、一度オフ→オンしてから再起動してください。macOSの仕様上、許可スイッチの操作はユーザーが行います。Windows v0.4.3では撮影PNGが保存されてもプレビューと本体画面が戻らない問題、ウィンドウ×でプロセスが終了しない問題、ショートカット競合の警告が実機で報告されました。v0.4.4ではこれらの動作を改善しました。Windows実機で再確認してください。
 
 アプリアイコンはmacOS 27風のLiquid Glassを意識し、アイコン外周も角丸の透明形状にし、円形レンズと角を丸めた撮影フレームを組み合わせています。素材は `assets/MacShot-Icon.png`、macOS用ICNS、Windows用ICOで、macOSのアプリバンドルとWindows実行ファイルに反映しています。
 

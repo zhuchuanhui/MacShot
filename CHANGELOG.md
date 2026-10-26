@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4 — 2026-10-26
+
+- Restore the Windows window after capture with both a repaint timer and an independent watchdog.
+- Make the Windows close button and tray-menu Exit command terminate the process; finish and save an active GIF recording before exit.
+- Register screenshot and recording shortcuts independently, so a conflict in one does not disable the other or the on-screen controls.
+
 ## 0.4.3 — 2026-10-26
 
 - Keep the Windows app responsive while monitor discovery and screen capture run; restore the main window with guidance after a 15-second timeout.
