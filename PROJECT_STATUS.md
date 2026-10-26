@@ -11,8 +11,8 @@
 ## Implementation
 
 - **Platform / technology:** macOS + Windows; Rust, eframe/egui, xcap.
-- **Current state:** v0.4.5 is public. Initial Windows device testing confirms full-display screenshot and range-selection cancellation return to the main window; the Windows × ends the process. Notification-area Exit and the remaining editing, comparison, continuous-capture, and recording flows are not yet fully confirmed.
-- **Next step:** Confirm the notification-area Exit command, then use the PNGs created in `C:/Users/zhuch/Pictures/MacShot` to validate evidence refresh, editing, and comparison. Also test continuous capture and GIF recording. MP4/MOV conversion is not included.
+- **Current state:** v0.4.5 is public. Windows device testing confirms full-display screenshot, range-selection cancel, evidence refresh, annotation save, three-image continuous capture, comparison modes, and GIF recording. The window × ends the process. Notification-area Exit remains unverified because the user could not open the tray menu in the test environment.
+- **Next step:** If convenient, verify the notification-area Exit menu. The principal Windows workflows have been exercised. MP4/MOV conversion is not included.
 - **Verification:** v0.4.5 `cargo fmt --check`, `cargo test` (29 tests), macOS Clippy, Windows-target Clippy, macOS release build, and Windows x64 release cross-build passed. The Mac app's deep/strict signature check passed before packaging and again after extraction. Freshly downloaded public ZIP hashes matched their sidecars: macOS `5550811c2bae8c6d08c2dd1e7e885bc20682eb385467a10bea62e75038398a4f`; Windows `7c7a277f6267b534a838fa105896b28f434f38d5abf8d62ec93b31af5190acd6`. Rust's objcopy emitted a non-fatal missing `libLLVM.dylib` warning while stripping debug info. Windows v0.4.5 runtime behavior remains unverified. 2026-10-26.
 - **Local artifact:** `output/release/MacShot-v0.4.5-macos-arm64/MacShot.app`; `output/Windows/MacShot.exe`.
 
@@ -46,7 +46,7 @@
 - **v0.4.4 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `42fef64714e34c3c4256dad087e27856ac255c38f0bb3c524a9811a12933f33c`; Windows `7af4d6addf8dd8b8051912b575b7287d645d64cb779494bf42444d144e398c2a`. The macOS bundle is signed but not notarized.
 - **Latest release:** [v0.4.5](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.4.5), published 2026-10-26 from tag `v0.4.5` at commit `d5d4b45`.
 - **v0.4.5 assets:** macOS Apple Silicon ZIP and Windows x64 ZIP, each with a SHA-256 sidecar. Fresh-download hashes: macOS `5550811c2bae8c6d08c2dd1e7e885bc20682eb385467a10bea62e75038398a4f`; Windows `7c7a277f6267b534a838fa105896b28f434f38d5abf8d62ec93b31af5190acd6`. The macOS bundle is signed but not notarized.
-- **Windows runtime:** v0.4.3 and v0.4.4 saved full-display PNGs but left the responsive process without a visible main window. v0.4.5 testing confirmed the startup shortcut warning is gone, full-display capture minimizes and restores the window with its preview, the × ends the process, and range-selection background/Esc return work. Tray-icon disappearance and selecting the tray Exit item are not confirmed.
+- **Windows runtime:** v0.4.3 and v0.4.4 saved full-display PNGs but left the responsive process without a visible main window. v0.4.5 testing confirmed there is no startup shortcut warning; full-display capture minimizes and restores the window with its preview; × ends the process; range-selection background/Esc return work; evidence refresh shows four images; annotation saving works; left/overlay/difference comparison works; continuous capture saved three PNGs and stopped; and GIF recording stopped after about 31 seconds with a save notice and verified output file. Tray-menu Exit remains unverified because the notification-area menu could not be opened in the test environment.
 
 ## Deployment decision
 
@@ -369,4 +369,5 @@ deployment:
 
 - The user confirmed v0.4.4 was no longer running, then launched v0.4.5 without a shortcut warning. Full-display capture minimized the app and saved `C:/Users/zhuch/Pictures/MacShot/evidence-20261026-154711-949-001.png`; the preview and main window were back within 15 seconds.
 - The user confirmed the window × ended the process and range selection showed the desktop background and returned to the main window after Esc. They did not confirm tray-icon disappearance or select the tray-menu Exit action.
-- Remaining Windows checks: tray Exit; evidence-list refresh; editing and saving; comparison modes; continuous-capture start/stop; GIF recording start/stop and output.
+- Follow-up tests: evidence refresh showed four images; saving a red-box annotation succeeded; two images loaded into left/overlay/difference comparison; continuous capture saved three PNGs and stopped via shortcut; GIF recording stopped after about 31 seconds and showed its save notice. The user confirmed the PNGs, continuous-capture images, annotation image, and GIF exist under `C:/Users/zhuch/Pictures/MacShot`.
+- Notification-area Exit remains unverified because the user could not open the tray menu in the test environment. The app's window × had already been confirmed to end the process.
