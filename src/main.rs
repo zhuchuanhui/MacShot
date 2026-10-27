@@ -537,6 +537,14 @@ fn recording_time_label(elapsed: Duration) -> String {
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
+fn recording_playback_status(playing: bool) -> &'static str {
+    if playing {
+        "録画をアプリ内で再生しています（映像のみ）。"
+    } else {
+        "録画を一時停止しました。"
+    }
+}
+
 fn continuous_capture_status_label(
     mode_active: bool,
     session_active: bool,
@@ -5486,15 +5494,18 @@ impl MacShot {
                         .as_ref()
                         .is_some_and(|playback| playback.playing);
                     if ui.button(if playing { "⏸ 一時停止" } else { "▶ アプリ内再生" }).clicked() {
+                        let next_playing;
                         if let Some(playback) = &mut self.recording_playback {
                             playback.playing = !playback.playing;
+                            next_playing = playback.playing;
                             if playback.playing {
                                 playback.frame_due = Instant::now();
                             }
                         } else {
                             self.recording_playback = Some(start_recording_playback(path.clone()));
-                            self.status = "録画をアプリ内で再生しています（映像のみ）。".into();
+                            next_playing = true;
                         }
+                        self.status = recording_playback_status(next_playing).into();
                         ui.ctx().request_repaint_after(Duration::from_millis(10));
                     }
                     ui.add_space(6.0);
@@ -6243,6 +6254,15 @@ mod tests {
         assert_eq!(recording_time_label(Duration::from_secs(9)), "00:09");
         assert_eq!(recording_time_label(Duration::from_secs(61)), "01:01");
         assert_eq!(recording_time_label(Duration::from_secs(3_600)), "60:00");
+    }
+
+    #[test]
+    fn recording_playback_status_tracks_play_and_pause() {
+        assert_eq!(
+            recording_playback_status(true),
+            "録画をアプリ内で再生しています（映像のみ）。"
+        );
+        assert_eq!(recording_playback_status(false), "録画を一時停止しました。");
     }
 
     #[test]

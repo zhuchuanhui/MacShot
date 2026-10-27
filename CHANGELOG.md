@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 — 2026-10-27
+
+- Update the recording playback status when users pause or resume in-app playback.
+
 ## 0.5.0 — 2026-10-27
 
 - Add in-app playback and pause controls for GIF and MP4 recordings, with streaming frame decode and GIF loop support. MP4 audio remains available through the system media player.
