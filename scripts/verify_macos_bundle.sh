@@ -18,4 +18,12 @@ for key in NSMicrophoneUsageDescription NSScreenCaptureUsageDescription; do
 done
 
 codesign --verify --deep --strict "$app_path"
+if ! codesign -d --entitlements :- "$app_path" 2>/dev/null \
+    | plutil -convert json -o - - \
+    | tr -d ' ' \
+    | grep -qF '"com.apple.security.device.audio-input":true'; then
+    printf 'Required code-signing entitlement is missing or false: com.apple.security.device.audio-input\n' >&2
+    exit 1
+fi
+
 printf 'Verified privacy descriptions and code signature: %s\n' "$app_path"

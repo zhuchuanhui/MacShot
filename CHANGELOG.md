@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 2026-10-27
+
+- Add in-app playback and pause controls for GIF and MP4 recordings, with streaming frame decode and GIF loop support. MP4 audio remains available through the system media player.
+- Add a five-second microphone input test that distinguishes speech from ambient noise and shows the measured input level.
+- Prefer CoreAudio microphone input on macOS, retain a ScreenCaptureKit fallback on macOS 15 and later, and report silent or interrupted microphone input in the saved-recording notice.
+- Preserve full Retina resolution when capturing an individual display and include the visible selection outline in range-capture bounds.
+- Add the macOS audio-input signing entitlement and validate it with the bundle verifier.
+- Keep the in-app recording list easy to reach and improve recording preview sizing and playback state.
+
 ## 0.4.7 — 2026-10-27
 
 - Move the GIF / MP4 recordings list above the long image list and label the Evidence page as images and recordings so saved videos are easier to find.

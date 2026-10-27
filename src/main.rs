@@ -23,7 +23,7 @@ use mp4::{
 #[cfg(target_os = "macos")]
 use objc2_06::runtime::Bool as ObjcBool;
 #[cfg(target_os = "macos")]
-use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
+use objc2_avf_audio::{AVAudioApplication, AVAudioApplicationRecordPermission};
 use openh264::decoder::Decoder as H264Decoder;
 use openh264::{
     OpenH264API,
@@ -66,6 +66,7 @@ mod recording_audio;
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGShieldingWindowLevel() -> i32;
 }
 
 #[cfg(target_os = "macos")]
@@ -91,17 +92,20 @@ fn screen_recording_access_granted() -> bool {
 
 #[cfg(target_os = "macos")]
 fn microphone_permission() -> MicrophonePermission {
-    // SAFETY: AVFoundation exposes this process-wide immutable media type constant.
-    let Some(audio_type) = (unsafe { AVMediaTypeAudio }) else {
-        return MicrophonePermission::Restricted;
-    };
-    // SAFETY: AVFoundation documents this class method as a read-only check.
-    let status = unsafe { AVCaptureDevice::authorizationStatusForMediaType(audio_type) };
-    match status {
-        AVAuthorizationStatus::Authorized => MicrophonePermission::Authorized,
-        AVAuthorizationStatus::NotDetermined => MicrophonePermission::NotDetermined,
-        AVAuthorizationStatus::Denied => MicrophonePermission::Denied,
-        AVAuthorizationStatus::Restricted => MicrophonePermission::Restricted,
+    // SAFETY: AVAudioApplication is available on the app's macOS 14+ deployment target.
+    microphone_permission_from_record_permission(unsafe {
+        AVAudioApplication::sharedInstance().recordPermission()
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission_from_record_permission(
+    permission: AVAudioApplicationRecordPermission,
+) -> MicrophonePermission {
+    match permission {
+        AVAudioApplicationRecordPermission::Granted => MicrophonePermission::Authorized,
+        AVAudioApplicationRecordPermission::Undetermined => MicrophonePermission::NotDetermined,
+        AVAudioApplicationRecordPermission::Denied => MicrophonePermission::Denied,
         _ => MicrophonePermission::Restricted,
     }
 }
@@ -241,6 +245,7 @@ struct MacShot {
     recording_preview_image: Option<DynamicImage>,
     recording_preview_texture: Option<egui::TextureHandle>,
     recording_preview_details: Option<String>,
+    recording_playback: Option<RecordingPlayback>,
     scroll_to_recording_preview: bool,
     timestamp_enabled: bool,
     filename_prefix: String,
@@ -291,8 +296,15 @@ struct MacShot {
     recording_warning: Option<String>,
     #[cfg(target_os = "macos")]
     microphone_permission_result: Arc<Mutex<Option<bool>>>,
+    #[cfg(target_os = "macos")]
+    microphone_reset_confirmation: bool,
+    #[cfg(target_os = "macos")]
+    microphone_test_rx: Option<Receiver<recording_audio::MicrophoneTestEvent>>,
+    #[cfg(target_os = "macos")]
+    microphone_test_peak: f32,
+    #[cfg(target_os = "macos")]
+    microphone_test_message: Option<String>,
     record_pending_stop: bool,
-    #[cfg(target_os = "windows")]
     quit_after_recording: bool,
     page: Page,
     left_path: Option<PathBuf>,
@@ -411,7 +423,22 @@ enum RecordingEvent {
         path: PathBuf,
         microphone_warning: Option<String>,
     },
+    MicrophoneWarning(String),
     Finished(Result<PathBuf, String>),
+}
+
+enum RecordingPlaybackEvent {
+    Frame(DynamicImage, Duration),
+    End,
+    Error(String),
+}
+
+struct RecordingPlayback {
+    request_tx: Sender<()>,
+    frame_rx: Receiver<RecordingPlaybackEvent>,
+    playing: bool,
+    frame_due: Instant,
+    awaiting_frame: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -731,6 +758,7 @@ impl Default for MacShot {
             recording_preview_image: None,
             recording_preview_texture: None,
             recording_preview_details: None,
+            recording_playback: None,
             scroll_to_recording_preview: false,
             timestamp_enabled,
             filename_prefix,
@@ -781,8 +809,15 @@ impl Default for MacShot {
             recording_warning: None,
             #[cfg(target_os = "macos")]
             microphone_permission_result: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            microphone_reset_confirmation: false,
+            #[cfg(target_os = "macos")]
+            microphone_test_rx: None,
+            #[cfg(target_os = "macos")]
+            microphone_test_peak: 0.0,
+            #[cfg(target_os = "macos")]
+            microphone_test_message: None,
             record_pending_stop: false,
-            #[cfg(target_os = "windows")]
             quit_after_recording: false,
             page: Page::Capture,
             left_path: None,
@@ -870,6 +905,21 @@ fn settings_path() -> PathBuf {
         .unwrap_or_default()
         .join(".config");
     base.join("MacShot").join("settings.txt")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn app_bundle_path_from_executable(executable: &Path) -> Option<PathBuf> {
+    executable
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(Path::to_path_buf)
+}
+
+#[cfg(target_os = "macos")]
+fn current_macos_app_bundle_path() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| app_bundle_path_from_executable(&executable))
 }
 
 fn load_hotkey_settings() -> (String, String) {
@@ -1107,6 +1157,11 @@ fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let size = file.metadata().map_err(|error| error.to_string())?.len();
     let mut reader = mp4::Mp4Reader::read_header(file, size).map_err(|error| error.to_string())?;
+    let has_aac_audio = reader.tracks().values().any(|track| {
+        track
+            .media_type()
+            .is_ok_and(|kind| kind == mp4::MediaType::AAC)
+    });
     let track_id = *reader
         .tracks()
         .iter()
@@ -1170,11 +1225,243 @@ fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
     Ok((
         DynamicImage::ImageRgb8(image),
         format!(
-            "MP4・H.264・{:.2}秒・{}",
+            "MP4・H.264・{}・{:.2}秒・{}",
+            if has_aac_audio {
+                "AAC音声トラックあり"
+            } else {
+                "音声トラックなし"
+            },
             reader.duration().as_secs_f64(),
             format_file_size(file_size)
         ),
     ))
+}
+
+enum RecordingFrameReader {
+    Gif {
+        path: PathBuf,
+        decoder: gif::Decoder<std::fs::File>,
+        repeat: gif::Repeat,
+        completed_repetitions: u16,
+        frames_in_current_loop: u32,
+    },
+    Mp4 {
+        reader: mp4::Mp4Reader<std::fs::File>,
+        track_id: u32,
+        sample_id: u32,
+        sample_count: u32,
+        timescale: u32,
+        decoder: H264Decoder,
+    },
+}
+
+impl RecordingFrameReader {
+    fn open(path: &Path) -> Result<Self, String> {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if extension == "gif" {
+            let decoder = open_gif_playback_decoder(path)?;
+            let repeat = decoder.repeat();
+            return Ok(Self::Gif {
+                path: path.to_path_buf(),
+                decoder,
+                repeat,
+                completed_repetitions: 0,
+                frames_in_current_loop: 0,
+            });
+        }
+        if extension != "mp4" {
+            return Err("この録画形式の再生には対応していません。".into());
+        }
+
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let size = file.metadata().map_err(|error| error.to_string())?.len();
+        let reader = mp4::Mp4Reader::read_header(file, size).map_err(|error| error.to_string())?;
+        let track_id = *reader
+            .tracks()
+            .iter()
+            .find(|(_, track)| {
+                track
+                    .media_type()
+                    .is_ok_and(|kind| kind == mp4::MediaType::H264)
+            })
+            .map(|(id, _)| id)
+            .ok_or_else(|| "MP4にH.264映像トラックがありません。".to_string())?;
+        let track = reader
+            .tracks()
+            .get(&track_id)
+            .ok_or("MP4映像トラックがありません。")?;
+        let timescale = track.timescale();
+        let sample_count = reader
+            .sample_count(track_id)
+            .map_err(|error| error.to_string())?;
+        let avcc = &track
+            .trak
+            .mdia
+            .minf
+            .stbl
+            .stsd
+            .avc1
+            .as_ref()
+            .ok_or("MP4映像情報がありません。")?
+            .avcc;
+        let mut packet = Vec::new();
+        for nal in avcc
+            .sequence_parameter_sets
+            .iter()
+            .chain(&avcc.picture_parameter_sets)
+        {
+            packet.extend_from_slice(&[0, 0, 0, 1]);
+            packet.extend_from_slice(&nal.bytes);
+        }
+        let mut decoder = H264Decoder::new().map_err(|error| error.to_string())?;
+        let _ = decoder.decode(&packet).map_err(|error| error.to_string())?;
+        Ok(Self::Mp4 {
+            reader,
+            track_id,
+            sample_id: 1,
+            sample_count,
+            timescale,
+            decoder,
+        })
+    }
+
+    fn next_frame(&mut self) -> Result<Option<(DynamicImage, Duration)>, String> {
+        match self {
+            Self::Gif {
+                path,
+                decoder,
+                repeat,
+                completed_repetitions,
+                frames_in_current_loop,
+            } => loop {
+                let width = u32::from(decoder.width());
+                let height = u32::from(decoder.height());
+                let Some(frame) = decoder
+                    .read_next_frame()
+                    .map_err(|error| error.to_string())?
+                else {
+                    if *frames_in_current_loop == 0 {
+                        return Ok(None);
+                    }
+                    let should_repeat = match repeat {
+                        gif::Repeat::Infinite => true,
+                        gif::Repeat::Finite(repetitions) => *completed_repetitions < *repetitions,
+                    };
+                    if !should_repeat {
+                        return Ok(None);
+                    }
+                    *completed_repetitions = completed_repetitions.saturating_add(1);
+                    *frames_in_current_loop = 0;
+                    *decoder = open_gif_playback_decoder(path)?;
+                    continue;
+                };
+                *frames_in_current_loop = frames_in_current_loop.saturating_add(1);
+                let delay = Duration::from_millis(u64::from(frame.delay.max(2)) * 10);
+                let pixels = frame.buffer.to_vec();
+                let image = image::RgbaImage::from_raw(width, height, pixels)
+                    .ok_or_else(|| "GIFフレームを画像に変換できません。".to_string())?;
+                return Ok(Some((DynamicImage::ImageRgba8(image), delay)));
+            },
+            Self::Mp4 {
+                reader,
+                track_id,
+                sample_id,
+                sample_count,
+                timescale,
+                decoder,
+            } => {
+                use openh264::formats::YUVSource;
+                while *sample_id <= *sample_count {
+                    let Some(sample) = reader
+                        .read_sample(*track_id, *sample_id)
+                        .map_err(|error| error.to_string())?
+                    else {
+                        *sample_id = sample_count.saturating_add(1);
+                        return Ok(None);
+                    };
+                    *sample_id = sample_id.saturating_add(1);
+                    let delay = Duration::from_secs_f64(
+                        f64::from(sample.duration) / f64::from((*timescale).max(1)),
+                    );
+                    let mut packet = Vec::with_capacity(sample.bytes.len());
+                    let mut cursor = 0;
+                    while cursor + 4 <= sample.bytes.len() {
+                        let len = u32::from_be_bytes(
+                            sample.bytes[cursor..cursor + 4]
+                                .try_into()
+                                .map_err(|_| "MP4映像データを読み取れません。")?,
+                        ) as usize;
+                        cursor += 4;
+                        let end = cursor
+                            .checked_add(len)
+                            .filter(|end| *end <= sample.bytes.len())
+                            .ok_or_else(|| "MP4映像データを読み取れません。".to_string())?;
+                        packet.extend_from_slice(&[0, 0, 0, 1]);
+                        packet.extend_from_slice(&sample.bytes[cursor..end]);
+                        cursor = end;
+                    }
+                    let Some(decoded) =
+                        decoder.decode(&packet).map_err(|error| error.to_string())?
+                    else {
+                        continue;
+                    };
+                    let (width, height) = decoded.dimensions();
+                    let mut rgb = vec![0; decoded.rgb8_len()];
+                    decoded.write_rgb8(&mut rgb);
+                    let image = image::RgbImage::from_raw(width as u32, height as u32, rgb)
+                        .ok_or_else(|| "MP4映像フレームを作成できません。".to_string())?;
+                    return Ok(Some((DynamicImage::ImageRgb8(image), delay)));
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn open_gif_playback_decoder(path: &Path) -> Result<gif::Decoder<std::fs::File>, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    options.read_info(file).map_err(|error| error.to_string())
+}
+
+fn start_recording_playback(path: PathBuf) -> RecordingPlayback {
+    let (request_tx, request_rx) = mpsc::channel::<()>();
+    let (frame_tx, frame_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = match RecordingFrameReader::open(&path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                let _ = frame_tx.send(RecordingPlaybackEvent::Error(error));
+                return;
+            }
+        };
+        while request_rx.recv().is_ok() {
+            let event = match reader.next_frame() {
+                Ok(Some((frame, delay))) => RecordingPlaybackEvent::Frame(frame, delay),
+                Ok(None) => RecordingPlaybackEvent::End,
+                Err(error) => RecordingPlaybackEvent::Error(error),
+            };
+            let ended = matches!(
+                event,
+                RecordingPlaybackEvent::End | RecordingPlaybackEvent::Error(_)
+            );
+            if frame_tx.send(event).is_err() || ended {
+                return;
+            }
+        }
+    });
+    RecordingPlayback {
+        request_tx,
+        frame_rx,
+        playing: true,
+        frame_due: Instant::now(),
+        awaiting_frame: false,
+    }
 }
 
 fn format_file_size(bytes: u64) -> String {
@@ -1362,6 +1649,10 @@ fn should_show_window_after_recording(continuous_capture: bool) -> bool {
     !continuous_capture
 }
 
+fn should_defer_quit_until_recording_finishes(recording: bool, recording_starting: bool) -> bool {
+    recording || recording_starting
+}
+
 #[cfg(not(target_os = "macos"))]
 fn is_macshot_window(window: &Window) -> bool {
     window.app_name().is_ok_and(|name| name == "MacShot")
@@ -1466,6 +1757,25 @@ struct DisplayCapture {
     monitor: Monitor,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn display_capture_pixel_dimensions(
+    width_points: u32,
+    height_points: u32,
+    scale_factor: f32,
+) -> (u32, u32) {
+    let scale = if scale_factor.is_finite() {
+        f64::from(scale_factor.max(1.0))
+    } else {
+        1.0
+    };
+    let pixels = |points: u32| {
+        (f64::from(points) * scale)
+            .round()
+            .clamp(1.0, f64::from(u32::MAX)) as u32
+    };
+    (pixels(width_points), pixels(height_points))
+}
+
 impl DisplayCapture {
     fn new(monitor: &Monitor) -> Result<Self, String> {
         #[cfg(target_os = "macos")]
@@ -1483,9 +1793,16 @@ impl DisplayCapture {
                 .with_excluding_windows(&[])
                 .build()
                 .map_err(|error| format!("画面撮影の準備に失敗しました: {error}"))?;
+            // SCDisplay dimensions are points. Request the display's pixel
+            // dimensions so Retina screenshots retain their full resolution.
+            let (width, height) = display_capture_pixel_dimensions(
+                display.width(),
+                display.height(),
+                monitor.scale_factor().unwrap_or(1.0),
+            );
             let configuration = SCStreamConfiguration::new()
-                .with_width(display.width())
-                .with_height(display.height());
+                .with_width(width)
+                .with_height(height);
             Ok(Self {
                 filter,
                 configuration,
@@ -1771,23 +2088,92 @@ fn combine_display_images(
 
 #[cfg(target_os = "macos")]
 fn raise_window_above_system_bars(title: &str) {
-    use objc2_app_kit::{NSApplication, NSStatusWindowLevel};
+    use objc2_app_kit::{NSApplication, NSScreen, NSWindowLevel};
     use objc2_foundation::{MainThreadMarker, NSString};
 
     let Some(main_thread) = MainThreadMarker::new() else {
         return;
     };
     let application = NSApplication::sharedApplication(main_thread);
+    let screen_frame = NSScreen::mainScreen(main_thread).map(|screen| screen.frame());
     let windows = application.windows();
     let target_title = NSString::from_str(title);
     for index in 0..windows.count() {
         let window = unsafe { windows.objectAtIndex(index) };
         let current_title = window.title();
         if unsafe { current_title.isEqualToString(&target_title) } {
-            window.setLevel(NSStatusWindowLevel + 1);
+            // Use AppKit's full screen frame, which includes the menu bar and Dock.
+            // The viewport's requested size can be constrained to the usable area by macOS.
+            if let Some(frame) = screen_frame {
+                let current = window.frame();
+                if (current.origin.x - frame.origin.x).abs() > 0.5
+                    || (current.origin.y - frame.origin.y).abs() > 0.5
+                    || (current.size.width - frame.size.width).abs() > 0.5
+                    || (current.size.height - frame.size.height).abs() > 0.5
+                {
+                    window.setFrame_display(frame, true);
+                }
+            }
+            // Match fullscreen overlay ordering so the selector covers the menu bar and Dock.
+            window.setLevel(unsafe { CGShieldingWindowLevel() } as NSWindowLevel + 1);
             return;
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn set_standard_quit_items_enabled(enabled: bool) {
+    use objc2::{runtime::Sel, sel};
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::{MainThreadMarker, NSString};
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    let Some(main_menu) = (unsafe { application.mainMenu() }) else {
+        return;
+    };
+    let terminate_action: Sel = sel!(terminate:);
+    unsafe {
+        for menu_item in main_menu.itemArray().iter() {
+            let Some(submenu) = menu_item.submenu() else {
+                continue;
+            };
+            for action_item in submenu.itemArray().iter() {
+                if action_item.action() == Some(terminate_action) {
+                    let item_key = std::ptr::from_ref(&**action_item) as usize;
+                    QUIT_MENU_KEY_EQUIVALENTS.with(|saved| {
+                        let mut saved = saved.borrow_mut();
+                        if enabled {
+                            if let Some((key_equivalent, modifiers)) = saved.get(&item_key) {
+                                action_item.setKeyEquivalent(key_equivalent);
+                                action_item.setKeyEquivalentModifierMask(*modifiers);
+                            }
+                            action_item.setEnabled(true);
+                        } else {
+                            saved.entry(item_key).or_insert_with(|| {
+                                (
+                                    action_item.keyEquivalent(),
+                                    action_item.keyEquivalentModifierMask(),
+                                )
+                            });
+                            action_item.setEnabled(false);
+                            action_item.setKeyEquivalent(&NSString::new());
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static QUIT_MENU_KEY_EQUIVALENTS: std::cell::RefCell<std::collections::HashMap<
+        usize,
+        (objc2::rc::Retained<objc2_foundation::NSString>, objc2_app_kit::NSEventModifierFlags),
+    >> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 fn crop_normalized(image: &image::RgbaImage, bounds: [f32; 4]) -> Option<image::RgbaImage> {
@@ -1821,6 +2207,10 @@ fn normalized_region_bounds(
     if selection.width() < 4.0 || selection.height() < 4.0 {
         return None;
     }
+    // Include the outer selection outline and a small safety margin in the
+    // saved crop. Without this, pixels drawn on the visible border can appear
+    // cut off even though they looked inside the highlighted frame.
+    let selection = selection.expand(3.0).intersect(screen);
     Some([
         (selection.left() - screen.left()) / screen.width(),
         (selection.top() - screen.top()) / screen.height(),
@@ -2387,15 +2777,6 @@ fn record_screen_to_mp4(
     } else {
         first
     };
-    #[cfg(target_os = "macos")]
-    let include_microphone = should_capture_microphone(microphone_permission());
-    #[cfg(target_os = "windows")]
-    let include_microphone = true;
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let include_microphone = false;
-    let audio_capture = recording_audio::AudioCaptureSession::start(include_microphone)?;
-    let microphone_warning = audio_capture.microphone_warning().map(str::to_owned);
-    let mut audio_mixer = recording_audio::AudioMixer::new();
     let mut aac_encoder = recording_audio::create_aac_encoder()?;
     let preferred_path =
         new_recording_path_for_format(&folder, &file_timestamp, sequence, RecordingFormat::Mp4);
@@ -2410,6 +2791,19 @@ fn record_screen_to_mp4(
     )
     .map_err(|error| error.to_string())?;
     let (sps, pps, initial_packets) = prime_h264_encoder(&mut h264, &first)?;
+
+    // Starting ScreenCaptureKit/CoreAudio before H.264 priming includes encoder startup
+    // time in the audio track even though the first video sample starts at zero.
+    #[cfg(target_os = "macos")]
+    let include_microphone = should_capture_microphone(microphone_permission());
+    #[cfg(target_os = "windows")]
+    let include_microphone = true;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let include_microphone = false;
+    let recording_started_at = Instant::now();
+    let mut audio_capture = recording_audio::AudioCaptureSession::start(include_microphone)?;
+    let microphone_warning = audio_capture.microphone_warning().map(str::to_owned);
+    let mut audio_mixer = recording_audio::AudioMixer::new();
 
     let fourcc = |value: &str| value.parse::<FourCC>().map_err(|error| error.to_string());
     let config = Mp4Config {
@@ -2444,26 +2838,41 @@ fn record_screen_to_mp4(
         .map_err(|error| error.to_string())?;
     let _ = event_tx.send(RecordingEvent::Started {
         path: path.clone(),
-        microphone_warning,
+        microphone_warning: microphone_warning.clone(),
     });
     let mut frame_index = 0u64;
+    let mut last_video_start_ms = 0u64;
+    let mut pending_video_sample: Option<(u64, H264Packet)> = None;
     let frame_interval = quality.frame_interval();
     let frame_duration_ms = quality.frame_duration_ms();
     for packet in initial_packets {
         if !packet.sample.is_empty() {
-            write_mp4_sample(&mut writer, frame_index, packet, frame_duration_ms)?;
+            let start_time_ms = frame_index * frame_duration_ms;
+            write_mp4_sample_with_duration(&mut writer, packet, frame_duration_ms)?;
+            last_video_start_ms = start_time_ms;
             frame_index += 1;
         }
     }
     let mut last_written = Instant::now();
     let mut last_status = Instant::now();
+    let mut last_microphone_warning = microphone_warning.clone();
     loop {
         match stop_rx.try_recv() {
             Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {}
         }
         audio_capture.drain_into(&mut audio_mixer)?;
-        for (start, samples) in audio_mixer.take_ready() {
+        if let Some(warning) = audio_capture.microphone_warning()
+            && last_microphone_warning.as_deref() != Some(warning)
+        {
+            let _ = event_tx.send(RecordingEvent::MicrophoneWarning(warning.to_owned()));
+            last_microphone_warning = Some(warning.to_owned());
+        }
+        let max_audio_elapsed_ns = recording_started_at
+            .elapsed()
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
+        for (start, samples) in audio_mixer.take_ready_through(max_audio_elapsed_ns) {
             let encoded = recording_audio::encode_block(&mut *aac_encoder, start, samples)?;
             write_mp4_audio_samples(&mut writer, encoded)?;
         }
@@ -2484,7 +2893,20 @@ fn record_screen_to_mp4(
         }
         let packet = encode_h264_frame(&mut h264, &frame)?;
         if !packet.sample.is_empty() {
-            write_mp4_sample(&mut writer, frame_index, packet, frame_duration_ms)?;
+            let elapsed_ms = recording_started_at
+                .elapsed()
+                .as_millis()
+                .min(u64::MAX as u128) as u64;
+            let start_time_ms =
+                next_video_start_ms(elapsed_ms, last_video_start_ms, frame_duration_ms);
+            if let Some((previous_start_ms, previous_packet)) = pending_video_sample.take() {
+                let duration_ms = start_time_ms
+                    .saturating_sub(previous_start_ms)
+                    .max(frame_duration_ms);
+                write_mp4_sample_with_duration(&mut writer, previous_packet, duration_ms)?;
+            }
+            pending_video_sample = Some((start_time_ms, packet));
+            last_video_start_ms = start_time_ms;
             frame_index += 1;
         }
         last_written = Instant::now();
@@ -2492,9 +2914,28 @@ fn record_screen_to_mp4(
     if frame_index < 2 {
         return Err("MP4動画を作るには、1秒以上録画してください。".into());
     }
-    for (start, samples) in audio_mixer.finish(&audio_capture)? {
+    if let Some((last_start_ms, packet)) = pending_video_sample {
+        let elapsed_ms = recording_started_at
+            .elapsed()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let duration_ms = elapsed_ms
+            .saturating_sub(last_start_ms)
+            .max(frame_duration_ms);
+        write_mp4_sample_with_duration(&mut writer, packet, duration_ms)?;
+    }
+    let max_audio_elapsed_ns = recording_started_at
+        .elapsed()
+        .as_nanos()
+        .min(i64::MAX as u128) as i64;
+    for (start, samples) in audio_mixer.finish(&mut audio_capture, max_audio_elapsed_ns)? {
         let encoded = recording_audio::encode_block(&mut *aac_encoder, start, samples)?;
         write_mp4_audio_samples(&mut writer, encoded)?;
+    }
+    if let Some(warning) = audio_capture.microphone_warning()
+        && last_microphone_warning.as_deref() != Some(warning)
+    {
+        let _ = event_tx.send(RecordingEvent::MicrophoneWarning(warning.to_owned()));
     }
     let encoded = recording_audio::finish_encoder(&mut *aac_encoder)?;
     write_mp4_audio_samples(&mut writer, encoded)?;
@@ -2530,9 +2971,8 @@ impl Drop for PartialRecordingFile {
     }
 }
 
-fn write_mp4_sample<W: std::io::Write + std::io::Seek>(
+fn write_mp4_sample_with_duration<W: std::io::Write + std::io::Seek>(
     writer: &mut Mp4Writer<W>,
-    frame_index: u64,
     packet: H264Packet,
     frame_duration_ms: u64,
 ) -> Result<(), String> {
@@ -2545,7 +2985,7 @@ fn write_mp4_sample<W: std::io::Write + std::io::Seek>(
         .write_sample(
             1,
             &Mp4Sample {
-                start_time: frame_index * frame_duration_ms,
+                start_time: 0,
                 duration,
                 rendering_offset: 0,
                 is_sync: packet.is_sync,
@@ -2576,6 +3016,10 @@ fn write_mp4_audio_samples<W: std::io::Write + std::io::Seek>(
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn next_video_start_ms(elapsed_ms: u64, previous_start_ms: u64, frame_duration_ms: u64) -> u64 {
+    elapsed_ms.max(previous_start_ms.saturating_add(frame_duration_ms))
 }
 
 fn write_gif_frame<W: Write>(
@@ -2888,25 +3332,16 @@ impl MacShot {
         }
     }
 
-    fn request_quit(&mut self, ctx: &egui::Context) {
-        #[cfg(target_os = "windows")]
-        {
-            if self.recording || self.recording_starting {
-                self.quit_after_recording = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.stop_recording();
-            } else {
-                std::process::exit(0);
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Ok(stop) = self.recording_stop_tx.lock()
-                && let Some(stop) = stop.as_ref()
+    fn request_quit(&mut self, _ctx: &egui::Context) {
+        if should_defer_quit_until_recording_finishes(self.recording, self.recording_starting) {
+            self.quit_after_recording = true;
+            self.stop_recording();
+            #[cfg(target_os = "windows")]
             {
-                let _ = stop.send(());
+                _ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            std::process::exit(0);
         }
     }
 
@@ -2958,12 +3393,7 @@ impl MacShot {
 
     #[cfg(target_os = "macos")]
     fn reveal_macshot_app(&mut self) {
-        let app_path = std::env::current_exe().ok().and_then(|executable| {
-            executable
-                .ancestors()
-                .find(|path| path.extension().is_some_and(|extension| extension == "app"))
-                .map(Path::to_path_buf)
-        });
+        let app_path = current_macos_app_bundle_path();
         let Some(app_path) = app_path else {
             self.status =
                 "MacShot.appの場所を特定できません。アプリケーション版からお試しください。".into();
@@ -2975,6 +3405,56 @@ impl MacShot {
             }
             Ok(status) => self.status = format!("Finderでアプリを表示できませんでした ({status})"),
             Err(error) => self.status = format!("Finderでアプリを表示できません: {error}"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_microphone_test(&mut self) {
+        if microphone_permission() != MicrophonePermission::Authorized {
+            self.microphone_test_message = Some("先にマイクを許可してください。".into());
+            return;
+        }
+        self.microphone_test_peak = 0.0;
+        self.microphone_test_message =
+            Some("5秒間テストします。マイクに向かって話してください。".into());
+        self.microphone_test_rx = Some(recording_audio::start_microphone_level_test());
+    }
+
+    #[cfg(target_os = "macos")]
+    fn handle_microphone_test_events(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = self.microphone_test_rx.as_ref() else {
+            return;
+        };
+        let mut finished = false;
+        while let Ok(event) = receiver.try_recv() {
+            match event {
+                recording_audio::MicrophoneTestEvent::Level(peak) => {
+                    self.microphone_test_peak = peak;
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                }
+                recording_audio::MicrophoneTestEvent::Finished { peak, detected } => {
+                    self.microphone_test_peak = peak;
+                    self.microphone_test_message = Some(if detected {
+                        format!(
+                            "マイク入力を検出しました（最大 {:.0} dBFS）",
+                            peak.max(1.0e-8).log10() * 20.0
+                        )
+                    } else {
+                        "マイク入力を検出できませんでした。入力デバイスと入力音量を確認してください。".into()
+                    });
+                    finished = true;
+                }
+                recording_audio::MicrophoneTestEvent::Failed(error) => {
+                    self.microphone_test_message =
+                        Some(format!("マイクテストを開始できませんでした: {error}"));
+                    finished = true;
+                }
+            }
+        }
+        if finished {
+            self.microphone_test_rx = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(50));
         }
     }
 
@@ -3030,11 +3510,41 @@ impl MacShot {
             }
             MicrophonePermission::NotDetermined => {}
         }
-        // SAFETY: AVFoundation exposes this process-wide immutable media type constant.
-        let Some(audio_type) = (unsafe { AVMediaTypeAudio }) else {
-            self.status = "macOSのマイク許可を確認できません。マイク設定を開いてください。".into();
+        self.issue_microphone_permission_request(ctx);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn reset_and_request_microphone_permission(&mut self, ctx: &egui::Context) {
+        use objc2_foundation::NSBundle;
+
+        let Some(bundle_identifier) = (unsafe { NSBundle::mainBundle().bundleIdentifier() }) else {
+            self.status =
+                "MacShotのアプリ識別子を確認できず、マイク許可をリセットできません。".into();
             return;
         };
+        let bundle_identifier = bundle_identifier.to_string();
+        match Command::new("/usr/bin/tccutil")
+            .args(["reset", "Microphone", bundle_identifier.as_str()])
+            .status()
+        {
+            Ok(status) if status.success() => {
+                self.status =
+                    "MacShotのマイク許可状態をリセットしました。許可確認を表示します。".into();
+                // The user confirmed the reset in the dialog. Ask macOS again immediately.
+                self.issue_microphone_permission_request(ctx);
+            }
+            Ok(status) => {
+                self.status =
+                    format!("MacShotのマイク許可状態をリセットできませんでした ({status})");
+            }
+            Err(error) => {
+                self.status = format!("MacShotのマイク許可状態をリセットできません: {error}");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn issue_microphone_permission_request(&mut self, ctx: &egui::Context) {
         let repaint = ctx.clone();
         let permission_result = self.microphone_permission_result.clone();
         let callback = RcBlock::new(move |granted: ObjcBool| {
@@ -3043,12 +3553,10 @@ impl MacShot {
             }
             repaint.request_repaint();
         });
-        // SAFETY: The callback matches AVFoundation's documented completion-handler signature.
-        unsafe {
-            AVCaptureDevice::requestAccessForMediaType_completionHandler(audio_type, &callback);
-        }
+        // SAFETY: AVAudioApplication presents macOS's app-specific recording permission dialog.
+        unsafe { AVAudioApplication::requestRecordPermissionWithCompletionHandler(&callback) };
         self.status =
-            "macOSのマイク許可を要求しました。表示された確認画面で許可してください。".into();
+            "macOSにマイクの許可を確認しています。表示された画面で選択してください。".into();
     }
 
     fn refresh_permission_status(&mut self) {
@@ -3142,6 +3650,10 @@ impl MacShot {
                         self.stop_recording();
                     }
                 }
+                RecordingEvent::MicrophoneWarning(warning) => {
+                    self.recording_warning = Some(warning.clone());
+                    self.status = append_recording_warning(&self.status, Some(&warning));
+                }
                 RecordingEvent::Finished(result) => {
                     self.recording = false;
                     self.recording_starting = false;
@@ -3168,7 +3680,6 @@ impl MacShot {
                         }
                         Err(error) => self.status = recording_failure_message(&error),
                     }
-                    #[cfg(target_os = "windows")]
                     if self.quit_after_recording {
                         std::process::exit(0);
                     }
@@ -4841,6 +5352,58 @@ impl MacShot {
         }
     }
 
+    fn advance_recording_playback(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let mut event = None;
+        let mut request_failed = false;
+        if let Some(playback) = &mut self.recording_playback {
+            while let Ok(next) = playback.frame_rx.try_recv() {
+                event = Some(next);
+            }
+            if playback.playing && !playback.awaiting_frame && now >= playback.frame_due {
+                if playback.request_tx.send(()).is_ok() {
+                    playback.awaiting_frame = true;
+                } else {
+                    request_failed = true;
+                }
+            }
+            if playback.playing {
+                ctx.request_repaint_after(Duration::from_millis(10));
+            }
+        }
+
+        let mut finish = false;
+        if let Some(event) = event {
+            if let Some(playback) = &mut self.recording_playback {
+                playback.awaiting_frame = false;
+            }
+            match event {
+                RecordingPlaybackEvent::Frame(image, delay) => {
+                    self.recording_preview_image = Some(image);
+                    self.recording_preview_texture = None;
+                    if let Some(playback) = &mut self.recording_playback {
+                        playback.frame_due = Instant::now() + delay.max(Duration::from_millis(10));
+                    }
+                }
+                RecordingPlaybackEvent::End => {
+                    self.status = "録画の再生が終わりました。もう一度再生できます。".into();
+                    finish = true;
+                }
+                RecordingPlaybackEvent::Error(error) => {
+                    self.status = format!("録画を再生できませんでした: {error}");
+                    finish = true;
+                }
+            }
+        }
+        if request_failed {
+            self.status = "録画の再生を開始できませんでした。".into();
+            finish = true;
+        }
+        if finish {
+            self.recording_playback = None;
+        }
+    }
+
     fn show_evidence_page(&mut self, ui: &mut egui::Ui) {
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         ui.horizontal(|ui| {
@@ -4877,7 +5440,7 @@ impl MacShot {
                 ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
                 ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
             });
-            ui.label(egui::RichText::new("録画を選ぶと、最初のフレームと長さをアプリ内で確認できます。動画全体の再生は録画を開くボタンから行えます。").size(11.0).color(TEXT_MUTED));
+            ui.label(egui::RichText::new("録画を選んでアプリ内再生できます。MP4の音声を含む再生は「ファイルを開く」を使ってください。").size(11.0).color(TEXT_MUTED));
             ui.add_space(8.0);
             if self.recording_files.is_empty() {
                 ui.label(egui::RichText::new("保存された録画はありません。録画後に「更新」を押してください。").color(TEXT_MUTED));
@@ -4891,6 +5454,7 @@ impl MacShot {
                             if ui.selectable_label(selected, format!("▶  {name}")).clicked() {
                                 match recording_preview(&path) {
                                     Ok((image, details)) => {
+                                        self.recording_playback = None;
                                         self.recording_preview_path = Some(path.clone());
                                         self.recording_preview_image = Some(image);
                                         self.recording_preview_texture = None;
@@ -4916,6 +5480,22 @@ impl MacShot {
                     ui.label(egui::RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).strong());
                     if let Some(details) = &self.recording_preview_details {
                         ui.label(egui::RichText::new(details).size(11.0).color(TEXT_MUTED));
+                    }
+                    let playing = self
+                        .recording_playback
+                        .as_ref()
+                        .is_some_and(|playback| playback.playing);
+                    if ui.button(if playing { "⏸ 一時停止" } else { "▶ アプリ内再生" }).clicked() {
+                        if let Some(playback) = &mut self.recording_playback {
+                            playback.playing = !playback.playing;
+                            if playback.playing {
+                                playback.frame_due = Instant::now();
+                            }
+                        } else {
+                            self.recording_playback = Some(start_recording_playback(path.clone()));
+                            self.status = "録画をアプリ内で再生しています（映像のみ）。".into();
+                        }
+                        ui.ctx().request_repaint_after(Duration::from_millis(10));
                     }
                     ui.add_space(6.0);
                     let response = Self::show_recording_preview_image(
@@ -5178,6 +5758,25 @@ impl MacShot {
             });
             ui.add_space(6.0);
 
+            #[cfg(target_os = "macos")]
+            if let Some(app_path) = current_macos_app_bundle_path() {
+                let running_copy = format!(
+                    "起動中のMacShot: v{} · {}",
+                    env!("CARGO_PKG_VERSION"),
+                    app_path.display()
+                );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(running_copy)
+                            .size(11.0)
+                            .color(TEXT_MUTED)
+                            .monospace(),
+                    )
+                    .selectable(true),
+                );
+                ui.add_space(4.0);
+            }
+
             let screen_granted = screen_recording_access_granted();
             ui.horizontal_wrapped(|ui| {
                 ui.label("画面収録・システム音声");
@@ -5235,14 +5834,41 @@ impl MacShot {
                         self.request_microphone_permission(&ctx);
                     }
                 }
+                #[cfg(target_os = "macos")]
+                if microphone_state == MicrophonePermission::Denied
+                    && ui.button("拒否記録を解除").clicked()
+                {
+                    self.microphone_reset_confirmation = true;
+                }
                 if ui.button("マイク設定を開く").clicked() {
                     self.open_microphone_settings();
                 }
             });
 
             #[cfg(target_os = "macos")]
+            ui.horizontal_wrapped(|ui| {
+                let testing = self.microphone_test_rx.is_some();
+                if ui
+                    .add_enabled(
+                        microphone_state == MicrophonePermission::Authorized && !testing,
+                        egui::Button::new(if testing { "マイクテスト中…" } else { "マイク入力をテスト（5秒）" }),
+                    )
+                    .clicked()
+                {
+                    self.start_microphone_test();
+                }
+                if testing {
+                    ui.add(egui::ProgressBar::new(self.microphone_test_peak.clamp(0.0, 1.0))
+                        .desired_width(160.0));
+                }
+                if let Some(message) = &self.microphone_test_message {
+                    ui.label(egui::RichText::new(message).color(TEXT_MUTED));
+                }
+            });
+
+            #[cfg(target_os = "macos")]
             ui.label(
-                egui::RichText::new("一覧にMacShotがない場合は設定の「＋」から追加します。「FinderでMacShotを表示」で場所を開き、一覧へのドラッグも試せます。追加後に許可をオンにしてください。マイク許可の要求結果は画面下に表示されます。権限変更後は状態を更新してください。")
+                egui::RichText::new("画面収録の一覧にMacShotがない場合は「＋」から追加できます。マイク一覧には追加ボタンがありません。MacShotから許可を要求すると一覧に表示されます。拒否済みで一覧にもない場合は「拒否記録を解除」を使ってください。")
                     .size(11.0)
                     .color(TEXT_MUTED),
             );
@@ -5253,6 +5879,38 @@ impl MacShot {
                     .color(TEXT_MUTED),
             );
         });
+
+        #[cfg(target_os = "macos")]
+        if self.microphone_reset_confirmation {
+            let mut open = true;
+            let mut confirmed = false;
+            let mut cancelled = false;
+            egui::Window::new("マイクの拒否記録を解除")
+                .id(egui::Id::new("microphone_permission_reset_confirmation"))
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    ui.label("MacShotだけのマイク拒否記録を解除して、macOSに許可を確認します。解除してもマイクは許可されません。確認画面が表示された場合は、そこで許可を選んでください。");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(primary_button("解除して許可を確認")).clicked() {
+                            confirmed = true;
+                        }
+                        if ui.button("キャンセル").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                open = false;
+            }
+            self.microphone_reset_confirmation = open;
+            if confirmed {
+                self.microphone_reset_confirmation = false;
+                self.reset_and_request_microphone_permission(&ui.ctx().clone());
+            }
+        }
     }
 }
 
@@ -5271,19 +5929,21 @@ impl eframe::App for MacShot {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.advance_recording_playback(ctx);
+        #[cfg(target_os = "macos")]
+        self.handle_microphone_test_events(ctx);
         #[cfg(target_os = "macos")]
         if let Ok(mut result) = self.microphone_permission_result.lock()
             && let Some(granted) = result.take()
         {
             self.status = microphone_permission_result_message(granted).into();
         }
-        #[cfg(target_os = "windows")]
         if ctx.input(|input| input.viewport().close_requested()) {
-            if self.recording || self.recording_starting {
+            if should_defer_quit_until_recording_finishes(self.recording, self.recording_starting) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.quit_after_recording = true;
                 self.stop_recording();
-            } else {
+            } else if cfg!(target_os = "windows") {
                 std::process::exit(0);
             }
         }
@@ -5305,6 +5965,8 @@ impl eframe::App for MacShot {
         #[cfg(target_os = "windows")]
         self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);
+        #[cfg(target_os = "macos")]
+        set_standard_quit_items_enabled(!self.recording && !self.recording_starting);
         self.update_tray_recording_status();
         if self.recording || self.recording_starting {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -5483,6 +6145,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_bundle_path_finds_the_running_app_container() {
+        assert_eq!(
+            app_bundle_path_from_executable(Path::new(
+                "/Applications/MacShot.app/Contents/MacOS/MacShot",
+            )),
+            Some(PathBuf::from("/Applications/MacShot.app"))
+        );
+        assert_eq!(
+            app_bundle_path_from_executable(Path::new("/tmp/macshot")),
+            None
+        );
+    }
+
+    #[test]
     fn recording_preview_display_size_stays_useful_at_the_bottom_of_the_page() {
         assert_eq!(
             recording_preview_display_size(320, 180, 2_000.0),
@@ -5584,6 +6260,13 @@ mod tests {
             VideoQuality::from_setting("unknown"),
             VideoQuality::Standard
         );
+    }
+
+    #[test]
+    fn mp4_video_timestamps_preserve_real_capture_delays() {
+        assert_eq!(next_video_start_ms(350, 100, 100), 350);
+        assert_eq!(next_video_start_ms(150, 100, 100), 200);
+        assert_eq!(next_video_start_ms(u64::MAX, u64::MAX - 50, 100), u64::MAX);
     }
 
     #[test]
@@ -5966,21 +6649,89 @@ mod tests {
     }
 
     #[test]
-    fn gif_recording_preview_reads_first_frame_and_duration() {
+    fn gif_recording_preview_and_playback_decode_multiple_frames() {
         let directory = TestDirectory::new("gif-preview");
         let path = directory.path().join("clip.gif");
         let file = std::fs::File::create(&path).unwrap();
         let mut encoder = gif::Encoder::new(file, 2, 1, &[]).unwrap();
         let mut pixels = vec![220, 20, 30, 255, 220, 20, 30, 255];
         write_gif_frame(&mut encoder, 2, 1, &mut pixels, 15).unwrap();
+        let mut pixels = vec![30, 210, 90, 255, 30, 210, 90, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut pixels, 20).unwrap();
         drop(encoder);
         let (image, details) = recording_preview(&path).unwrap();
         assert_eq!(image.dimensions(), (2, 1));
-        assert!(details.contains("GIF・1フレーム・0.15秒"));
+        assert!(details.contains("GIF・2フレーム・0.35秒"));
+        let mut playback = RecordingFrameReader::open(&path).unwrap();
+        let (first, first_delay) = playback.next_frame().unwrap().unwrap();
+        let (second, second_delay) = playback.next_frame().unwrap().unwrap();
+        assert_eq!(first.dimensions(), (2, 1));
+        assert_eq!(second.dimensions(), (2, 1));
+        assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
+        assert_eq!(first_delay, Duration::from_millis(150));
+        assert_eq!(second_delay, Duration::from_millis(200));
+        assert!(playback.next_frame().unwrap().is_none());
     }
 
     #[test]
-    fn mp4_recording_preview_decodes_first_h264_frame() {
+    fn recording_playback_worker_streams_frames_on_demand() {
+        let directory = TestDirectory::new("gif-playback-worker");
+        let path = directory.path().join("clip.gif");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = gif::Encoder::new(file, 2, 1, &[]).unwrap();
+        let mut first = vec![200, 30, 40, 255, 200, 30, 40, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut first, 10).unwrap();
+        let mut second = vec![20, 180, 70, 255, 20, 180, 70, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut second, 10).unwrap();
+        drop(encoder);
+
+        let playback = start_recording_playback(path);
+        playback.request_tx.send(()).unwrap();
+        let RecordingPlaybackEvent::Frame(first, _) = playback
+            .frame_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+        else {
+            panic!("playback worker should deliver its first frame");
+        };
+        playback.request_tx.send(()).unwrap();
+        let RecordingPlaybackEvent::Frame(second, _) = playback
+            .frame_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+        else {
+            panic!("playback worker should deliver its second frame");
+        };
+        assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
+        playback.request_tx.send(()).unwrap();
+        assert!(matches!(
+            playback.frame_rx.recv_timeout(Duration::from_secs(1)),
+            Ok(RecordingPlaybackEvent::End)
+        ));
+    }
+
+    #[test]
+    fn gif_playback_honors_infinite_repeat_metadata() {
+        let directory = TestDirectory::new("gif-playback-repeat");
+        let path = directory.path().join("loop.gif");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = gif::Encoder::new(file, 2, 1, &[]).unwrap();
+        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+        let mut first = vec![200, 30, 40, 255, 200, 30, 40, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut first, 10).unwrap();
+        let mut second = vec![20, 180, 70, 255, 20, 180, 70, 255];
+        write_gif_frame(&mut encoder, 2, 1, &mut second, 10).unwrap();
+        drop(encoder);
+
+        let mut playback = RecordingFrameReader::open(&path).unwrap();
+        let (first_loop, _) = playback.next_frame().unwrap().unwrap();
+        let (_, _) = playback.next_frame().unwrap().unwrap();
+        let (second_loop, _) = playback.next_frame().unwrap().unwrap();
+        assert_eq!(first_loop.get_pixel(0, 0), second_loop.get_pixel(0, 0));
+    }
+
+    #[test]
+    fn mp4_recording_preview_and_playback_decode_all_h264_frames() {
         let directory = TestDirectory::new("mp4-preview");
         let path = directory.path().join("clip.mp4");
         let mut encoder = H264Encoder::with_api_config(
@@ -5991,8 +6742,9 @@ mod tests {
                 .usage_type(UsageType::ScreenContentRealTime),
         )
         .unwrap();
-        let frame = image::RgbaImage::from_pixel(64, 48, Rgba([80, 140, 220, 255]));
-        let (sps, pps, initial_packets) = prime_h264_encoder(&mut encoder, &frame).unwrap();
+        let first_frame = image::RgbaImage::from_pixel(64, 48, Rgba([80, 140, 220, 255]));
+        let second_frame = image::RgbaImage::from_pixel(64, 48, Rgba([220, 80, 60, 255]));
+        let (sps, pps, initial_packets) = prime_h264_encoder(&mut encoder, &first_frame).unwrap();
         let config = Mp4Config {
             major_brand: "isom".parse().unwrap(),
             minor_version: 512,
@@ -6009,21 +6761,28 @@ mod tests {
                 pic_param_set: pps,
             }))
             .unwrap();
-        let mut frame_index = 0;
         for packet in initial_packets {
             if !packet.sample.is_empty() {
-                write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
-                frame_index += 1;
+                write_mp4_sample_with_duration(&mut writer, packet, 100).unwrap();
             }
         }
-        let second = encode_h264_frame(&mut encoder, &frame).unwrap();
-        write_mp4_sample(&mut writer, frame_index, second, 100).unwrap();
+        let second = encode_h264_frame(&mut encoder, &second_frame).unwrap();
+        write_mp4_sample_with_duration(&mut writer, second, 100).unwrap();
         writer.write_end().unwrap();
         writer.into_writer().sync_all().unwrap();
 
         let (image, details) = recording_preview(&path).unwrap();
         assert_eq!(image.dimensions(), (64, 48));
-        assert!(details.contains("MP4・H.264・0.20秒"));
+        assert!(details.contains("MP4・H.264・音声トラックなし・0.20秒"));
+        let mut playback = RecordingFrameReader::open(&path).unwrap();
+        let (first, first_delay) = playback.next_frame().unwrap().unwrap();
+        let (second, second_delay) = playback.next_frame().unwrap().unwrap();
+        assert_eq!(first.dimensions(), (64, 48));
+        assert_eq!(second.dimensions(), (64, 48));
+        assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
+        assert_eq!(first_delay, Duration::from_millis(100));
+        assert_eq!(second_delay, Duration::from_millis(100));
+        assert!(playback.next_frame().unwrap().is_none());
     }
 
     #[test]
@@ -6085,15 +6844,13 @@ mod tests {
         audio_track.timescale = recording_audio::sample_rate();
         writer.add_track(&audio_track).unwrap();
 
-        let mut frame_index = 0;
         for packet in initial_packets {
             if !packet.sample.is_empty() {
-                write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
-                frame_index += 1;
+                write_mp4_sample_with_duration(&mut writer, packet, 100).unwrap();
             }
         }
         let packet = encode_h264_frame(&mut video_encoder, &frame).unwrap();
-        write_mp4_sample(&mut writer, frame_index, packet, 100).unwrap();
+        write_mp4_sample_with_duration(&mut writer, packet, 100).unwrap();
         write_mp4_audio_samples(&mut writer, audio_packets).unwrap();
         writer.write_end().unwrap();
         writer.into_writer().sync_all().unwrap();
@@ -6127,6 +6884,8 @@ mod tests {
                 .all(|pair| pair[0].start_time < pair[1].start_time)
         );
         assert!(reader.duration().as_millis() >= 200);
+        let (_, preview_details) = recording_preview(&path).unwrap();
+        assert!(preview_details.contains("AAC音声トラックあり"));
     }
 
     #[test]
@@ -6144,6 +6903,26 @@ mod tests {
         assert_eq!(*combined.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*combined.get_pixel(210, 10), Rgba([0, 255, 0, 255]));
         assert_eq!(*combined.get_pixel(399, 99), Rgba([0, 255, 0, 255]));
+    }
+
+    #[test]
+    fn display_capture_uses_pixel_dimensions_for_retina_and_scaled_displays() {
+        assert_eq!(
+            display_capture_pixel_dimensions(1512, 982, 2.0),
+            (3024, 1964)
+        );
+        assert_eq!(
+            display_capture_pixel_dimensions(1920, 1080, 1.0),
+            (1920, 1080)
+        );
+        assert_eq!(
+            display_capture_pixel_dimensions(2560, 1440, 1.5),
+            (3840, 2160)
+        );
+        assert_eq!(
+            display_capture_pixel_dimensions(1512, 982, f32::NAN),
+            (1512, 982)
+        );
     }
 
     #[test]
@@ -6186,6 +6965,13 @@ mod tests {
     fn recording_completion_respects_continuous_capture_visibility() {
         assert!(!should_show_window_after_recording(true));
         assert!(should_show_window_after_recording(false));
+    }
+
+    #[test]
+    fn quit_waits_for_active_or_starting_recording() {
+        assert!(should_defer_quit_until_recording_finishes(true, false));
+        assert!(should_defer_quit_until_recording_finishes(false, true));
+        assert!(!should_defer_quit_until_recording_finishes(false, false));
     }
 
     #[test]
@@ -6307,6 +7093,29 @@ mod tests {
         let denied = microphone_permission_result_message(false);
         assert!(denied.contains("システム音声のみ"));
         assert!(denied.contains("マイク設定"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn avaudioapplication_permission_states_map_to_app_states() {
+        assert_eq!(
+            microphone_permission_from_record_permission(
+                AVAudioApplicationRecordPermission::Undetermined
+            ),
+            MicrophonePermission::NotDetermined
+        );
+        assert_eq!(
+            microphone_permission_from_record_permission(
+                AVAudioApplicationRecordPermission::Denied
+            ),
+            MicrophonePermission::Denied
+        );
+        assert_eq!(
+            microphone_permission_from_record_permission(
+                AVAudioApplicationRecordPermission::Granted
+            ),
+            MicrophonePermission::Authorized
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -6450,11 +7259,11 @@ mod tests {
 
         assert_eq!(
             normalized_region_bounds(screen, egui::pos2(110.0, 70.0), egui::pos2(35.0, 30.0)),
-            Some([0.25, 0.2, 1.0, 1.0])
+            Some([0.22, 0.14, 1.0, 1.0])
         );
         assert_eq!(
             normalized_region_bounds(screen, egui::pos2(0.0, 10.0), egui::pos2(60.0, 50.0)),
-            Some([0.0, 0.0, 0.5, 0.6])
+            Some([0.0, 0.0, 0.53, 0.66])
         );
         assert!(
             normalized_region_bounds(screen, egui::pos2(10.0, 20.0), egui::pos2(12.0, 40.0))

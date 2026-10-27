@@ -3,14 +3,17 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, TryRecvError},
+        mpsc::{self, Receiver},
     },
+    time::{Duration, Instant},
 };
 
 use cpal::{
     Data, Sample, SampleFormat,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSProcessInfo;
 use scrcap::{AudioConfig, AudioFrame, CaptureConfig, CaptureDescriptor, Target, VideoConfig};
 use zvidlib_aac_encoder::native_aac_audio_encoder_factory;
 use zvidlib_core::{
@@ -24,9 +27,16 @@ const AAC_BITRATE: u32 = 160_000;
 const AAC_BLOCK_SAMPLES: usize = 1_024;
 const MIX_LOOKAHEAD_NS: i64 = 120_000_000;
 const CHANNEL_CAPACITY: usize = 128;
+const MICROPHONE_SIGNAL_THRESHOLD: f32 = 0.002;
+const MICROPHONE_SILENCE_WARNING_AFTER: Duration = Duration::from_secs(3);
+#[cfg(target_os = "macos")]
+const MICROPHONE_TEST_BASELINE_WINDOW: Duration = Duration::from_secs(1);
+#[cfg(any(target_os = "macos", test))]
+const MICROPHONE_TEST_SIGNAL_MULTIPLIER: f32 = 2.5;
+#[cfg(any(target_os = "macos", test))]
+const MICROPHONE_TEST_SIGNAL_FLOOR: f32 = 0.003;
 
 struct PcmChunk {
-    timestamp_ns: i64,
     start_sample: u64,
     samples: Vec<f32>,
 }
@@ -34,18 +44,48 @@ struct PcmChunk {
 pub struct AudioCaptureSession {
     system_capture: scrcap::CaptureDesc,
     system_rx: crossbeam_channel::Receiver<AudioFrame>,
-    mic_stream: Option<cpal::Stream>,
+    mic_stream: Option<MicrophoneStream>,
     mic_rx: Option<Receiver<PcmChunk>>,
     mic_error_rx: Option<Receiver<String>>,
     mic_dropped: Option<Arc<AtomicBool>>,
+    mic_started_at: Option<Instant>,
+    mic_last_data_at: Option<Instant>,
+    mic_last_signal_at: Option<Instant>,
     microphone_warning: Option<String>,
 }
 
+#[cfg(target_os = "macos")]
+pub enum MicrophoneTestEvent {
+    Level(f32),
+    Finished { peak: f32, detected: bool },
+    Failed(String),
+}
+
 struct MicrophoneCapture {
-    stream: cpal::Stream,
+    stream: MicrophoneStream,
     receiver: Receiver<PcmChunk>,
     error_receiver: Receiver<String>,
     dropped: Arc<AtomicBool>,
+}
+
+enum MicrophoneStream {
+    Cpal(cpal::Stream),
+    #[cfg(target_os = "macos")]
+    ScreenCaptureKit(screencapturekit::stream::SCStream),
+}
+
+impl MicrophoneStream {
+    fn pause(&self) {
+        match self {
+            Self::Cpal(stream) => {
+                let _ = stream.pause();
+            }
+            #[cfg(target_os = "macos")]
+            Self::ScreenCaptureKit(stream) => {
+                stream.stop_capture().ok();
+            }
+        }
+    }
 }
 
 impl AudioCaptureSession {
@@ -85,6 +125,7 @@ impl AudioCaptureSession {
             )
         };
 
+        let mic_started_at = microphone.as_ref().map(|_| Instant::now());
         let (mic_stream, mic_rx, mic_error_rx, mic_dropped) = match microphone {
             Some(capture) => (
                 Some(capture.stream),
@@ -101,6 +142,9 @@ impl AudioCaptureSession {
             mic_rx,
             mic_error_rx,
             mic_dropped,
+            mic_started_at,
+            mic_last_data_at: None,
+            mic_last_signal_at: None,
             microphone_warning,
         })
     }
@@ -109,45 +153,341 @@ impl AudioCaptureSession {
         self.microphone_warning.as_deref()
     }
 
-    fn check_health(&self) -> Result<(), String> {
+    fn disable_microphone(&mut self, warning: String) {
+        if let Some(stream) = self.mic_stream.take() {
+            stream.pause();
+        }
+        self.mic_rx = None;
+        self.mic_error_rx = None;
+        self.mic_dropped = None;
+        self.microphone_warning = Some(format!("{warning}。システム音声のみを録音しています。"));
+    }
+
+    fn check_health(&mut self) {
         if self
             .mic_dropped
             .as_ref()
             .is_some_and(|dropped| dropped.load(Ordering::Relaxed))
         {
-            return Err("マイク音声が混み合って一部を受け取れませんでした。録画を停止して再試行してください。".into());
+            self.disable_microphone("マイク音声が混み合い、取り込みを継続できません".into());
+            return;
         }
-        if let Some(receiver) = &self.mic_error_rx {
-            match receiver.try_recv() {
-                Ok(error) => return Err(error),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+        let microphone_error = self
+            .mic_error_rx
+            .as_ref()
+            .and_then(|receiver| receiver.try_recv().ok());
+        if let Some(error) = microphone_error {
+            self.microphone_warning = Some(format!(
+                "{error}。マイク入力の復帰を待ちながら録画を続けています。"
+            ));
+        }
+    }
+
+    pub fn drain_into(&mut self, mixer: &mut AudioMixer) -> Result<(), String> {
+        self.check_health();
+        while let Ok(frame) = self.system_rx.try_recv() {
+            mixer.push_system(frame)?;
+        }
+        while let Some(chunk) = self
+            .mic_rx
+            .as_ref()
+            .and_then(|receiver| receiver.try_recv().ok())
+        {
+            let now = Instant::now();
+            self.mic_last_data_at = Some(now);
+            if microphone_chunk_has_signal(&chunk.samples) {
+                self.mic_last_signal_at = Some(now);
             }
+            mixer.push_mic(chunk);
+        }
+        let last_mic_activity = self.mic_last_data_at.or(self.mic_started_at);
+        if self.mic_stream.is_some()
+            && last_mic_activity.is_some_and(|last| last.elapsed() > Duration::from_secs(2))
+        {
+            self.disable_microphone("マイク音声を2秒以上受信できませんでした".into());
+            return Ok(());
         }
         Ok(())
     }
 
-    pub fn drain_into(&self, mixer: &mut AudioMixer) -> Result<(), String> {
-        self.check_health()?;
-        while let Ok(frame) = self.system_rx.try_recv() {
-            mixer.push_system(frame)?;
+    fn report_silent_microphone(&mut self) {
+        let elapsed = self
+            .mic_started_at
+            .map_or(Duration::ZERO, |started| started.elapsed());
+        if should_warn_about_silent_microphone(
+            self.mic_stream.is_some(),
+            elapsed,
+            self.mic_last_signal_at.is_some(),
+        ) {
+            self.microphone_warning = Some(
+                "マイクに音声が届きませんでした。入力デバイスと入力音量を確認してください".into(),
+            );
         }
-        if let Some(receiver) = &self.mic_rx {
-            while let Ok(chunk) = receiver.try_recv() {
-                mixer.push_mic(chunk);
-            }
-        }
-        Ok(())
     }
 
     fn stop(&self) {
         if let Some(stream) = &self.mic_stream {
-            let _ = stream.pause();
+            stream.pause();
         }
         self.system_capture.terminate();
     }
 }
 
 fn start_microphone() -> Result<MicrophoneCapture, String> {
+    #[cfg(target_os = "macos")]
+    {
+        start_cpal_microphone().or_else(|cpal_error| {
+            start_screen_capturekit_microphone().map_err(|screen_capture_error| {
+                format!("CoreAudio入力を開始できません: {cpal_error}。ScreenCaptureKitも開始できません: {screen_capture_error}")
+            })
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    start_cpal_microphone()
+}
+
+fn microphone_chunk_has_signal(samples: &[f32]) -> bool {
+    samples
+        .iter()
+        .any(|sample| sample.is_finite() && sample.abs() >= MICROPHONE_SIGNAL_THRESHOLD)
+}
+
+#[cfg(target_os = "macos")]
+pub fn start_microphone_level_test() -> Receiver<MicrophoneTestEvent> {
+    let (event_tx, event_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let capture = match start_microphone() {
+            Ok(capture) => capture,
+            Err(error) => {
+                let _ = event_tx.send(MicrophoneTestEvent::Failed(error));
+                return;
+            }
+        };
+        let MicrophoneCapture {
+            stream,
+            receiver,
+            error_receiver,
+            ..
+        } = capture;
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(5);
+        let mut peak = 0.0_f32;
+        let mut baseline_sum = 0.0_f64;
+        let mut baseline_chunks = 0_u64;
+        let mut signal_chunks = 0_u8;
+        while Instant::now() < deadline {
+            while let Ok(chunk) = receiver.try_recv() {
+                let chunk_peak = pcm_peak(&chunk.samples);
+                peak = peak.max(chunk_peak);
+                let rms = pcm_rms(&chunk.samples);
+                if started.elapsed() < MICROPHONE_TEST_BASELINE_WINDOW {
+                    baseline_sum += f64::from(rms);
+                    baseline_chunks += 1;
+                } else {
+                    let baseline = if baseline_chunks == 0 {
+                        MICROPHONE_TEST_SIGNAL_FLOOR
+                    } else {
+                        (baseline_sum / baseline_chunks as f64) as f32
+                    };
+                    if microphone_test_signal_detected(rms, baseline) {
+                        signal_chunks = signal_chunks.saturating_add(1);
+                    }
+                }
+            }
+            if let Ok(error) = error_receiver.try_recv() {
+                stream.pause();
+                let _ = event_tx.send(MicrophoneTestEvent::Failed(error));
+                return;
+            }
+            if event_tx.send(MicrophoneTestEvent::Level(peak)).is_err() {
+                stream.pause();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        stream.pause();
+        let _ = event_tx.send(MicrophoneTestEvent::Finished {
+            peak,
+            detected: signal_chunks >= 3,
+        });
+    });
+    event_rx
+}
+
+#[cfg(target_os = "macos")]
+fn pcm_peak(samples: &[f32]) -> f32 {
+    samples
+        .iter()
+        .copied()
+        .filter(|sample| sample.is_finite())
+        .map(f32::abs)
+        .fold(0.0_f32, f32::max)
+}
+
+#[cfg(target_os = "macos")]
+fn pcm_rms(samples: &[f32]) -> f32 {
+    let (sum, count) = samples
+        .iter()
+        .copied()
+        .filter(|sample| sample.is_finite())
+        .fold((0.0_f64, 0_u64), |(sum, count), sample| {
+            (sum + f64::from(sample * sample), count + 1)
+        });
+    if count == 0 {
+        0.0
+    } else {
+        (sum / count as f64).sqrt() as f32
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn microphone_test_signal_detected(rms: f32, ambient_rms: f32) -> bool {
+    let threshold = (ambient_rms.max(0.0) * MICROPHONE_TEST_SIGNAL_MULTIPLIER)
+        .max(MICROPHONE_TEST_SIGNAL_FLOOR);
+    rms.is_finite() && rms >= threshold
+}
+
+fn should_warn_about_silent_microphone(
+    microphone_started: bool,
+    elapsed: Duration,
+    signal_seen: bool,
+) -> bool {
+    microphone_started && elapsed >= MICROPHONE_SILENCE_WARNING_AFTER && !signal_seen
+}
+
+#[cfg(target_os = "macos")]
+fn start_screen_capturekit_microphone() -> Result<MicrophoneCapture, String> {
+    use screencapturekit::{
+        prelude::{SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration},
+        stream::output_type::SCStreamOutputType,
+    };
+
+    let system_major_version = NSProcessInfo::processInfo()
+        .operatingSystemVersion()
+        .majorVersion;
+    if !screen_capturekit_microphone_supported(system_major_version) {
+        return Err("ScreenCaptureKitのマイク入力にはmacOS 15以降が必要です".into());
+    }
+
+    let content = SCShareableContent::get()
+        .map_err(|error| format!("ScreenCaptureKitの画面一覧を取得できません: {error}"))?;
+    let display = content
+        .displays()
+        .into_iter()
+        .next()
+        .ok_or_else(|| "ScreenCaptureKitで画面が見つかりません。".to_string())?;
+    let filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[])
+        .build()
+        .map_err(|error| format!("マイク入力を準備できません: {error}"))?;
+    // ScreenCaptureKit expects a normal video stream configuration even when
+    // the app only registers the microphone output handler. Tiny 2×2 output
+    // dimensions can start successfully but fail to deliver microphone buffers
+    // on some macOS versions.
+    let config = SCStreamConfiguration::new()
+        .with_width(320)
+        .with_height(240)
+        .with_captures_audio(true)
+        .with_sample_rate(OUTPUT_RATE as i32)
+        .with_channel_count(OUTPUT_CHANNELS as i32)
+        .with_captures_microphone(true)
+        .map_err(|error| format!("このmacOSではScreenCaptureKitマイク入力を使えません: {error}"))?;
+    let (mic_tx, mic_rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
+    let mic_dropped = Arc::new(AtomicBool::new(false));
+    let dropped_flag = mic_dropped.clone();
+    let callback_tx = mic_tx.clone();
+    let mut stream = SCStream::new(&filter, &config)
+        .map_err(|error| format!("ScreenCaptureKitマイクを準備できません: {error}"))?;
+    stream
+        .add_output_handler(
+            move |sample, output_type| {
+                if output_type != SCStreamOutputType::Microphone {
+                    return;
+                }
+                let Some(samples) = screen_capturekit_sample_to_stereo_48khz(&sample) else {
+                    return;
+                };
+                if samples.is_empty()
+                    || callback_tx
+                        .try_send(PcmChunk {
+                            start_sample: 0,
+                            samples,
+                        })
+                        .is_err()
+                {
+                    dropped_flag.store(true, Ordering::Relaxed);
+                }
+            },
+            SCStreamOutputType::Microphone,
+        )
+        .map_err(|error| format!("ScreenCaptureKitマイクを接続できません: {error}"))?;
+    stream
+        .start_capture()
+        .map_err(|error| format!("ScreenCaptureKitマイクを開始できません: {error}"))?;
+    let (_error_tx, error_rx) = mpsc::channel();
+    Ok(MicrophoneCapture {
+        stream: MicrophoneStream::ScreenCaptureKit(stream),
+        receiver: mic_rx,
+        error_receiver: error_rx,
+        dropped: mic_dropped,
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn screen_capturekit_microphone_supported(major_version: isize) -> bool {
+    major_version >= 15
+}
+
+#[cfg(target_os = "macos")]
+fn screen_capturekit_sample_to_stereo_48khz(
+    sample: &screencapturekit::CMSampleBuffer,
+) -> Option<Vec<f32>> {
+    let format = sample.format_description()?;
+    if !format.audio_is_float() || format.audio_bits_per_channel()? != 32 {
+        return None;
+    }
+    let channels = format.audio_channel_count()? as usize;
+    let sample_rate = format.audio_sample_rate()? as u32;
+    let list = sample.audio_buffer_list().ok()?;
+    let buffers = list
+        .iter()
+        .map(|buffer| {
+            let bytes = buffer.data();
+            let (sample_bytes, _) = bytes.as_chunks::<4>();
+            let samples = sample_bytes
+                .iter()
+                .map(|chunk| f32::from_ne_bytes(*chunk))
+                .collect::<Vec<_>>();
+            (buffer.number_channels as usize, samples)
+        })
+        .collect::<Vec<_>>();
+    let interleaved = interleave_audio_buffers(&buffers, channels)?;
+    Some(convert_to_stereo_48khz(&interleaved, channels, sample_rate))
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn interleave_audio_buffers(buffers: &[(usize, Vec<f32>)], channels: usize) -> Option<Vec<f32>> {
+    if channels == 0 || buffers.is_empty() {
+        return None;
+    }
+    if buffers.len() == 1 && buffers[0].0 == channels {
+        return Some(buffers[0].1.clone());
+    }
+    if buffers.len() != channels || buffers.iter().any(|(count, _)| *count != 1) {
+        return None;
+    }
+    let frames = buffers.iter().map(|(_, samples)| samples.len()).min()?;
+    let mut interleaved = Vec::with_capacity(frames * channels);
+    for frame in 0..frames {
+        for (_, samples) in buffers {
+            interleaved.push(samples[frame]);
+        }
+    }
+    Some(interleaved)
+}
+
+fn start_cpal_microphone() -> Result<MicrophoneCapture, String> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -172,7 +512,7 @@ fn start_microphone() -> Result<MicrophoneCapture, String> {
         .build_input_stream_raw(
             supported.config(),
             sample_format,
-            move |data, info| {
+            move |data, _info| {
                 let Some(raw) = sample_data_as_f32(data, sample_format) else {
                     let _ = callback_error_tx.send("マイクの音声形式を変換できません。".into());
                     return;
@@ -181,10 +521,8 @@ fn start_microphone() -> Result<MicrophoneCapture, String> {
                 if samples.is_empty() {
                     return;
                 }
-                let timestamp_ns = info.timestamp().capture.as_nanos().min(i64::MAX as u128) as i64;
                 if callback_tx
                     .try_send(PcmChunk {
-                        timestamp_ns,
                         start_sample: 0,
                         samples,
                     })
@@ -203,7 +541,7 @@ fn start_microphone() -> Result<MicrophoneCapture, String> {
         .play()
         .map_err(|error| format!("マイクを開始できません: {error}"))?;
     Ok(MicrophoneCapture {
-        stream,
+        stream: MicrophoneStream::Cpal(stream),
         receiver: mic_rx,
         error_receiver: mic_error_rx,
         dropped: mic_dropped,
@@ -211,7 +549,8 @@ fn start_microphone() -> Result<MicrophoneCapture, String> {
 }
 
 pub struct AudioMixer {
-    base_ns: Option<i64>,
+    next_system_sample: u64,
+    next_microphone_sample: u64,
     system: VecDeque<PcmChunk>,
     microphone: VecDeque<PcmChunk>,
     latest_system_ns: Option<i64>,
@@ -222,7 +561,8 @@ pub struct AudioMixer {
 impl AudioMixer {
     pub fn new() -> Self {
         Self {
-            base_ns: None,
+            next_system_sample: 0,
+            next_microphone_sample: 0,
             system: VecDeque::new(),
             microphone: VecDeque::new(),
             latest_system_ns: None,
@@ -236,7 +576,6 @@ impl AudioMixer {
         self.push_chunk(
             true,
             PcmChunk {
-                timestamp_ns: i64::try_from(frame.ts).unwrap_or(i64::MAX),
                 start_sample: 0,
                 samples,
             },
@@ -252,37 +591,16 @@ impl AudioMixer {
         if chunk.samples.is_empty() {
             return;
         }
-        if self.base_ns.is_none() {
-            self.base_ns = Some(chunk.timestamp_ns);
-        }
-        let Some(base_ns) = self.base_ns else {
-            return;
-        };
-        if chunk.timestamp_ns < base_ns {
-            let trim = ((base_ns - chunk.timestamp_ns) as i128 * OUTPUT_RATE as i128
-                / 1_000_000_000) as usize;
-            let trim = trim
-                .saturating_mul(OUTPUT_CHANNELS as usize)
-                .min(chunk.samples.len());
-            chunk.samples.drain(..trim);
-            chunk.timestamp_ns = base_ns;
-        }
-        if chunk.samples.is_empty() {
-            return;
-        }
-        let start_sample = if chunk.timestamp_ns <= base_ns {
-            0
+        let next_sample = if system {
+            &mut self.next_system_sample
         } else {
-            ((chunk.timestamp_ns - base_ns) as u128 * OUTPUT_RATE as u128 / 1_000_000_000)
-                .min(u64::MAX as u128) as u64
+            &mut self.next_microphone_sample
         };
-        chunk.start_sample = start_sample;
-        let duration_ns = (chunk.samples.len() / OUTPUT_CHANNELS as usize) as i128
-            * 1_000_000_000i128
-            / OUTPUT_RATE as i128;
-        let end_ns = chunk
-            .timestamp_ns
-            .saturating_add(duration_ns.min(i64::MAX as i128) as i64);
+        chunk.start_sample = *next_sample;
+        *next_sample =
+            next_sample.saturating_add((chunk.samples.len() / OUTPUT_CHANNELS as usize) as u64);
+        let end_ns = (*next_sample as u128 * 1_000_000_000u128 / OUTPUT_RATE as u128)
+            .min(i64::MAX as u128) as i64;
         if system {
             self.latest_system_ns = Some(self.latest_system_ns.unwrap_or(i64::MIN).max(end_ns));
             insert_timed_chunk(&mut self.system, chunk);
@@ -293,7 +611,7 @@ impl AudioMixer {
         }
     }
 
-    pub fn take_ready(&mut self) -> Vec<(u64, Vec<f32>)> {
+    pub fn take_ready_through(&mut self, max_elapsed_ns: i64) -> Vec<(u64, Vec<f32>)> {
         let Some(latest_ns) = self
             .latest_system_ns
             .into_iter()
@@ -302,18 +620,19 @@ impl AudioMixer {
         else {
             return Vec::new();
         };
-        self.take_through(latest_ns.saturating_sub(MIX_LOOKAHEAD_NS))
+        self.take_through(
+            latest_ns
+                .saturating_sub(MIX_LOOKAHEAD_NS)
+                .min(max_elapsed_ns.max(0)),
+        )
     }
 
     fn take_through(&mut self, watermark_ns: i64) -> Vec<(u64, Vec<f32>)> {
-        let Some(base_ns) = self.base_ns else {
-            return Vec::new();
-        };
-        let max_samples = if watermark_ns <= base_ns {
+        let max_samples = if watermark_ns <= 0 {
             0
         } else {
-            ((watermark_ns - base_ns) as u128 * OUTPUT_RATE as u128 / 1_000_000_000)
-                .min(u64::MAX as u128) as u64
+            (watermark_ns as u128 * OUTPUT_RATE as u128 / 1_000_000_000).min(u64::MAX as u128)
+                as u64
         };
         let mut blocks = Vec::new();
         while max_samples.saturating_sub(self.mixed_samples) >= AAC_BLOCK_SAMPLES as u64 {
@@ -333,24 +652,27 @@ impl AudioMixer {
 
     pub fn finish(
         &mut self,
-        capture: &AudioCaptureSession,
+        capture: &mut AudioCaptureSession,
+        max_elapsed_ns: i64,
     ) -> Result<Vec<(u64, Vec<f32>)>, String> {
         capture.stop();
         capture.drain_into(self)?;
+        capture.report_silent_microphone();
         let end_ns = self
             .latest_system_ns
             .into_iter()
             .chain(self.latest_microphone_ns)
             .max()
-            .ok_or_else(|| "録音した音声データがありません。".to_string())?;
+            .ok_or_else(|| "録音した音声データがありません。".to_string())?
+            .min(max_elapsed_ns.max(0));
         let mut blocks = self.take_through(end_ns);
         let remaining = end_ns;
-        if let Some(base_ns) = self.base_ns {
-            let samples = if remaining <= base_ns {
+        {
+            let samples = if remaining <= 0 {
                 0
             } else {
-                ((remaining - base_ns) as u128 * OUTPUT_RATE as u128 / 1_000_000_000)
-                    .min(u64::MAX as u128) as u64
+                (remaining as u128 * OUTPUT_RATE as u128 / 1_000_000_000).min(u64::MAX as u128)
+                    as u64
             };
             let pending = samples.saturating_sub(self.mixed_samples) as usize;
             if pending > 0 {
@@ -602,6 +924,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn microphone_signal_detection_rejects_silence_and_non_finite_samples() {
+        assert!(!microphone_chunk_has_signal(&[0.0, -0.001, f32::NAN]));
+        assert!(microphone_chunk_has_signal(&[
+            0.0,
+            MICROPHONE_SIGNAL_THRESHOLD
+        ]));
+    }
+
+    #[test]
+    fn microphone_test_ignores_ambient_level_and_requires_clearer_input() {
+        assert!(!microphone_test_signal_detected(0.05, 0.03));
+        assert!(microphone_test_signal_detected(0.08, 0.03));
+        assert!(!microphone_test_signal_detected(f32::NAN, 0.03));
+    }
+
+    #[test]
+    fn silent_microphone_warning_requires_a_started_stream_and_minimum_duration() {
+        assert!(!should_warn_about_silent_microphone(
+            false,
+            Duration::from_secs(5),
+            false
+        ));
+        assert!(!should_warn_about_silent_microphone(
+            true,
+            Duration::from_secs(2),
+            false
+        ));
+        assert!(!should_warn_about_silent_microphone(
+            true,
+            Duration::from_secs(5),
+            true
+        ));
+        assert!(should_warn_about_silent_microphone(
+            true,
+            Duration::from_secs(3),
+            false
+        ));
+    }
+
+    #[test]
+    fn screen_capturekit_microphone_fallback_requires_macos_15() {
+        assert!(!screen_capturekit_microphone_supported(14));
+        assert!(screen_capturekit_microphone_supported(15));
+        assert!(screen_capturekit_microphone_supported(16));
+    }
+
+    #[test]
     fn stereo_resampler_duplicates_mono_and_preserves_stereo() {
         assert_eq!(
             convert_to_stereo_48khz(&[0.25, -0.5], 1, 48_000),
@@ -614,13 +983,41 @@ mod tests {
     }
 
     #[test]
+    fn screen_capturekit_pcm_keeps_interleaved_stereo_samples() {
+        let buffers = vec![(2, vec![0.1, -0.1, 0.4, -0.4])];
+
+        assert_eq!(
+            interleave_audio_buffers(&buffers, 2),
+            Some(vec![0.1, -0.1, 0.4, -0.4])
+        );
+    }
+
+    #[test]
+    fn screen_capturekit_pcm_interleaves_separate_channel_buffers() {
+        let buffers = vec![(1, vec![0.1, 0.4]), (1, vec![-0.1, -0.4])];
+
+        assert_eq!(
+            interleave_audio_buffers(&buffers, 2),
+            Some(vec![0.1, -0.1, 0.4, -0.4])
+        );
+    }
+
+    #[test]
+    fn screen_capturekit_pcm_rejects_unexpected_channel_layouts() {
+        assert_eq!(interleave_audio_buffers(&[], 2), None);
+        assert_eq!(interleave_audio_buffers(&[(1, vec![0.1])], 2), None);
+        assert_eq!(
+            interleave_audio_buffers(&[(2, vec![0.1]), (1, vec![-0.1])], 2),
+            None
+        );
+    }
+
+    #[test]
     fn mixer_sums_both_sources_and_clamps_the_result() {
         let mut mixer = AudioMixer::new();
-        let start = 1_000_000_000;
         mixer.push_chunk(
             true,
             PcmChunk {
-                timestamp_ns: start,
                 start_sample: 0,
                 samples: vec![0.8; AAC_BLOCK_SAMPLES * 2],
             },
@@ -628,14 +1025,13 @@ mod tests {
         mixer.push_chunk(
             false,
             PcmChunk {
-                timestamp_ns: start,
                 start_sample: 0,
                 samples: vec![0.8; AAC_BLOCK_SAMPLES * 2],
             },
         );
-        mixer.latest_system_ns = Some(start + 500_000_000);
-        mixer.latest_microphone_ns = Some(start + 500_000_000);
-        let blocks = mixer.take_through(start + 500_000_000);
+        mixer.latest_system_ns = Some(500_000_000);
+        mixer.latest_microphone_ns = Some(500_000_000);
+        let blocks = mixer.take_through(500_000_000);
         assert!(!blocks.is_empty());
         assert!(
             blocks[0]
@@ -646,13 +1042,11 @@ mod tests {
     }
 
     #[test]
-    fn mixer_preserves_late_source_alignment_and_inserts_silence() {
+    fn mixer_aligns_sources_without_relying_on_their_clock_origins() {
         let mut mixer = AudioMixer::new();
-        let start = 5_000_000_000;
         mixer.push_chunk(
             true,
             PcmChunk {
-                timestamp_ns: start,
                 start_sample: 0,
                 samples: vec![0.25; AAC_BLOCK_SAMPLES * 2],
             },
@@ -660,17 +1054,16 @@ mod tests {
         mixer.push_chunk(
             false,
             PcmChunk {
-                timestamp_ns: start + 10_000_000,
                 start_sample: 0,
                 samples: vec![0.25; AAC_BLOCK_SAMPLES * 2],
             },
         );
-        mixer.latest_system_ns = Some(start + 500_000_000);
-        mixer.latest_microphone_ns = Some(start + 500_000_000);
-        let blocks = mixer.take_through(start + 500_000_000);
+        mixer.latest_system_ns = Some(500_000_000);
+        mixer.latest_microphone_ns = Some(500_000_000);
+        let blocks = mixer.take_through(500_000_000);
         assert!(!blocks.is_empty());
-        assert_eq!(blocks[0].1[0], 0.18);
-        assert!(blocks[0].1[960] > blocks[0].1[0]);
+        assert!((blocks[0].1[0] - 0.36).abs() < 0.001);
+        assert!((blocks[0].1[960] - 0.36).abs() < 0.001);
     }
 
     #[test]
@@ -679,14 +1072,34 @@ mod tests {
         mixer.push_chunk(
             false,
             PcmChunk {
-                timestamp_ns: 8_000_000_000,
                 start_sample: 0,
                 samples: vec![0.2; AAC_BLOCK_SAMPLES * 2 * 20],
             },
         );
-        let blocks = mixer.take_ready();
+        let blocks = mixer.take_ready_through(i64::MAX);
         assert!(!blocks.is_empty());
         assert!(blocks[0].1.iter().any(|sample| *sample > 0.0));
+    }
+
+    #[test]
+    fn mixer_never_emits_audio_beyond_real_elapsed_time() {
+        let mut mixer = AudioMixer::new();
+        mixer.push_chunk(
+            true,
+            PcmChunk {
+                start_sample: 0,
+                samples: vec![0.2; OUTPUT_RATE as usize * OUTPUT_CHANNELS as usize],
+            },
+        );
+        let max_elapsed_ns = 300_000_000;
+        let blocks = mixer.take_ready_through(max_elapsed_ns);
+        let emitted_samples = blocks
+            .iter()
+            .map(|(_, samples)| samples.len() / 2)
+            .sum::<usize>();
+        assert!(
+            emitted_samples as u128 * 1_000_000_000 / OUTPUT_RATE as u128 <= max_elapsed_ns as u128
+        );
     }
 
     #[test]
