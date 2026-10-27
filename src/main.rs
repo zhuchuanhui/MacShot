@@ -865,17 +865,18 @@ fn estimate_recording_size_per_minute(
             }
         }
         RecordingFormat::Gif => {
-            // GIF size depends heavily on how much the screen changes. Use a broad
-            // low-motion to high-motion range; quality mostly changes palette
-            // quantization work, while frame rate and pixel count drive the estimate.
+            // GIF size depends heavily on how much the screen changes. The range is
+            // calibrated against saved 1512x982 MacShot recordings (about 1.46–1.48
+            // encoded bits per pixel per frame); retain wide bounds for different
+            // content. Frame rate and pixel count drive the estimate.
             let pixels = f64::from(width.max(1)) * f64::from(height.max(1));
             let frames = f64::from(quality.gif_frame_rate) * MINUTE_SECONDS;
             let quality_factor = 0.9 + f64::from(quality.gif_quality_percent) / 1000.0;
             let estimate =
                 |bits_per_pixel: f64| pixels * frames * bits_per_pixel / 8.0 * quality_factor;
             RecordingSizeEstimate {
-                low_bytes: estimate(0.02),
-                high_bytes: estimate(0.12),
+                low_bytes: estimate(0.5),
+                high_bytes: estimate(2.0),
             }
         }
     }
@@ -3070,6 +3071,7 @@ fn record_screen(
     ctx.request_repaint();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_screen_to_gif(
     target: CaptureTarget,
     folder: PathBuf,
@@ -7314,6 +7316,9 @@ mod tests {
         let gif = estimate_recording_size_per_minute(RecordingFormat::Gif, quality, 1920, 1080);
         assert!(gif.low_bytes > 0.0);
         assert!(gif.high_bytes > gif.low_bytes);
+        for observed in [15_724_879.0 / 11.23 * 60.0, 19_825_087.0 / 13.96 * 60.0] {
+            assert!((gif.low_bytes..=gif.high_bytes).contains(&observed));
+        }
         let faster = RecordingQuality {
             gif_frame_rate: 20,
             ..quality

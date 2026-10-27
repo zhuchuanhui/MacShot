@@ -1,12 +1,12 @@
-# MacShot 0.6.0
+# MacShot 0.6.1
 
 MacShotは、スクリーンショットの撮影・編集・比較と、GIF／MP4の画面録画を行うアプリです。撮影したPNG/JPEGと録画を一覧から確認できます。
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.6.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.0/MacShot-v0.6.0-macos-arm64.zip)
-- Windows x64: [MacShot-v0.6.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.0/MacShot-v0.6.0-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.6.0)
+- macOS Apple Silicon (arm64): [MacShot-v0.6.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.1/MacShot-v0.6.1-macos-arm64.zip)
+- Windows x64: [MacShot-v0.6.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.1/MacShot-v0.6.1-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.6.1)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。署名済みですが、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。

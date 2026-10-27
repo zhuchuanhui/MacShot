@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-10-27
+
+- Calibrate the GIF size estimate against saved MacShot recordings so its range better reflects real screen-capture files.
+
 ## 0.6.0 — 2026-10-27
 
 - Rework settings layout, with reorderable/resizable cards and saved display-density and text-size controls.
