@@ -284,7 +284,13 @@ struct MacShot {
     continuous_capture_session_active: bool,
     recording_sequence: u64,
     recording_format: RecordingFormat,
-    video_quality: VideoQuality,
+    recording_quality: RecordingQuality,
+    display_density: DisplayDensity,
+    font_size_percent: u32,
+    applied_display_settings: Option<(DisplayDensity, u32)>,
+    settings_layout: Vec<SettingsCardLayout>,
+    saved_settings_layout: Vec<SettingsCardLayout>,
+    editing_settings_layout: bool,
     capture_notice: Option<CaptureNotice>,
     recording_rx: Receiver<RecordingEvent>,
     recording_tx: Sender<RecordingEvent>,
@@ -451,6 +457,223 @@ enum RecordingFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DisplayDensity {
+    Compact,
+    #[default]
+    Standard,
+    Relaxed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SettingsCardId {
+    Display,
+    Permissions,
+    Shortcuts,
+    Recording,
+    Capture,
+}
+
+impl SettingsCardId {
+    const ALL: [Self; 5] = [
+        Self::Display,
+        Self::Permissions,
+        Self::Shortcuts,
+        Self::Recording,
+        Self::Capture,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Display => "表示",
+            Self::Permissions => "権限とデバイス",
+            Self::Shortcuts => "ショートカット",
+            Self::Recording => "録画",
+            Self::Capture => "撮影の動作",
+        }
+    }
+
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::Permissions => "permissions",
+            Self::Shortcuts => "shortcuts",
+            Self::Recording => "recording",
+            Self::Capture => "capture",
+        }
+    }
+
+    fn from_setting(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|id| id.setting() == value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SettingsCardWidth {
+    Half,
+    #[default]
+    Full,
+}
+
+impl SettingsCardWidth {
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Half => "half",
+            Self::Full => "full",
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "half" => Self::Half,
+            _ => Self::Full,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SettingsCardPadding {
+    Compact,
+    #[default]
+    Standard,
+    Spacious,
+}
+
+impl SettingsCardPadding {
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Standard => "standard",
+            Self::Spacious => "spacious",
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "compact" => Self::Compact,
+            "spacious" => Self::Spacious,
+            _ => Self::Standard,
+        }
+    }
+
+    fn margin(self) -> i8 {
+        match self {
+            Self::Compact => 8,
+            Self::Standard => 16,
+            Self::Spacious => 24,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SettingsCardLayout {
+    id: SettingsCardId,
+    width: SettingsCardWidth,
+    padding: SettingsCardPadding,
+}
+
+fn default_settings_layout() -> Vec<SettingsCardLayout> {
+    [
+        (SettingsCardId::Recording, SettingsCardWidth::Half),
+        (SettingsCardId::Capture, SettingsCardWidth::Half),
+        (SettingsCardId::Shortcuts, SettingsCardWidth::Half),
+        (SettingsCardId::Permissions, SettingsCardWidth::Half),
+        (SettingsCardId::Display, SettingsCardWidth::Full),
+    ]
+    .into_iter()
+    .map(|(id, width)| SettingsCardLayout {
+        id,
+        width,
+        padding: if id == SettingsCardId::Display {
+            SettingsCardPadding::Compact
+        } else {
+            SettingsCardPadding::Standard
+        },
+    })
+    .collect()
+}
+
+fn serialize_settings_layout(layout: &[SettingsCardLayout]) -> String {
+    layout
+        .iter()
+        .map(|card| {
+            format!(
+                "{}:{}:{}",
+                card.id.setting(),
+                card.width.setting(),
+                card.padding.setting()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn parse_settings_layout(value: &str) -> Vec<SettingsCardLayout> {
+    let mut layout = Vec::new();
+    for entry in value.split(';') {
+        let mut fields = entry.split(':');
+        let (Some(id), Some(width), Some(padding)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let Some(id) = SettingsCardId::from_setting(id) else {
+            continue;
+        };
+        if layout.iter().any(|card: &SettingsCardLayout| card.id == id) {
+            continue;
+        }
+        layout.push(SettingsCardLayout {
+            id,
+            width: SettingsCardWidth::from_setting(width),
+            padding: SettingsCardPadding::from_setting(padding),
+        });
+    }
+    for default in default_settings_layout() {
+        if !layout.iter().any(|card| card.id == default.id) {
+            layout.push(default);
+        }
+    }
+    layout
+}
+
+impl DisplayDensity {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "コンパクト",
+            Self::Standard => "標準",
+            Self::Relaxed => "ゆったり",
+        }
+    }
+
+    fn spacing_scale(self) -> f32 {
+        match self {
+            Self::Compact => 0.75,
+            Self::Standard => 1.0,
+            Self::Relaxed => 1.2,
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "compact" => Self::Compact,
+            "relaxed" => Self::Relaxed,
+            _ => Self::Standard,
+        }
+    }
+
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Standard => "standard",
+            Self::Relaxed => "relaxed",
+        }
+    }
+}
+
+fn parse_font_size_percent(value: &str) -> u32 {
+    value.parse::<u32>().unwrap_or(100).clamp(80, 140)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum VideoQuality {
     #[default]
     Standard,
@@ -459,14 +682,6 @@ enum VideoQuality {
 }
 
 impl VideoQuality {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Standard => "標準（6 Mbps・10 fps）",
-            Self::High => "高画質（12 Mbps・15 fps）",
-            Self::Best => "最高画質（20 Mbps・30 fps）",
-        }
-    }
-
     fn bitrate(self) -> u32 {
         match self {
             Self::Standard => 6_000_000,
@@ -483,14 +698,6 @@ impl VideoQuality {
         }
     }
 
-    fn frame_interval(self) -> Duration {
-        Duration::from_secs_f64(1.0 / f64::from(self.frame_rate()))
-    }
-
-    fn frame_duration_ms(self) -> u64 {
-        (1000.0 / f64::from(self.frame_rate())).round() as u64
-    }
-
     fn from_setting(value: &str) -> Self {
         match value {
             "high" => Self::High,
@@ -498,13 +705,187 @@ impl VideoQuality {
             _ => Self::Standard,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RecordingQuality {
+    mp4_bitrate_mbps: u32,
+    mp4_frame_rate: u32,
+    gif_quality_percent: u32,
+    gif_frame_rate: u32,
+    resolution: RecordingResolution,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RecordingResolution {
+    #[default]
+    Original,
+    P480,
+    P720,
+    P1080,
+    P1440,
+    P2160,
+}
+
+impl RecordingResolution {
+    const ALL: [Self; 6] = [
+        Self::Original,
+        Self::P480,
+        Self::P720,
+        Self::P1080,
+        Self::P1440,
+        Self::P2160,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Original => "元の画面サイズ",
+            Self::P480 => "480p",
+            Self::P720 => "720p",
+            Self::P1080 => "1080p",
+            Self::P1440 => "2K / 1440p",
+            Self::P2160 => "4K / 2160p",
+        }
+    }
 
     fn setting(self) -> &'static str {
         match self {
-            Self::Standard => "standard",
-            Self::High => "high",
-            Self::Best => "best",
+            Self::Original => "original",
+            Self::P480 => "480p",
+            Self::P720 => "720p",
+            Self::P1080 => "1080p",
+            Self::P1440 => "1440p",
+            Self::P2160 => "2160p",
         }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "480p" => Self::P480,
+            "720p" => Self::P720,
+            "1080p" => Self::P1080,
+            "1440p" => Self::P1440,
+            "2160p" => Self::P2160,
+            _ => Self::Original,
+        }
+    }
+
+    fn output_dimensions(self, width: u32, height: u32, even: bool) -> (u32, u32) {
+        let max_height = match self {
+            Self::Original => height,
+            Self::P480 => 480,
+            Self::P720 => 720,
+            Self::P1080 => 1080,
+            Self::P1440 => 1440,
+            Self::P2160 => 2160,
+        };
+        let scale = (f64::from(max_height) / f64::from(height.max(1))).min(1.0);
+        let multiple = if even { 2 } else { 1 };
+        let scaled_width = ((f64::from(width.max(1)) * scale).round() as u32 / multiple) * multiple;
+        let scaled_height =
+            ((f64::from(height.max(1)) * scale).round() as u32 / multiple) * multiple;
+        (scaled_width.max(multiple), scaled_height.max(multiple))
+    }
+
+    fn resize(self, image: image::RgbaImage, even: bool) -> image::RgbaImage {
+        let (width, height) = self.output_dimensions(image.width(), image.height(), even);
+        if width == image.width() && height == image.height() {
+            image
+        } else {
+            image::imageops::resize(&image, width, height, image::imageops::FilterType::Lanczos3)
+        }
+    }
+}
+
+impl RecordingQuality {
+    fn from_settings(
+        legacy_video_quality: VideoQuality,
+        mp4_bitrate_mbps: &str,
+        mp4_frame_rate: &str,
+        gif_quality_percent: &str,
+        gif_frame_rate: &str,
+        resolution: &str,
+    ) -> Self {
+        Self {
+            mp4_bitrate_mbps: mp4_bitrate_mbps
+                .parse()
+                .unwrap_or(legacy_video_quality.bitrate() / 1_000_000)
+                .clamp(2, 30),
+            mp4_frame_rate: mp4_frame_rate
+                .parse()
+                .unwrap_or(legacy_video_quality.frame_rate() as u32)
+                .clamp(5, 60),
+            gif_quality_percent: gif_quality_percent.parse().unwrap_or(70).clamp(10, 100),
+            gif_frame_rate: gif_frame_rate.parse().unwrap_or(10).clamp(1, 30),
+            resolution: RecordingResolution::from_setting(resolution),
+        }
+    }
+
+    fn mp4_bitrate(self) -> u32 {
+        self.mp4_bitrate_mbps * 1_000_000
+    }
+
+    fn mp4_frame_interval(self) -> Duration {
+        Duration::from_secs_f64(1.0 / f64::from(self.mp4_frame_rate))
+    }
+
+    fn mp4_frame_duration_ms(self) -> u64 {
+        (1000.0 / f64::from(self.mp4_frame_rate)).round() as u64
+    }
+
+    fn gif_frame_interval(self) -> Duration {
+        Duration::from_secs_f64(1.0 / f64::from(self.gif_frame_rate))
+    }
+
+    fn gif_quantizer_speed(self) -> i32 {
+        (30.0 - (self.gif_quality_percent - 10) as f32 * 29.0 / 90.0).round() as i32
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RecordingSizeEstimate {
+    low_bytes: f64,
+    high_bytes: f64,
+}
+
+fn estimate_recording_size_per_minute(
+    format: RecordingFormat,
+    quality: RecordingQuality,
+    width: u32,
+    height: u32,
+) -> RecordingSizeEstimate {
+    const MINUTE_SECONDS: f64 = 60.0;
+    match format {
+        RecordingFormat::Mp4 => {
+            let total_bitrate = f64::from(quality.mp4_bitrate() + recording_audio::bitrate());
+            let bytes = total_bitrate * MINUTE_SECONDS / 8.0 * 1.02;
+            RecordingSizeEstimate {
+                low_bytes: bytes,
+                high_bytes: bytes,
+            }
+        }
+        RecordingFormat::Gif => {
+            // GIF size depends heavily on how much the screen changes. Use a broad
+            // low-motion to high-motion range; quality mostly changes palette
+            // quantization work, while frame rate and pixel count drive the estimate.
+            let pixels = f64::from(width.max(1)) * f64::from(height.max(1));
+            let frames = f64::from(quality.gif_frame_rate) * MINUTE_SECONDS;
+            let quality_factor = 0.9 + f64::from(quality.gif_quality_percent) / 1000.0;
+            let estimate =
+                |bits_per_pixel: f64| pixels * frames * bits_per_pixel / 8.0 * quality_factor;
+            RecordingSizeEstimate {
+                low_bytes: estimate(0.02),
+                high_bytes: estimate(0.12),
+            }
+        }
+    }
+}
+
+fn format_estimated_size(bytes: f64) -> String {
+    if bytes >= 1_000_000_000.0 {
+        format!("{:.1} GB", bytes / 1_000_000_000.0)
+    } else {
+        format!("{:.0} MB", bytes / 1_000_000.0)
     }
 }
 
@@ -735,7 +1116,23 @@ impl Default for MacShot {
             .unwrap_or_else(|_| DEFAULT_RECORDING_HOTKEY.parse().unwrap());
         let recording_format =
             RecordingFormat::from_setting(&load_setting("recording_format", "gif"));
-        let video_quality = VideoQuality::from_setting(&load_setting("video_quality", "standard"));
+        let legacy_video_quality =
+            VideoQuality::from_setting(&load_setting("video_quality", "standard"));
+        let recording_quality = RecordingQuality::from_settings(
+            legacy_video_quality,
+            &load_setting("mp4_bitrate_mbps", ""),
+            &load_setting("mp4_frame_rate", ""),
+            &load_setting("gif_quality_percent", "70"),
+            &load_setting("gif_frame_rate", "10"),
+            &load_setting("recording_resolution", "original"),
+        );
+        let display_density =
+            DisplayDensity::from_setting(&load_setting("display_density", "standard"));
+        let font_size_percent = parse_font_size_percent(&load_setting("font_size_percent", "100"));
+        let settings_layout = parse_settings_layout(&load_setting(
+            "settings_layout",
+            &serialize_settings_layout(&default_settings_layout()),
+        ));
         Self {
             monitors,
             windows,
@@ -807,7 +1204,13 @@ impl Default for MacShot {
             continuous_capture_session_active: false,
             recording_sequence: 0,
             recording_format,
-            video_quality,
+            recording_quality,
+            display_density,
+            font_size_percent,
+            applied_display_settings: None,
+            settings_layout: settings_layout.clone(),
+            saved_settings_layout: settings_layout,
+            editing_settings_layout: false,
             capture_notice: None,
             recording_rx,
             recording_tx,
@@ -989,7 +1392,10 @@ struct Preferences<'a> {
     annotation_width: f32,
     save_folder: &'a Path,
     recording_format: RecordingFormat,
-    video_quality: VideoQuality,
+    recording_quality: RecordingQuality,
+    display_density: DisplayDensity,
+    font_size_percent: u32,
+    settings_layout: &'a [SettingsCardLayout],
 }
 
 fn save_preferences(preferences: &Preferences<'_>) -> Result<(), String> {
@@ -1031,8 +1437,50 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
     .map_err(|error| error.to_string())?;
     writeln!(
         file,
-        "video_quality={}",
-        preferences.video_quality.setting()
+        "mp4_bitrate_mbps={}",
+        preferences.recording_quality.mp4_bitrate_mbps
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "mp4_frame_rate={}",
+        preferences.recording_quality.mp4_frame_rate
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "gif_quality_percent={}",
+        preferences.recording_quality.gif_quality_percent
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "gif_frame_rate={}",
+        preferences.recording_quality.gif_frame_rate
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "recording_resolution={}",
+        preferences.recording_quality.resolution.setting()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "display_density={}",
+        preferences.display_density.setting()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "font_size_percent={}",
+        preferences.font_size_percent.clamp(80, 140)
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "settings_layout={}",
+        serialize_settings_layout(preferences.settings_layout)
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -2404,6 +2852,14 @@ fn configure_macshot_theme(ctx: &egui::Context) {
 }
 
 fn glass_frame() -> egui::Frame {
+    glass_frame_with_margin(16)
+}
+
+fn settings_card_frame(padding: SettingsCardPadding) -> egui::Frame {
+    glass_frame_with_margin(padding.margin())
+}
+
+fn glass_frame_with_margin(margin: i8) -> egui::Frame {
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 170))
         .stroke(egui::Stroke::new(
@@ -2411,7 +2867,7 @@ fn glass_frame() -> egui::Frame {
             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
         ))
         .corner_radius(egui::CornerRadius::same(20))
-        .inner_margin(egui::Margin::same(16))
+        .inner_margin(egui::Margin::same(margin))
 }
 
 fn primary_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
@@ -2449,7 +2905,7 @@ fn hotkey_badge_text(value: &str) -> String {
         .split('+')
         .map(|part| match part.trim().to_ascii_lowercase().as_str() {
             "alt" => if cfg!(target_os = "macos") {
-                "⌥"
+                "Option"
             } else {
                 "Alt"
             }
@@ -2583,7 +3039,7 @@ fn record_screen(
     file_timestamp: String,
     sequence: u64,
     format: RecordingFormat,
-    quality: VideoQuality,
+    quality: RecordingQuality,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
@@ -2594,6 +3050,7 @@ fn record_screen(
             folder,
             file_timestamp,
             sequence,
+            quality,
             stop_rx,
             event_tx.clone(),
             ctx.clone(),
@@ -2618,6 +3075,7 @@ fn record_screen_to_gif(
     folder: PathBuf,
     file_timestamp: String,
     sequence: u64,
+    quality: RecordingQuality,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
@@ -2625,7 +3083,9 @@ fn record_screen_to_gif(
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let monitor = monitor_for_recording(target)?;
     let display_capture = DisplayCapture::new(&monitor)?;
-    let first = display_capture.capture_image()?;
+    let first = quality
+        .resolution
+        .resize(display_capture.capture_image()?, false);
     if first.width() > u16::MAX as u32 || first.height() > u16::MAX as u32 {
         return Err("画面サイズがGIFの上限を超えています。".into());
     }
@@ -2647,8 +3107,17 @@ fn record_screen_to_gif(
         .map_err(|error| error.to_string())?;
 
     let mut first_pixels = first.into_raw();
-    write_gif_frame(&mut encoder, width, height, &mut first_pixels, 10)
-        .map_err(|error| error.to_string())?;
+    let frame_interval = quality.gif_frame_interval();
+    let frame_delay = (100.0 / quality.gif_frame_rate as f32).round().max(1.0) as u16;
+    write_gif_frame_with_speed(
+        &mut encoder,
+        width,
+        height,
+        &mut first_pixels,
+        frame_delay,
+        quality.gif_quantizer_speed(),
+    )
+    .map_err(|error| error.to_string())?;
     let mut last_written = Instant::now();
     let mut last_status = Instant::now();
 
@@ -2661,24 +3130,27 @@ fn record_screen_to_gif(
             ctx.request_repaint();
             last_status = Instant::now();
         }
-        match stop_rx.recv_timeout(Duration::from_millis(100)) {
+        match stop_rx.recv_timeout(frame_interval) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        let frame = display_capture.capture_image()?;
+        let frame = quality
+            .resolution
+            .resize(display_capture.capture_image()?, false);
         if frame.width() != width as u32
             || frame.height() != height as u32
-            || last_written.elapsed() < Duration::from_millis(100)
+            || last_written.elapsed() < frame_interval
         {
             continue;
         }
         let mut pixels = frame.into_raw();
-        write_gif_frame(
+        write_gif_frame_with_speed(
             &mut encoder,
             width,
             height,
             &mut pixels,
             gif_delay_centiseconds(last_written.elapsed()),
+            quality.gif_quantizer_speed(),
         )
         .map_err(|error| error.to_string())?;
         last_written = Instant::now();
@@ -2776,7 +3248,7 @@ fn record_screen_to_mp4(
     folder: PathBuf,
     file_timestamp: String,
     sequence: u64,
-    quality: VideoQuality,
+    quality: RecordingQuality,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
@@ -2784,7 +3256,9 @@ fn record_screen_to_mp4(
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let monitor = monitor_for_recording(target)?;
     let display_capture = DisplayCapture::new(&monitor)?;
-    let first = display_capture.capture_image()?;
+    let first = quality
+        .resolution
+        .resize(display_capture.capture_image()?, true);
     let width = first.width() & !1;
     let height = first.height() & !1;
     if width < 2 || height < 2 || width > u16::MAX as u32 || height > u16::MAX as u32 {
@@ -2803,8 +3277,8 @@ fn record_screen_to_mp4(
     let mut h264 = H264Encoder::with_api_config(
         OpenH264API::from_source(),
         EncoderConfig::new()
-            .bitrate(BitRate::from_bps(quality.bitrate()))
-            .max_frame_rate(FrameRate::from_hz(quality.frame_rate()))
+            .bitrate(BitRate::from_bps(quality.mp4_bitrate()))
+            .max_frame_rate(FrameRate::from_hz(quality.mp4_frame_rate as f32))
             .usage_type(UsageType::ScreenContentRealTime),
     )
     .map_err(|error| error.to_string())?;
@@ -2861,8 +3335,8 @@ fn record_screen_to_mp4(
     let mut frame_index = 0u64;
     let mut last_video_start_ms = 0u64;
     let mut pending_video_sample: Option<(u64, H264Packet)> = None;
-    let frame_interval = quality.frame_interval();
-    let frame_duration_ms = quality.frame_duration_ms();
+    let frame_interval = quality.mp4_frame_interval();
+    let frame_duration_ms = quality.mp4_frame_duration_ms();
     for packet in initial_packets {
         if !packet.sample.is_empty() {
             let start_time_ms = frame_index * frame_duration_ms;
@@ -2902,7 +3376,9 @@ fn record_screen_to_mp4(
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        let frame = display_capture.capture_image()?;
+        let frame = quality
+            .resolution
+            .resize(display_capture.capture_image()?, true);
         if frame.width() != width || frame.height() != height {
             continue;
         }
@@ -3040,6 +3516,7 @@ fn next_video_start_ms(elapsed_ms: u64, previous_start_ms: u64, frame_duration_m
     elapsed_ms.max(previous_start_ms.saturating_add(frame_duration_ms))
 }
 
+#[cfg(test)]
 fn write_gif_frame<W: Write>(
     encoder: &mut gif::Encoder<W>,
     width: u16,
@@ -3047,7 +3524,18 @@ fn write_gif_frame<W: Write>(
     rgba: &mut [u8],
     delay: u16,
 ) -> Result<(), gif::EncodingError> {
-    let mut frame = gif::Frame::from_rgba_speed(width, height, rgba, 10);
+    write_gif_frame_with_speed(encoder, width, height, rgba, delay, 10)
+}
+
+fn write_gif_frame_with_speed<W: Write>(
+    encoder: &mut gif::Encoder<W>,
+    width: u16,
+    height: u16,
+    rgba: &mut [u8],
+    delay: u16,
+    speed: i32,
+) -> Result<(), gif::EncodingError> {
+    let mut frame = gif::Frame::from_rgba_speed(width, height, rgba, speed.clamp(1, 30));
     frame.delay = delay;
     encoder.write_frame(&frame)
 }
@@ -3601,7 +4089,7 @@ impl MacShot {
         let sequence = self.recording_sequence;
         let target = self.capture_target;
         let format = self.recording_format;
-        let quality = self.video_quality;
+        let quality = self.recording_quality;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         let now = Local::now();
         let file_timestamp = now.format("%Y%m%d-%H%M%S-%3f").to_string();
@@ -3788,8 +4276,46 @@ impl MacShot {
             annotation_width: self.annotation_width,
             save_folder: &folder,
             recording_format: self.recording_format,
-            video_quality: self.video_quality,
+            recording_quality: self.recording_quality,
+            display_density: self.display_density,
+            font_size_percent: self.font_size_percent,
+            settings_layout: &self.saved_settings_layout,
         })
+    }
+
+    fn save_settings_after_slider_change(
+        &mut self,
+        response: &egui::Response,
+        ui: &egui::Ui,
+        success_message: &'static str,
+    ) {
+        let finished_adjusting = response.drag_stopped()
+            || (response.changed() && !ui.input(|input| input.pointer.any_down()));
+        if !finished_adjusting {
+            return;
+        }
+        match self.save_preferences() {
+            Ok(()) => {
+                self.settings_error = None;
+                self.status = success_message.into();
+            }
+            Err(error) => self.settings_error = Some(format!("録画設定を保存できません: {error}")),
+        }
+    }
+
+    fn apply_display_settings(&mut self, ctx: &egui::Context) {
+        let settings = (self.display_density, self.font_size_percent);
+        if self.applied_display_settings == Some(settings) {
+            return;
+        }
+        let scale = self.display_density.spacing_scale();
+        let mut style = (*ctx.style()).clone();
+        style.spacing.item_spacing = egui::vec2(10.0, 10.0) * scale;
+        style.spacing.button_padding = egui::vec2(15.0, 9.0) * scale;
+        style.spacing.interact_size = egui::vec2(34.0, 34.0) * scale;
+        ctx.set_style(style);
+        ctx.set_zoom_factor(self.font_size_percent as f32 / 100.0);
+        self.applied_display_settings = Some(settings);
     }
 
     fn open_evidence_image(&mut self, queue: Vec<PathBuf>, index: usize) {
@@ -4986,103 +5512,108 @@ impl MacShot {
 
     fn show_capture_target_card(&mut self, ui: &mut egui::Ui) {
         glass_frame().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("撮影対象").size(11.0).color(TEXT_MUTED));
-                    ui.label(egui::RichText::new(self.target_caption()).size(15.0).strong());
-                });
-                egui::ComboBox::from_id_salt("capture_target")
-                    .selected_text("対象を選択")
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.capture_target,
-                            CaptureTarget::ActiveWindow,
-                            "アクティブウィンドウ",
-                        );
-                        ui.selectable_value(
-                            &mut self.capture_target,
-                            CaptureTarget::PrimaryDisplay,
-                            "デスクトップ（メイン画面）",
-                        );
-                        ui.selectable_value(
-                            &mut self.capture_target,
-                            CaptureTarget::AllDisplays,
-                            "全画面（全ディスプレイ）",
-                        );
-                        ui.separator();
-                        for (index, monitor) in self.monitors.iter().enumerate() {
-                            let name = monitor
-                                .name()
-                                .unwrap_or_else(|_| format!("画面 {}", index + 1));
-                            ui.selectable_value(
-                                &mut self.capture_target,
-                                CaptureTarget::Display(index),
-                                format!("画面全体 — {name}"),
-                            );
-                        }
-                        if !self.windows.is_empty() {
-                            ui.separator();
-                            for window in &self.windows {
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("撮影対象").size(11.0).color(TEXT_MUTED));
+                        ui.add_space(4.0);
+                        egui::ComboBox::from_id_salt("capture_target")
+                            .selected_text(self.target_caption())
+                            .width(250.0)
+                            .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut self.capture_target,
-                                    CaptureTarget::Window(window.id),
-                                    format!("ウィンドウ — {}", window.title),
+                                    CaptureTarget::ActiveWindow,
+                                    "アクティブウィンドウ",
                                 );
-                            }
-                        }
-                    });
-                if ui.add(primary_button("範囲を選択")).clicked() {
-                    self.begin_region_selection(ui.ctx());
-                }
-                let continuous_label = if self.continuous_capture {
-                    "連続撮影を終了"
-                } else {
-                    "連続撮影を開始"
-                };
-                if ui.button(continuous_label).clicked() {
-                    self.toggle_continuous_capture(ui.ctx());
-                }
-                if cfg!(target_os = "macos")
-                    && ui.button("macOS標準の撮影・録画…").clicked()
-                {
-                    self.open_native_screenshot();
-                }
-                if ui.button("↻  ウィンドウ一覧").clicked() {
-                    match discover_windows() {
-                        Ok(windows) => {
-                            self.windows = windows;
-                            self.status =
-                                format!("{}個のウィンドウを確認しました。", self.windows.len());
-                            if matches!(self.capture_target, CaptureTarget::Window(id) if !self.windows.iter().any(|window| window.id == id)) {
-                                self.capture_target = CaptureTarget::ActiveWindow;
-                            }
-                        }
-                        Err(error) => self.status = capture_failure_message(&error),
-                    }
-                }
-                ui.separator();
-                for (title, value) in [
-                    ("撮影", self.capture_hotkey_text.as_str()),
-                    ("録画", self.recording_hotkey_text.as_str()),
-                ] {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 145))
-                        .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(22)))
-                        .corner_radius(egui::CornerRadius::same(10))
-                        .inner_margin(egui::Margin::symmetric(10, 7))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(title).size(10.0).color(TEXT_MUTED));
-                                ui.label(
-                                    egui::RichText::new(hotkey_badge_text(value))
-                                        .size(11.0)
-                                        .strong(),
+                                ui.selectable_value(
+                                    &mut self.capture_target,
+                                    CaptureTarget::PrimaryDisplay,
+                                    "デスクトップ（メイン画面）",
                                 );
+                                ui.selectable_value(
+                                    &mut self.capture_target,
+                                    CaptureTarget::AllDisplays,
+                                    "全画面（全ディスプレイ）",
+                                );
+                                ui.separator();
+                                for (index, monitor) in self.monitors.iter().enumerate() {
+                                    let name = monitor
+                                        .name()
+                                        .unwrap_or_else(|_| format!("画面 {}", index + 1));
+                                    ui.selectable_value(
+                                        &mut self.capture_target,
+                                        CaptureTarget::Display(index),
+                                        format!("画面全体 — {name}"),
+                                    );
+                                }
+                                if !self.windows.is_empty() {
+                                    ui.separator();
+                                    for window in &self.windows {
+                                        ui.selectable_value(
+                                            &mut self.capture_target,
+                                            CaptureTarget::Window(window.id),
+                                            format!("ウィンドウ — {}", window.title),
+                                        );
+                                    }
+                                }
                             });
-                        });
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("▣  保存先").clicked() {
+                    });
+                    if ui.add(primary_button("範囲を選択")).clicked() {
+                        self.begin_region_selection(ui.ctx());
+                    }
+                    if ui.button("↻  ウィンドウ一覧を更新").clicked() {
+                        match discover_windows() {
+                            Ok(windows) => {
+                                self.windows = windows;
+                                self.status =
+                                    format!("{}個のウィンドウを確認しました。", self.windows.len());
+                                if matches!(self.capture_target, CaptureTarget::Window(id) if !self.windows.iter().any(|window| window.id == id)) {
+                                    self.capture_target = CaptureTarget::ActiveWindow;
+                                }
+                            }
+                            Err(error) => self.status = capture_failure_message(&error),
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("追加の操作").size(11.0).color(TEXT_MUTED));
+                    let continuous_label = if self.continuous_capture {
+                        "連続撮影を終了"
+                    } else {
+                        "連続撮影を開始"
+                    };
+                    if ui.button(continuous_label).clicked() {
+                        self.toggle_continuous_capture(ui.ctx());
+                    }
+                    if cfg!(target_os = "macos")
+                        && ui.button("macOS標準の撮影・録画…").clicked()
+                    {
+                        self.open_native_screenshot();
+                    }
+                    ui.separator();
+                    for (title, value) in [
+                        ("撮影", self.capture_hotkey_text.as_str()),
+                        ("録画", self.recording_hotkey_text.as_str()),
+                    ] {
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 145))
+                            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(22)))
+                            .corner_radius(egui::CornerRadius::same(10))
+                            .inner_margin(egui::Margin::symmetric(10, 7))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(title).size(10.0).color(TEXT_MUTED));
+                                    ui.label(
+                                        egui::RichText::new(hotkey_badge_text(value))
+                                            .size(11.0)
+                                            .strong(),
+                                    );
+                                });
+                            });
+                    }
+                    if ui.button("▣  保存先を変更").clicked() {
                         self.choose_folder();
                     }
                 });
@@ -5461,18 +5992,18 @@ impl MacShot {
                 ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
                 ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
             });
-            ui.label(egui::RichText::new("録画を選んでアプリ内再生できます。MP4の音声を含む再生は「ファイルを開く」を使ってください。").size(11.0).color(TEXT_MUTED));
+            ui.label(egui::RichText::new("録画名を選ぶとプレビューを表示します。MP4の音声を聴くときは「外部で開く」を使ってください。").size(11.0).color(TEXT_MUTED));
             ui.add_space(8.0);
             if self.recording_files.is_empty() {
-                ui.label(egui::RichText::new("保存された録画はありません。録画後に「更新」を押してください。").color(TEXT_MUTED));
+                ui.label(egui::RichText::new("録画が見つかりません。保存先を確認するか「更新」を押してください。").color(TEXT_MUTED));
             } else {
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     let files = self.recording_files.clone();
                     for path in files {
                         let selected = self.recording_preview_path.as_ref() == Some(&path);
                         let name = path.file_name().unwrap_or_default().to_string_lossy();
-                        ui.horizontal(|ui| {
-                            if ui.selectable_label(selected, format!("▶  {name}")).clicked() {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.selectable_label(selected, format!("▧  {name}")).clicked() {
                                 match recording_preview(&path) {
                                     Ok((image, details)) => {
                                         self.recording_playback = None;
@@ -5486,7 +6017,22 @@ impl MacShot {
                                     Err(error) => self.status = format!("録画を読み込めませんでした: {error}"),
                                 }
                             }
-                            if ui.small_button("ファイルを開く").clicked() {
+                            let recording_summary = std::fs::metadata(&path)
+                                .map(|metadata| {
+                                    let format = path
+                                        .extension()
+                                        .and_then(|extension| extension.to_str())
+                                        .unwrap_or_default()
+                                        .to_ascii_uppercase();
+                                    format!("{format} · {}", format_file_size(metadata.len()))
+                                })
+                                .unwrap_or_else(|_| "録画情報を読み込めません".into());
+                            ui.label(
+                                egui::RichText::new(recording_summary)
+                                    .size(11.0)
+                                    .color(TEXT_MUTED),
+                            );
+                            if ui.small_button("外部で開く").clicked() {
                                 #[cfg(target_os = "macos")]
                                 let command = "open";
                                 #[cfg(target_os = "windows")]
@@ -5569,7 +6115,7 @@ impl MacShot {
                                         ui.label(egui::RichText::new(modified).size(10.0).color(TEXT_MUTED));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.add(primary_button("連続編集を開始")).clicked() {
+                                        if ui.add(primary_button("画像を編集")).clicked() {
                                             self.open_evidence_image(self.evidence_files.clone(), index);
                                         }
                                     });
@@ -5584,196 +6130,606 @@ impl MacShot {
 
     fn show_settings_page(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("設定").size(24.0).strong());
-        ui.label(egui::RichText::new("MacShotを自分の撮影手順に合わせます。").color(TEXT_MUTED));
-        ui.add_space(14.0);
-        self.show_permission_panel(ui);
-        ui.add_space(14.0);
-        ui.columns(2, |columns| {
-            glass_frame().show(&mut columns[0], |ui| {
-                ui.label(egui::RichText::new("ショートカット").size(18.0).strong());
-                ui.label(
-                    egui::RichText::new("どのアプリを使っていても呼び出せます。設定後すぐに反映されます。")
-                        .color(TEXT_MUTED),
-                );
-                ui.add_space(16.0);
-                egui::Grid::new("shortcut_settings")
-                    .num_columns(2)
-                    .spacing([18.0, 14.0])
-                    .show(ui, |ui| {
-                        ui.label("スクリーンショット");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.capture_hotkey_text)
-                                .desired_width(220.0)
-                                .hint_text("Alt+Shift+KeyS"),
-                        );
-                        ui.end_row();
-                        ui.label("録画の開始／終了");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.recording_hotkey_text)
-                                .desired_width(220.0)
-                                .hint_text("Alt+Shift+KeyR"),
-                        );
-                        ui.end_row();
-                    });
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new("例: Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4")
-                        .size(11.0)
-                        .color(TEXT_MUTED),
-                );
-                ui.label(
-                    egui::RichText::new("macOSのAltはOptionキーです。WindowsではAltキーとして動作します。")
-                        .size(11.0)
-                        .color(TEXT_MUTED),
-                );
-                ui.add_space(14.0);
-                if ui.add(primary_button("設定を保存して反映")).clicked() {
-                    self.apply_hotkey_settings();
-                }
-                if let Some(error) = &self.settings_error {
-                    ui.colored_label(egui::Color32::from_rgb(188, 51, 73), error);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("MacShotを自分の撮影手順に合わせます。").color(TEXT_MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.editing_settings_layout {
+                    if ui.button("キャンセル").clicked() {
+                        self.settings_layout = self.saved_settings_layout.clone();
+                        self.editing_settings_layout = false;
+                    }
+                    if ui.add(primary_button("保存して固定")).clicked() {
+                        let previous_saved_layout = self.saved_settings_layout.clone();
+                        self.saved_settings_layout = self.settings_layout.clone();
+                        match self.save_preferences() {
+                            Ok(()) => {
+                                self.editing_settings_layout = false;
+                                self.settings_error = None;
+                                self.status = "カード配置を保存して固定しました。".into();
+                            }
+                            Err(error) => {
+                                self.saved_settings_layout = previous_saved_layout;
+                                self.settings_error =
+                                    Some(format!("カード配置を保存できません: {error}"));
+                            }
+                        }
+                    }
+                } else if ui.button("カード配置を調整").clicked() {
+                    self.saved_settings_layout = self.settings_layout.clone();
+                    self.editing_settings_layout = true;
                 }
             });
-            glass_frame().show(&mut columns[1], |ui| {
-                ui.label(egui::RichText::new("録画と保存先").size(18.0).strong());
-                ui.add_space(8.0);
-                ui.label("録画は対象ウィンドウのある画面を保存します。全画面を選ぶとメイン画面を録画します。");
-                ui.horizontal(|ui| {
-                    ui.label("保存形式");
-                    let previous = self.recording_format;
-                    egui::ComboBox::from_id_salt("recording_format")
-                        .selected_text(self.recording_format.label())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.recording_format, RecordingFormat::Gif, "GIF");
-                            ui.selectable_value(&mut self.recording_format, RecordingFormat::Mp4, "MP4（H.264）");
-                        });
-                    if self.recording_format != previous {
-                        if let Err(error) = self.save_preferences() {
-                            self.settings_error = Some(format!("録画形式を保存できません: {error}"));
-                        } else {
-                            self.settings_error = None;
-                            self.status = format!("録画形式を{}に変更しました", self.recording_format.label());
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("MP4画質");
-                    let previous = self.video_quality;
-                    egui::ComboBox::from_id_salt("video_quality")
-                        .selected_text(self.video_quality.label())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.video_quality, VideoQuality::Standard, VideoQuality::Standard.label());
-                            ui.selectable_value(&mut self.video_quality, VideoQuality::High, VideoQuality::High.label());
-                            ui.selectable_value(&mut self.video_quality, VideoQuality::Best, VideoQuality::Best.label());
-                        });
-                    if self.video_quality != previous {
-                        if let Err(error) = self.save_preferences() {
-                            self.settings_error = Some(format!("画質を保存できません: {error}"));
-                        } else {
-                            self.settings_error = None;
-                            self.status = format!("MP4画質を{}に変更しました", self.video_quality.label());
-                        }
-                    }
-                });
+        });
+        if let Some(error) = &self.settings_error {
+            ui.colored_label(egui::Color32::from_rgb(188, 51, 73), error);
+        }
+        ui.add_space(12.0);
+
+        let layout = self.settings_layout.clone();
+        let mut half_cards = Vec::new();
+        for card in layout {
+            if card.width == SettingsCardWidth::Half {
+                half_cards.push(card);
+                if half_cards.len() == 2 {
+                    let row = std::mem::take(&mut half_cards);
+                    self.show_settings_card_row(ui, &row);
+                }
+            } else {
+                if !half_cards.is_empty() {
+                    let row = std::mem::take(&mut half_cards);
+                    self.show_settings_card_row(ui, &row);
+                }
+                self.show_settings_card(ui, card);
+            }
+        }
+        if !half_cards.is_empty() {
+            self.show_settings_card_row(ui, &half_cards);
+        }
+    }
+
+    fn show_settings_card_row(&mut self, ui: &mut egui::Ui, cards: &[SettingsCardLayout]) {
+        ui.columns(2, |columns| {
+            for (index, card) in cards.iter().copied().enumerate() {
+                self.show_settings_card(&mut columns[index], card);
+            }
+        });
+        ui.add_space(12.0);
+    }
+
+    fn show_settings_card(&mut self, ui: &mut egui::Ui, card: SettingsCardLayout) {
+        if card.id == SettingsCardId::Permissions {
+            self.show_permission_panel(ui, card.padding);
+            ui.add_space(12.0);
+            return;
+        }
+        settings_card_frame(card.padding).show(ui, |ui| {
+            if self.editing_settings_layout {
+                self.show_settings_card_controls(ui, card.id);
+            }
+            match card.id {
+                SettingsCardId::Display => self.show_display_settings_contents(ui),
+                SettingsCardId::Shortcuts => self.show_shortcut_settings_contents(ui),
+                SettingsCardId::Recording => self.show_recording_settings_contents(ui),
+                SettingsCardId::Capture => self.show_capture_settings_contents(ui),
+                SettingsCardId::Permissions => unreachable!(),
+            }
+        });
+        ui.add_space(12.0);
+    }
+
+    fn show_settings_card_controls(&mut self, ui: &mut egui::Ui, id: SettingsCardId) {
+        let Some(index) = self.settings_layout.iter().position(|card| card.id == id) else {
+            return;
+        };
+        ui.push_id(id.setting(), |ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    egui::RichText::new("MP4は画面解像度を維持します。画質設定でビットレートとフレームレートを変更できます。")
+                    egui::RichText::new(format!("{} · 配置", id.label()))
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
-                ui.label(
-                    egui::RichText::new("MP4はシステム音声を記録し、許可がある場合はマイク音声も含めます。マイクを使えない場合もシステム音声のみで録画できます。GIFは音声なしです。")
-                        .size(11.0)
-                        .color(TEXT_MUTED),
-                );
-                if cfg!(target_os = "macos") {
-                    ui.add_space(10.0);
-                    ui.label("macOS標準ツールでは、画面・ウィンドウ・範囲の撮影／録画、タイマー、マイク、ポインタ、クリック表示、保存先、フローティングサムネールを利用できます。");
-                    if ui.button("macOS標準の撮影・録画を開く").clicked() {
-                        self.open_native_screenshot();
+                if ui
+                    .add_enabled(index > 0, egui::Button::new("↑ 上へ"))
+                    .clicked()
+                {
+                    self.settings_layout.swap(index, index - 1);
+                }
+                if ui
+                    .add_enabled(
+                        index + 1 < self.settings_layout.len(),
+                        egui::Button::new("↓ 下へ"),
+                    )
+                    .clicked()
+                {
+                    self.settings_layout.swap(index, index + 1);
+                }
+                if let Some(card) = self.settings_layout.iter_mut().find(|card| card.id == id) {
+                    let width_label = match card.width {
+                        SettingsCardWidth::Half => "幅: 半分",
+                        SettingsCardWidth::Full => "幅: 全体",
+                    };
+                    if ui.button(width_label).clicked() {
+                        card.width = match card.width {
+                            SettingsCardWidth::Half => SettingsCardWidth::Full,
+                            SettingsCardWidth::Full => SettingsCardWidth::Half,
+                        };
+                    }
+                    let padding_label = match card.padding {
+                        SettingsCardPadding::Compact => "余白: 小",
+                        SettingsCardPadding::Standard => "余白: 中",
+                        SettingsCardPadding::Spacious => "余白: 大",
+                    };
+                    if ui.button(padding_label).clicked() {
+                        card.padding = match card.padding {
+                            SettingsCardPadding::Compact => SettingsCardPadding::Standard,
+                            SettingsCardPadding::Standard => SettingsCardPadding::Spacious,
+                            SettingsCardPadding::Spacious => SettingsCardPadding::Compact,
+                        };
                     }
                 }
-                ui.add_space(16.0);
+            });
+            ui.separator();
+        });
+    }
+
+    fn show_display_settings_contents(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("表示").size(18.0).strong());
+            ui.label(egui::RichText::new("文字サイズと画面の密度").color(TEXT_MUTED));
+        });
+        ui.add_space(8.0);
+        let display_context = ui.ctx().clone();
+        ui.columns(2, |columns| {
+            columns[0].horizontal(|ui| {
+                ui.label("表示量");
+                let previous = self.display_density;
+                egui::ComboBox::from_id_salt("display_density")
+                    .selected_text(self.display_density.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.display_density,
+                            DisplayDensity::Compact,
+                            DisplayDensity::Compact.label(),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_density,
+                            DisplayDensity::Standard,
+                            DisplayDensity::Standard.label(),
+                        );
+                        ui.selectable_value(
+                            &mut self.display_density,
+                            DisplayDensity::Relaxed,
+                            DisplayDensity::Relaxed.label(),
+                        );
+                    });
+                if self.display_density != previous {
+                    self.apply_display_settings(ui.ctx());
+                    match self.save_preferences() {
+                        Ok(()) => {
+                            self.settings_error = None;
+                            self.status = "表示設定を保存しました。".into();
+                        }
+                        Err(error) => {
+                            self.settings_error = Some(format!("表示設定を保存できません: {error}"))
+                        }
+                    }
+                }
+            });
+            let previous_font_size = self.font_size_percent;
+            let mut save_font_size = false;
+            columns[1].vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("文字サイズ");
+                    if ui.button("− 5%").clicked() {
+                        self.font_size_percent = self.font_size_percent.saturating_sub(5).max(80);
+                        save_font_size = true;
+                    }
+                    ui.label(egui::RichText::new(format!("{}%", self.font_size_percent)).strong());
+                    if ui.button("＋ 5%").clicked() {
+                        self.font_size_percent = (self.font_size_percent + 5).min(140);
+                        save_font_size = true;
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for value in [80, 100, 120, 140] {
+                        if ui
+                            .selectable_label(self.font_size_percent == value, format!("{value}%"))
+                            .clicked()
+                        {
+                            self.font_size_percent = value;
+                            save_font_size = true;
+                        }
+                    }
+                });
+                let font_size = ui.add(
+                    egui::Slider::new(&mut self.font_size_percent, 80..=140)
+                        .step_by(5.0)
+                        .show_value(false),
+                );
+                if font_size.drag_stopped()
+                    || (font_size.changed() && !ui.input(|input| input.pointer.any_down()))
+                {
+                    save_font_size = true;
+                }
+            });
+            if save_font_size && self.font_size_percent != previous_font_size {
+                self.apply_display_settings(&display_context);
+                match self.save_preferences() {
+                    Ok(()) => {
+                        self.settings_error = None;
+                        self.status = "表示設定を保存しました。".into();
+                    }
+                    Err(error) => {
+                        self.settings_error = Some(format!("表示設定を保存できません: {error}"));
+                    }
+                }
+            }
+        });
+        ui.label(
+            egui::RichText::new(
+                "コンパクトにすると一画面に多く表示し、文字サイズを上げると全体を拡大します。",
+            )
+            .size(11.0)
+            .color(TEXT_MUTED),
+        );
+    }
+
+    fn show_shortcut_settings_contents(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("ショートカット").size(18.0).strong());
+        ui.label(
+            egui::RichText::new("どのアプリを使っていても呼び出せます。設定後すぐに反映されます.")
+                .color(TEXT_MUTED),
+        );
+        ui.add_space(12.0);
+        egui::Grid::new("shortcut_settings")
+            .num_columns(2)
+            .spacing([12.0, 10.0])
+            .show(ui, |ui| {
+                ui.label("スクリーンショット");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.capture_hotkey_text)
+                        .desired_width(220.0)
+                        .hint_text("Alt+Shift+KeyS"),
+                );
+                ui.end_row();
+                ui.label("録画の開始／終了");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.recording_hotkey_text)
+                        .desired_width(220.0)
+                        .hint_text("Alt+Shift+KeyR"),
+                );
+                ui.end_row();
+            });
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("例: Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4")
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+        ui.label(
+            egui::RichText::new("macOSのAltはOptionキーです。WindowsではAltキーとして動作します。")
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+        ui.add_space(10.0);
+        if ui.add(primary_button("設定を保存して反映")).clicked() {
+            self.apply_hotkey_settings();
+        }
+    }
+
+    fn recording_estimate_dimensions(&self) -> (u32, u32, bool) {
+        let approximate = matches!(
+            self.capture_target,
+            CaptureTarget::ActiveWindow | CaptureTarget::Window(_)
+        );
+        let monitor = match self.capture_target {
+            CaptureTarget::Display(index) => self.monitors.get(index),
+            _ => self
+                .monitors
+                .iter()
+                .find(|monitor| monitor.is_primary().unwrap_or(false))
+                .or_else(|| self.monitors.first()),
+        };
+        let Some(monitor) = monitor else {
+            return (1920, 1080, true);
+        };
+        let (Ok(width), Ok(height)) = (monitor.width(), monitor.height()) else {
+            return (1920, 1080, true);
+        };
+        let scale = if cfg!(target_os = "macos") {
+            monitor.scale_factor().unwrap_or(1.0).max(1.0)
+        } else {
+            1.0
+        };
+        (
+            (width as f64 * f64::from(scale)).round().max(1.0) as u32,
+            (height as f64 * f64::from(scale)).round().max(1.0) as u32,
+            approximate,
+        )
+    }
+
+    fn show_recording_size_estimate(&self, ui: &mut egui::Ui) {
+        let (source_width, source_height, approximate) = self.recording_estimate_dimensions();
+        let (width, height) = self.recording_quality.resolution.output_dimensions(
+            source_width,
+            source_height,
+            self.recording_format == RecordingFormat::Mp4,
+        );
+        let estimate = estimate_recording_size_per_minute(
+            self.recording_format,
+            self.recording_quality,
+            width,
+            height,
+        );
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("予想ファイルサイズ（1分録画）").strong());
+        match self.recording_format {
+            RecordingFormat::Mp4 => {
+                ui.label(format!("約 {}", format_estimated_size(estimate.high_bytes)));
+                ui.label(
+                    egui::RichText::new("映像ビットレート・AAC音声・コンテナ分を含む目安です。")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+            }
+            RecordingFormat::Gif => {
+                ui.label(format!(
+                    "約 {}〜{}",
+                    format_estimated_size(estimate.low_bytes),
+                    format_estimated_size(estimate.high_bytes)
+                ));
+                ui.label(
+                    egui::RichText::new(
+                        "画面の動きや色で大きく変わります。解像度とfpsからの概算です。",
+                    )
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+                );
+            }
+        }
+        let dimensions_note = if approximate {
+            format!("{}×{} px（メイン画面を仮定）", width, height)
+        } else {
+            format!("{}×{} px", width, height)
+        };
+        ui.label(
+            egui::RichText::new(dimensions_note)
+                .size(10.0)
+                .color(TEXT_MUTED),
+        );
+    }
+
+    fn show_recording_settings_contents(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("録画").size(18.0).strong());
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label("保存形式");
+            let previous = self.recording_format;
+            egui::ComboBox::from_id_salt("recording_format")
+                .selected_text(self.recording_format.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.recording_format, RecordingFormat::Gif, "GIF");
+                    ui.selectable_value(
+                        &mut self.recording_format,
+                        RecordingFormat::Mp4,
+                        "MP4（H.264）",
+                    );
+                });
+            if self.recording_format != previous {
+                if let Err(error) = self.save_preferences() {
+                    self.settings_error = Some(format!("録画形式を保存できません: {error}"));
+                } else {
+                    self.settings_error = None;
+                    self.status =
+                        format!("録画形式を{}に変更しました", self.recording_format.label());
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("録画解像度");
+            let previous = self.recording_quality.resolution;
+            egui::ComboBox::from_id_salt("recording_resolution")
+                .selected_text(self.recording_quality.resolution.label())
+                .show_ui(ui, |ui| {
+                    for resolution in RecordingResolution::ALL {
+                        ui.selectable_value(
+                            &mut self.recording_quality.resolution,
+                            resolution,
+                            resolution.label(),
+                        );
+                    }
+                });
+            if self.recording_quality.resolution != previous {
+                if let Err(error) = self.save_preferences() {
+                    self.settings_error = Some(format!("録画解像度を保存できません: {error}"));
+                    self.recording_quality.resolution = previous;
+                } else {
+                    self.settings_error = None;
+                    self.status = format!(
+                        "録画解像度を{}に変更しました",
+                        self.recording_quality.resolution.label()
+                    );
+                }
+            }
+        });
+        ui.label(
+            egui::RichText::new("選んだ高さを上限にして縮小します。元の画面より大きくはしません。")
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+        match self.recording_format {
+            RecordingFormat::Gif => {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("GIFの画質").strong());
+                ui.label(
+                    egui::RichText::new("色の再現を上げるほど、変換に時間がかかることがあります。")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+                let quality = ui.add(
+                    egui::Slider::new(&mut self.recording_quality.gif_quality_percent, 10..=100)
+                        .suffix("%")
+                        .text("色の再現"),
+                );
+                self.save_settings_after_slider_change(&quality, ui, "録画設定を保存しました。");
+                let frame_rate = ui.add(
+                    egui::Slider::new(&mut self.recording_quality.gif_frame_rate, 1..=30)
+                        .suffix(" fps")
+                        .text("なめらかさ"),
+                );
+                self.save_settings_after_slider_change(&frame_rate, ui, "録画設定を保存しました。");
+                ui.label(
+                    egui::RichText::new("GIFは音声なしです。")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+                self.show_recording_size_estimate(ui);
+            }
+            RecordingFormat::Mp4 => {
+                ui.add_space(6.0);
+                let bitrate = ui.add(
+                    egui::Slider::new(&mut self.recording_quality.mp4_bitrate_mbps, 2..=30)
+                        .suffix(" Mbps")
+                        .text("画質・容量"),
+                );
+                self.save_settings_after_slider_change(&bitrate, ui, "録画設定を保存しました。");
+                let frame_rate = ui.add(
+                    egui::Slider::new(&mut self.recording_quality.mp4_frame_rate, 5..=60)
+                        .suffix(" fps")
+                        .text("なめらかさ"),
+                );
+                self.save_settings_after_slider_change(&frame_rate, ui, "録画設定を保存しました。");
+                ui.label(
+                    egui::RichText::new(
+                        "システム音声を録音し、マイク許可時はマイク音声も追加します。",
+                    )
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+                );
+                self.show_recording_size_estimate(ui);
+            }
+        }
+        if cfg!(target_os = "macos") {
+            ui.add_space(8.0);
+            if ui.button("macOS標準の撮影・録画を開く").clicked() {
+                self.open_native_screenshot();
+            }
+        }
+    }
+
+    fn show_capture_settings_contents(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("撮影の動作").size(18.0).strong());
+        ui.label(
+            egui::RichText::new(
+                "撮影対象や画像に記録する情報を調整できます。設定は次回起動後も引き継がれます。",
+            )
+            .color(TEXT_MUTED),
+        );
+        ui.add_space(12.0);
+        ui.columns(2, |columns| {
+            glass_frame().show(&mut columns[0], |ui| {
+                ui.label(egui::RichText::new("撮影とファイル名").size(16.0).strong());
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("既定の撮影対象")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+                egui::ComboBox::from_id_salt("settings_capture_target")
+                    .selected_text(self.target_caption())
+                    .width(260.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.capture_target,
+                            CaptureTarget::ActiveWindow,
+                            "アクティブウィンドウ",
+                        );
+                        ui.selectable_value(
+                            &mut self.capture_target,
+                            CaptureTarget::PrimaryDisplay,
+                            "デスクトップ（メイン画面）",
+                        );
+                        ui.selectable_value(
+                            &mut self.capture_target,
+                            CaptureTarget::AllDisplays,
+                            "全画面（全ディスプレイ）",
+                        );
+                        for (index, monitor) in self.monitors.iter().enumerate() {
+                            let name = monitor
+                                .name()
+                                .unwrap_or_else(|_| format!("画面 {}", index + 1));
+                            ui.selectable_value(
+                                &mut self.capture_target,
+                                CaptureTarget::Display(index),
+                                format!("画面全体 — {name}"),
+                            );
+                        }
+                        for window in &self.windows {
+                            ui.selectable_value(
+                                &mut self.capture_target,
+                                CaptureTarget::Window(window.id),
+                                format!("ウィンドウ — {}", window.title),
+                            );
+                        }
+                    });
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("ファイル名の先頭")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
+                ui.add(egui::TextEdit::singleline(&mut self.filename_prefix).desired_width(240.0));
+                ui.add_space(8.0);
+                ui.checkbox(&mut self.timestamp_enabled, "画像に撮影日時を表示");
+                ui.checkbox(&mut self.show_capture_notice, "撮影後に完了小窓を表示");
+            });
+            glass_frame().show(&mut columns[1], |ui| {
+                ui.label(egui::RichText::new("注釈").size(16.0).strong());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("色").size(11.0).color(TEXT_MUTED));
+                egui::ComboBox::from_id_salt("annotation_color_setting")
+                    .selected_text(match self.annotation_color.as_str() {
+                        "yellow" => "黄色",
+                        "blue" => "青色",
+                        _ => "赤色",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.annotation_color, "red".into(), "赤色");
+                        ui.selectable_value(&mut self.annotation_color, "yellow".into(), "黄色");
+                        ui.selectable_value(&mut self.annotation_color, "blue".into(), "青色");
+                    });
+                ui.add_space(10.0);
+                ui.add(egui::Slider::new(&mut self.annotation_width, 1.0..=8.0).text("線の太さ"));
+                ui.add_space(18.0);
                 let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                 ui.label(egui::RichText::new("保存先").size(11.0).color(TEXT_MUTED));
-                ui.label(egui::RichText::new(folder.display().to_string()).size(12.0));
+                ui.label(
+                    egui::RichText::new(folder.display().to_string())
+                        .size(12.0)
+                        .monospace(),
+                );
                 ui.add_space(6.0);
                 if ui.button("保存先を変更").clicked() {
                     self.choose_folder();
                 }
-                ui.add_space(18.0);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "メニューバーからも撮影・録画できます。\n撮影 {}　録画 {}",
-                        hotkey_badge_text(&self.capture_hotkey_text),
-                        hotkey_badge_text(&self.recording_hotkey_text)
-                    ))
-                    .size(11.0)
-                    .color(TEXT_MUTED),
-                );
             });
         });
-        ui.add_space(12.0);
-        glass_frame().show(ui, |ui| {
-            ui.label(egui::RichText::new("撮影の動作").size(18.0).strong());
-            ui.label(egui::RichText::new("撮影対象や画像に記録する情報を調整できます。設定は次回起動後も引き継がれます。").color(TEXT_MUTED));
-            ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("既定の撮影対象").size(11.0).color(TEXT_MUTED));
-                    egui::ComboBox::from_id_salt("settings_capture_target")
-                        .selected_text(self.target_caption())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.capture_target, CaptureTarget::ActiveWindow, "アクティブウィンドウ");
-                            ui.selectable_value(&mut self.capture_target, CaptureTarget::PrimaryDisplay, "デスクトップ（メイン画面）");
-                            ui.selectable_value(&mut self.capture_target, CaptureTarget::AllDisplays, "全画面（全ディスプレイ）");
-                            for (index, monitor) in self.monitors.iter().enumerate() {
-                                let name = monitor.name().unwrap_or_else(|_| format!("画面 {}", index + 1));
-                                ui.selectable_value(&mut self.capture_target, CaptureTarget::Display(index), format!("画面全体 — {name}"));
-                            }
-                            for window in &self.windows {
-                                ui.selectable_value(&mut self.capture_target, CaptureTarget::Window(window.id), format!("ウィンドウ — {}", window.title));
-                            }
-                        });
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("ファイル名の先頭").size(11.0).color(TEXT_MUTED));
-                    ui.add(egui::TextEdit::singleline(&mut self.filename_prefix).desired_width(180.0));
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.checkbox(&mut self.timestamp_enabled, "画像に撮影日時を表示");
-                    ui.checkbox(&mut self.show_capture_notice, "撮影後に完了小窓を表示");
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("注釈の色と太さ").size(11.0).color(TEXT_MUTED));
-                    egui::ComboBox::from_id_salt("annotation_color_setting")
-                        .selected_text(match self.annotation_color.as_str() {
-                            "yellow" => "黄色",
-                            "blue" => "青色",
-                            _ => "赤色",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.annotation_color, "red".into(), "赤色");
-                            ui.selectable_value(&mut self.annotation_color, "yellow".into(), "黄色");
-                            ui.selectable_value(&mut self.annotation_color, "blue".into(), "青色");
-                        });
-                    ui.add(egui::Slider::new(&mut self.annotation_width, 1.0..=8.0).text("太さ"));
-                });
-                ui.separator();
-                if ui.add(primary_button("撮影設定を保存")).clicked() {
-                    match self.save_preferences() {
-                        Ok(()) => self.status = "撮影設定を保存しました。".into(),
-                        Err(error) => self.settings_error = Some(format!("設定を保存できません: {error}")),
-                    }
-                }
-            });
-        });
+        ui.add_space(10.0);
+        if ui.add(primary_button("撮影設定を保存")).clicked() {
+            match self.save_preferences() {
+                Ok(()) => self.status = "撮影設定を保存しました。".into(),
+                Err(error) => self.settings_error = Some(format!("設定を保存できません: {error}")),
+            }
+        }
     }
 
-    fn show_permission_panel(&mut self, ui: &mut egui::Ui) {
-        glass_frame().show(ui, |ui| {
+    fn show_permission_panel(&mut self, ui: &mut egui::Ui, padding: SettingsCardPadding) {
+        settings_card_frame(padding).show(ui, |ui| {
+            if self.editing_settings_layout {
+                self.show_settings_card_controls(ui, SettingsCardId::Permissions);
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("権限とデバイス").size(18.0).strong());
                 if ui.button("↻  権限状態を更新").clicked() {
@@ -5802,92 +6758,97 @@ impl MacShot {
             }
 
             let screen_granted = screen_recording_access_granted();
-            ui.horizontal_wrapped(|ui| {
-                ui.label("画面収録・システム音声");
-                if screen_granted {
-                    ui.colored_label(egui::Color32::from_rgb(38, 132, 88), "許可済み");
-                } else {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(190, 105, 32),
-                        "未許可、またはmacOSへの反映待ち",
-                    );
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    if ui.button("画面・音声の設定を開く").clicked() {
-                        self.open_screen_recording_settings();
-                    }
-                    if ui.button("FinderでMacShotを表示").clicked() {
-                        self.reveal_macshot_app();
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                ui.label(egui::RichText::new("Windowsでは個別の画面収録許可は不要です").color(TEXT_MUTED));
-            });
-
             let microphone = microphone_permission_label();
             #[cfg(target_os = "macos")]
             let ctx = ui.ctx().clone();
             #[cfg(target_os = "macos")]
             let microphone_state = microphone_permission();
-            ui.horizontal_wrapped(|ui| {
-                ui.label("マイク");
-                #[cfg(target_os = "macos")]
-                {
-                    let permitted = microphone_state == MicrophonePermission::Authorized;
-                    ui.colored_label(
-                        if permitted {
-                            egui::Color32::from_rgb(38, 132, 88)
+            ui.columns(2, |columns| {
+                columns[0].vertical(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("画面収録・システム音声");
+                        if screen_granted {
+                            ui.colored_label(egui::Color32::from_rgb(38, 132, 88), "許可済み");
                         } else {
-                            egui::Color32::from_rgb(190, 105, 32)
-                        },
-                        microphone,
-                    );
-                }
-                #[cfg(target_os = "windows")]
-                ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
-                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
-                #[cfg(target_os = "macos")]
-                if let Some(label) = microphone_permission_action_label(microphone_state)
-                    && ui.button(label).clicked()
-                {
-                    if microphone_state == MicrophonePermission::Denied {
-                        self.open_microphone_settings();
-                    } else {
-                        self.request_microphone_permission(&ctx);
-                    }
-                }
-                #[cfg(target_os = "macos")]
-                if microphone_state == MicrophonePermission::Denied
-                    && ui.button("拒否記録を解除").clicked()
-                {
-                    self.microphone_reset_confirmation = true;
-                }
-                if ui.button("マイク設定を開く").clicked() {
-                    self.open_microphone_settings();
-                }
-            });
+                            ui.colored_label(
+                                egui::Color32::from_rgb(190, 105, 32),
+                                "未許可、またはmacOSへの反映待ち",
+                            );
+                        }
+                    });
+                    #[cfg(target_os = "macos")]
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("画面・音声の設定を開く").clicked() {
+                            self.open_screen_recording_settings();
+                        }
+                        if ui.button("FinderでMacShotを表示").clicked() {
+                            self.reveal_macshot_app();
+                        }
+                    });
+                    #[cfg(target_os = "windows")]
+                    ui.label(egui::RichText::new("Windowsでは個別の画面収録許可は不要です").color(TEXT_MUTED));
+                });
+                columns[1].vertical(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("マイク");
+                        #[cfg(target_os = "macos")]
+                        {
+                            let permitted = microphone_state == MicrophonePermission::Authorized;
+                            ui.colored_label(
+                                if permitted {
+                                    egui::Color32::from_rgb(38, 132, 88)
+                                } else {
+                                    egui::Color32::from_rgb(190, 105, 32)
+                                },
+                                microphone,
+                            );
+                        }
+                        #[cfg(target_os = "windows")]
+                        ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                        ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                        #[cfg(target_os = "macos")]
+                        if let Some(label) = microphone_permission_action_label(microphone_state)
+                            && ui.button(label).clicked()
+                        {
+                            if microphone_state == MicrophonePermission::Denied {
+                                self.open_microphone_settings();
+                            } else {
+                                self.request_microphone_permission(&ctx);
+                            }
+                        }
+                        #[cfg(target_os = "macos")]
+                        if microphone_state == MicrophonePermission::Denied
+                            && ui.button("拒否記録を解除").clicked()
+                        {
+                            self.microphone_reset_confirmation = true;
+                        }
+                        if ui.button("マイク設定を開く").clicked() {
+                            self.open_microphone_settings();
+                        }
+                    });
 
-            #[cfg(target_os = "macos")]
-            ui.horizontal_wrapped(|ui| {
-                let testing = self.microphone_test_rx.is_some();
-                if ui
-                    .add_enabled(
-                        microphone_state == MicrophonePermission::Authorized && !testing,
-                        egui::Button::new(if testing { "マイクテスト中…" } else { "マイク入力をテスト（5秒）" }),
-                    )
-                    .clicked()
-                {
-                    self.start_microphone_test();
-                }
-                if testing {
-                    ui.add(egui::ProgressBar::new(self.microphone_test_peak.clamp(0.0, 1.0))
-                        .desired_width(160.0));
-                }
-                if let Some(message) = &self.microphone_test_message {
-                    ui.label(egui::RichText::new(message).color(TEXT_MUTED));
-                }
+                    #[cfg(target_os = "macos")]
+                    ui.horizontal_wrapped(|ui| {
+                        let testing = self.microphone_test_rx.is_some();
+                        if ui
+                            .add_enabled(
+                                microphone_state == MicrophonePermission::Authorized && !testing,
+                                egui::Button::new(if testing { "マイクテスト中…" } else { "マイク入力をテスト（5秒）" }),
+                            )
+                            .clicked()
+                        {
+                            self.start_microphone_test();
+                        }
+                        if testing {
+                            ui.add(egui::ProgressBar::new(self.microphone_test_peak.clamp(0.0, 1.0))
+                                .desired_width(160.0));
+                        }
+                        if let Some(message) = &self.microphone_test_message {
+                            ui.label(egui::RichText::new(message).color(TEXT_MUTED));
+                        }
+                    });
+                });
             });
 
             #[cfg(target_os = "macos")]
@@ -5953,6 +6914,7 @@ impl eframe::App for MacShot {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_display_settings(ctx);
         self.advance_recording_playback(ctx);
         #[cfg(target_os = "macos")]
         self.handle_microphone_test_events(ctx);
@@ -6280,19 +7242,168 @@ mod tests {
     }
 
     #[test]
-    fn video_quality_presets_change_bitrate_and_frame_rate() {
+    fn legacy_video_quality_presets_keep_their_values() {
         assert_eq!(VideoQuality::Standard.bitrate(), 6_000_000);
         assert_eq!(VideoQuality::Standard.frame_rate(), 10.0);
         assert_eq!(VideoQuality::High.bitrate(), 12_000_000);
         assert_eq!(VideoQuality::High.frame_rate(), 15.0);
         assert_eq!(VideoQuality::Best.bitrate(), 20_000_000);
         assert_eq!(VideoQuality::Best.frame_rate(), 30.0);
-        assert_eq!(VideoQuality::Best.frame_interval().as_millis(), 33);
         assert_eq!(VideoQuality::from_setting("high"), VideoQuality::High);
-        assert_eq!(VideoQuality::from_setting("best").setting(), "best");
+        assert_eq!(VideoQuality::from_setting("best"), VideoQuality::Best);
         assert_eq!(
             VideoQuality::from_setting("unknown"),
             VideoQuality::Standard
+        );
+    }
+
+    #[test]
+    fn recording_quality_loads_independent_values_and_migrates_old_presets() {
+        let quality =
+            RecordingQuality::from_settings(VideoQuality::High, "18", "48", "92", "24", "720p");
+        assert_eq!(quality.mp4_bitrate_mbps, 18);
+        assert_eq!(quality.mp4_frame_rate, 48);
+        assert_eq!(quality.gif_quality_percent, 92);
+        assert_eq!(quality.gif_frame_rate, 24);
+        assert_eq!(quality.resolution, RecordingResolution::P720);
+        assert_eq!(quality.mp4_bitrate(), 18_000_000);
+        assert_eq!(quality.mp4_frame_interval().as_millis(), 20);
+        assert_eq!(quality.gif_frame_interval().as_millis(), 41);
+        assert_eq!(quality.gif_quantizer_speed(), 4);
+
+        let migrated =
+            RecordingQuality::from_settings(VideoQuality::High, "", "bad", "", "", "unknown");
+        assert_eq!(migrated.mp4_bitrate_mbps, 12);
+        assert_eq!(migrated.mp4_frame_rate, 15);
+        assert_eq!(migrated.gif_quality_percent, 70);
+        assert_eq!(migrated.gif_frame_rate, 10);
+        assert_eq!(migrated.resolution, RecordingResolution::Original);
+        assert_eq!(
+            RecordingQuality::from_settings(
+                VideoQuality::Standard,
+                "99",
+                "1",
+                "0",
+                "90",
+                "original",
+            ),
+            RecordingQuality {
+                mp4_bitrate_mbps: 30,
+                mp4_frame_rate: 5,
+                gif_quality_percent: 10,
+                gif_frame_rate: 30,
+                resolution: RecordingResolution::Original,
+            }
+        );
+    }
+
+    #[test]
+    fn recording_size_estimate_tracks_mp4_bitrate_and_gif_resolution_and_fps() {
+        let quality = RecordingQuality::from_settings(
+            VideoQuality::Standard,
+            "10",
+            "30",
+            "70",
+            "10",
+            "original",
+        );
+        let mp4 = estimate_recording_size_per_minute(RecordingFormat::Mp4, quality, 1920, 1080);
+        assert_eq!(mp4.low_bytes, mp4.high_bytes);
+        assert!(mp4.high_bytes > 75_000_000.0 && mp4.high_bytes < 80_000_000.0);
+
+        let gif = estimate_recording_size_per_minute(RecordingFormat::Gif, quality, 1920, 1080);
+        assert!(gif.low_bytes > 0.0);
+        assert!(gif.high_bytes > gif.low_bytes);
+        let faster = RecordingQuality {
+            gif_frame_rate: 20,
+            ..quality
+        };
+        let faster_gif =
+            estimate_recording_size_per_minute(RecordingFormat::Gif, faster, 1920, 1080);
+        assert!((faster_gif.high_bytes / gif.high_bytes - 2.0).abs() < 0.001);
+        let smaller = estimate_recording_size_per_minute(RecordingFormat::Gif, quality, 1280, 720);
+        assert!(smaller.high_bytes < gif.high_bytes);
+        assert_eq!(format_estimated_size(1_500_000_000.0), "1.5 GB");
+        assert_eq!(
+            RecordingResolution::P720.output_dimensions(3840, 2160, true),
+            (1280, 720)
+        );
+        assert_eq!(
+            RecordingResolution::P2160.output_dimensions(1920, 1080, false),
+            (1920, 1080)
+        );
+    }
+
+    #[test]
+    fn display_preferences_have_safe_defaults_and_bounded_font_size() {
+        assert_eq!(
+            DisplayDensity::from_setting("compact"),
+            DisplayDensity::Compact
+        );
+        assert_eq!(DisplayDensity::from_setting("relaxed").setting(), "relaxed");
+        assert_eq!(
+            DisplayDensity::from_setting("unknown"),
+            DisplayDensity::Standard
+        );
+        assert!(DisplayDensity::Compact.spacing_scale() < DisplayDensity::Standard.spacing_scale());
+        assert!(DisplayDensity::Relaxed.spacing_scale() > DisplayDensity::Standard.spacing_scale());
+        assert_eq!(parse_font_size_percent("125"), 125);
+        assert_eq!(parse_font_size_percent("bad"), 100);
+        assert_eq!(parse_font_size_percent("10"), 80);
+        assert_eq!(parse_font_size_percent("200"), 140);
+    }
+
+    #[test]
+    fn settings_card_layout_round_trips_order_width_and_padding() {
+        let mut layout = default_settings_layout();
+        assert_eq!(
+            layout,
+            vec![
+                SettingsCardLayout {
+                    id: SettingsCardId::Recording,
+                    width: SettingsCardWidth::Half,
+                    padding: SettingsCardPadding::Standard,
+                },
+                SettingsCardLayout {
+                    id: SettingsCardId::Capture,
+                    width: SettingsCardWidth::Half,
+                    padding: SettingsCardPadding::Standard,
+                },
+                SettingsCardLayout {
+                    id: SettingsCardId::Shortcuts,
+                    width: SettingsCardWidth::Half,
+                    padding: SettingsCardPadding::Standard,
+                },
+                SettingsCardLayout {
+                    id: SettingsCardId::Permissions,
+                    width: SettingsCardWidth::Half,
+                    padding: SettingsCardPadding::Standard,
+                },
+                SettingsCardLayout {
+                    id: SettingsCardId::Display,
+                    width: SettingsCardWidth::Full,
+                    padding: SettingsCardPadding::Compact,
+                },
+            ]
+        );
+        layout.swap(0, 2);
+        layout[0].width = SettingsCardWidth::Half;
+        layout[0].padding = SettingsCardPadding::Compact;
+        layout[1].padding = SettingsCardPadding::Spacious;
+        let serialized = serialize_settings_layout(&layout);
+        assert_eq!(parse_settings_layout(&serialized), layout);
+
+        let partial = parse_settings_layout(
+            "recording:half:compact;recording:full:spacious;unknown:half:compact",
+        );
+        assert_eq!(partial.len(), SettingsCardId::ALL.len());
+        assert_eq!(partial[0].id, SettingsCardId::Recording);
+        assert_eq!(partial[0].width, SettingsCardWidth::Half);
+        assert_eq!(partial[0].padding, SettingsCardPadding::Compact);
+        assert!(
+            SettingsCardId::ALL
+                .iter()
+                .all(|id| partial.iter().any(|card| card.id == *id))
         );
     }
 
@@ -6536,6 +7647,7 @@ mod tests {
 
     #[test]
     fn preferences_round_trip_saved_values_and_keep_equals_in_paths() {
+        let settings_layout = default_settings_layout();
         let preferences = Preferences {
             capture_hotkey: "Alt+Shift+KeyS",
             recording_hotkey: "Control+Alt+KeyR",
@@ -6547,7 +7659,16 @@ mod tests {
             annotation_width: 3.5,
             save_folder: Path::new("/tmp/MacShot=Evidence"),
             recording_format: RecordingFormat::Mp4,
-            video_quality: VideoQuality::High,
+            recording_quality: RecordingQuality {
+                mp4_bitrate_mbps: 18,
+                mp4_frame_rate: 48,
+                gif_quality_percent: 92,
+                gif_frame_rate: 24,
+                resolution: RecordingResolution::P1080,
+            },
+            display_density: DisplayDensity::Compact,
+            font_size_percent: 125,
+            settings_layout: &settings_layout,
         };
         let mut serialized = Vec::new();
         write_preferences(&mut serialized, &preferences).unwrap();
@@ -6583,9 +7704,25 @@ mod tests {
             "/tmp/MacShot=Evidence"
         );
         assert_eq!(parse_setting(&serialized, "recording_format", "gif"), "mp4");
+        assert_eq!(parse_setting(&serialized, "mp4_bitrate_mbps", ""), "18");
+        assert_eq!(parse_setting(&serialized, "mp4_frame_rate", ""), "48");
+        assert_eq!(parse_setting(&serialized, "gif_quality_percent", ""), "92");
+        assert_eq!(parse_setting(&serialized, "gif_frame_rate", ""), "24");
         assert_eq!(
-            parse_setting(&serialized, "video_quality", "standard"),
-            "high"
+            parse_setting(&serialized, "recording_resolution", ""),
+            "1080p"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "display_density", "standard"),
+            "compact"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "font_size_percent", "100"),
+            "125"
+        );
+        assert_eq!(
+            parse_settings_layout(&parse_setting(&serialized, "settings_layout", "")),
+            settings_layout
         );
         assert_eq!(
             parse_setting(&serialized, "missing", "fallback"),
@@ -7205,7 +8342,7 @@ mod tests {
     fn hotkey_labels_are_canonical_and_badges_ignore_parser_casing() {
         assert_eq!(canonical_hotkey_text("shift+alt+KeyS"), "Alt+Shift+KeyS");
         let alt_label = if cfg!(target_os = "macos") {
-            "⌥"
+            "Option"
         } else {
             "Alt"
         };

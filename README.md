@@ -1,12 +1,12 @@
-# MacShot 0.5.2
+# MacShot 0.6.0
 
 MacShotは、スクリーンショットの撮影・編集・比較と、GIF／MP4の画面録画を行うアプリです。撮影したPNG/JPEGと録画を一覧から確認できます。
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.5.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.2/MacShot-v0.5.2-macos-arm64.zip)
-- Windows x64: [MacShot-v0.5.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.2/MacShot-v0.5.2-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.5.2)
+- macOS Apple Silicon (arm64): [MacShot-v0.6.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.0/MacShot-v0.6.0-macos-arm64.zip)
+- Windows x64: [MacShot-v0.6.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.6.0/MacShot-v0.6.0-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.6.0)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。署名済みですが、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。
@@ -29,7 +29,7 @@ Windows版はZIPを展開して `MacShot.exe` を起動してください。ZIP�
 
 ### 画面録画
 
-1. 「設定」で保存形式をGIFまたはMP4（H.264）にします。MP4は標準・高画質・最高画質から選べます。
+1. 「設定」で保存形式をGIFまたはMP4（H.264）にします。録画解像度は元の画面サイズ、480p、720p、1080p、2K（1440p）、4K（2160p）から選べます。GIFは色の再現とフレームレート、MP4はビットレートとフレームレートを個別に調整できます。調整欄の下に1分録画あたりの予想サイズが表示されます。MP4は設定ビットレートと音声から計算し、GIFは画面の動きや色で変わるため幅を持たせた概算です。
 2. 「録画」を押すか、録画ショートカット（初期設定: `⌥`+`⇧`+`R`）を使います。録画中はメニューバー／通知領域に録画時間が表示されます。
 3. メニューバー／通知領域メニューの「録画開始／停止」または同じショートカットで停止します。保存後、「証跡一覧」の録画一覧から「アプリ内再生」でGIF／MP4の映像を再生・一時停止できます。「ファイルを開く」ではMP4の音声も含めて再生できます。
 
@@ -46,6 +46,12 @@ MP4はシステム音声を録音します。マイクが許可されている�
 macOSで画面撮影が許可されていない場合は「画面・音声の設定を開く」を押して、システム設定でMacShotを許可します。アプリを「画面収録とシステムオーディオ録音」に追加する必要がある場合は、「FinderでMacShotを表示」からMacShot.appを見つけて設定画面へドラッグするか、「＋」から選択してください。権限を変更したらMacShotを終了して再起動します。
 
 macOSのマイク設定にはアプリを手動追加する「＋」ボタンがありません。MacShotの「権限とデバイス」で状態を更新し、「macOSに許可を確認」を押すとmacOSの確認画面が表示されます。そこで許可するとMacShotが一覧に登録されます。確認画面が出ない場合は一覧へ手動追加できません。アプリケーションフォルダへの移動だけでも権限は付与されません。画面収録の一覧にある「＋」はマイク許可には使えません。マイクが拒否または未許可でも、MP4はマイクへのアクセスを求めずシステム音声のみで録画します。Windowsでは既定マイクの検出結果を表示し、マイクのプライバシー設定を開けます。Windowsのデスクトップアプリ権限はOS設定で確認してください。
+
+## 表示の調整
+
+設定の「表示量」でコンパクト・標準・ゆったりを選び、画面内に表示する情報量を調整できます。「文字サイズ」は−5%／＋5%ボタン、80／100／120／140%の直接選択、またはスライダーで80〜140%に調整できます。変更は次回起動後も保持されます。
+
+設定カードの「カード配置を調整」を押すと、カードごとに上下の順番、半幅／全幅、余白サイズを選べます。「保存して固定」で確定し、「キャンセル」では調整前に戻します。初期配置は、録画・撮影・ショートカット・権限を半幅で並べ、表示カードを下部に全幅で配置します。
 
 ## 対応形式
 

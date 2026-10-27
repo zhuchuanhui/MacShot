@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 — 2026-10-27
+
+- Rework settings layout, with reorderable/resizable cards and saved display-density and text-size controls.
+- Add quick font-size buttons and presets for more precise adjustments.
+- Add 480p, 720p, 1080p, 2K/1440p, and 4K/2160p recording output choices for GIF and MP4.
+- Show per-minute recording-size estimates for MP4 and an activity-based estimate range for GIF.
+- Improve capture and recording controls and make file information easier to scan.
+
 ## 0.5.2 — 2026-10-27
 
 - Include the required MinGW runtime DLLs and license notices in the Windows x64 ZIP so the app can start on clean Windows installations.
