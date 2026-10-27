@@ -1,17 +1,17 @@
-# MacShot 0.5.1
+# MacShot 0.5.2
 
 MacShotは、スクリーンショットの撮影・編集・比較と、GIF／MP4の画面録画を行うアプリです。撮影したPNG/JPEGと録画を一覧から確認できます。
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.5.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.1/MacShot-v0.5.1-macos-arm64.zip)
-- Windows x64: [MacShot-v0.5.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.1/MacShot-v0.5.1-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.5.1)
+- macOS Apple Silicon (arm64): [MacShot-v0.5.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.2/MacShot-v0.5.2-macos-arm64.zip)
+- Windows x64: [MacShot-v0.5.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.5.2/MacShot-v0.5.2-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.5.2)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。署名済みですが、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。
 
-Windows版はZIPを展開して `MacShot.exe` を起動してください。MP4録画ではWindowsの既定の再生デバイス音声と既定のマイクを収録します。マイクが入らない場合はWindowsの「設定 > プライバシーとセキュリティ > マイク」でデスクトップアプリのアクセスを許可してください。
+Windows版はZIPを展開して `MacShot.exe` を起動してください。ZIPには起動に必要なWindowsランタイムDLLも含まれます。MP4録画ではWindowsの既定の再生デバイス音声と既定のマイクを収録します。マイクが入らない場合はWindowsの「設定 > プライバシーとセキュリティ > マイク」でデスクトップアプリのアクセスを許可してください。
 
 ## 使い方
 

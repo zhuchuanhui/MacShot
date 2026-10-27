@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 — 2026-10-27
+
+- Include the required MinGW runtime DLLs and license notices in the Windows x64 ZIP so the app can start on clean Windows installations.
+- Show saved PNG pixel dimensions in the capture completion status and notice.
+
 ## 0.5.1 — 2026-10-27
 
 - Update the recording playback status when users pause or resume in-app playback.

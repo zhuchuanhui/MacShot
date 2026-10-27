@@ -378,6 +378,8 @@ struct CaptureNotice {
     sequence: u64,
     timestamp: String,
     path: PathBuf,
+    width: u32,
+    height: u32,
 }
 
 struct WindowChoice {
@@ -2225,6 +2227,14 @@ fn normalized_region_bounds(
         (selection.right() - screen.left()) / screen.width(),
         (selection.bottom() - screen.top()) / screen.height(),
     ])
+}
+
+fn capture_size_label(width: u32, height: u32) -> String {
+    format!("画像サイズ: {width} × {height} px")
+}
+
+fn capture_saved_status(sequence: u64, timestamp: &str, width: u32, height: u32) -> String {
+    format!("撮影 {sequence} 枚目を保存しました ({timestamp}) · {width}×{height} px")
 }
 
 fn stamp_timestamp(image: &mut image::RgbaImage, timestamp: &str) {
@@ -4322,7 +4332,8 @@ impl MacShot {
             }
             match result {
                 Ok((path, image, timestamp, sequence)) => {
-                    self.status = format!("撮影 {} 枚目を保存しました ({timestamp})", sequence);
+                    let (width, height) = image.dimensions();
+                    self.status = capture_saved_status(sequence, &timestamp, width, height);
                     if self.continuous_capture_session_active {
                         self.continuous_capture_saved_count =
                             self.continuous_capture_saved_count.saturating_add(1);
@@ -4332,6 +4343,8 @@ impl MacShot {
                             sequence,
                             timestamp,
                             path: path.clone(),
+                            width,
+                            height,
                         });
                     }
                     self.editing_queue.clear();
@@ -6073,6 +6086,7 @@ impl eframe::App for MacShot {
                             .color(ACCENT_BRIGHT),
                     );
                     ui.label(format!("{}枚目  ·  {}", notice.sequence, notice.timestamp));
+                    ui.label(capture_size_label(notice.width, notice.height));
                     ui.label(notice.path.display().to_string());
                     ui.label(format!(
                         "{} で続けて撮影できます",
@@ -7296,6 +7310,56 @@ mod tests {
                 egui::pos2(10.0, 10.0)
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn region_capture_crop_keeps_the_selection_margin_at_retina_scale() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 50.0));
+        let image = ImageBuffer::from_fn(200, 100, |x, y| Rgba([x as u8, y as u8, 0, 255]));
+        let bounds =
+            normalized_region_bounds(screen, egui::pos2(30.0, 10.0), egui::pos2(60.0, 40.0))
+                .unwrap();
+
+        let crop = crop_normalized(&image, bounds).unwrap();
+
+        assert_eq!(crop.dimensions(), (72, 72));
+        assert_eq!(*crop.get_pixel(0, 0), Rgba([54, 14, 0, 255]));
+        assert_eq!(*crop.get_pixel(71, 71), Rgba([125, 85, 0, 255]));
+    }
+
+    #[test]
+    fn capture_result_shows_saved_pixel_dimensions_in_status_and_notice() {
+        let mut app = MacShot {
+            show_capture_notice: true,
+            capture_in_progress: true,
+            active_capture_sequence: Some(7),
+            save_folder: Some(PathBuf::from("/tmp/macshot-capture-notice-test")),
+            ..MacShot::default()
+        };
+        app.capture_tx
+            .send((
+                7,
+                Ok((
+                    PathBuf::from("/tmp/macshot-capture-notice-test.png"),
+                    image::RgbaImage::new(2067, 1327),
+                    "2026-10-27 16:04:42".into(),
+                    7,
+                )),
+            ))
+            .unwrap();
+
+        app.handle_capture_results(&egui::Context::default());
+
+        assert_eq!(
+            app.status,
+            "撮影 7 枚目を保存しました (2026-10-27 16:04:42) · 2067×1327 px"
+        );
+        let notice = app.capture_notice.expect("capture notice should be shown");
+        assert_eq!((notice.width, notice.height), (2067, 1327));
+        assert_eq!(
+            capture_size_label(notice.width, notice.height),
+            "画像サイズ: 2067 × 1327 px"
         );
     }
 }
