@@ -1,10 +1,12 @@
 # Project Status
 
-## Version adjustment to 1.0.0 — 2026-10-28
+## GitHub Release v1.0.0 — 2026-10-28
 
-- Updated the project version source, lockfile, changelog, and README headings to `1.0.0` at the user's request.
-- The latest GitHub Release remains v0.11.0. README download URLs remain on v0.11.0 until a v1.0.0 Release is published.
-- Built a local v1.0.0 macOS app bundle at `output/version-1.0.0/MacShot.app` from the current source. No tag, commit, push, or GitHub Release has been created for this version adjustment.
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v1.0.0 from commit `15fea053e5c940302e617ed5d6d7eef7c55055a4` (`chore(release): set version 1.0.0`). The release carries forward the v0.11.0 feature set with no functional code changes.
+- Attached `output/release/MacShot-v1.0.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v1.0.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four uploaded. Both archives pass integrity and local checksum checks.
+- The macOS bundle is `output/release/MacShot-v1.0.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `1.0.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The extracted app passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- `cargo build --release`, Windows x64 GNU release cross-build using Rustup's compiler, `git diff --check`, bundle verification, and archive/checksum checks passed. Tests were not rerun because the application code is unchanged from v0.11.0. Windows runtime remains unverified.
+- No production deployment was performed.
 
 ## GitHub Release v0.11.0 — 2026-10-28
 
