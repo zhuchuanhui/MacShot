@@ -1,5 +1,13 @@
 # Project Status
 
+## GitHub Release v0.7.0 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.7.0 from commit `b9082645fe316452d5f866c68726b84fa8e8ff33` (`feat(i18n): add four-language localization`). This is the next version after v0.6.1; the persistent Japanese, English, Simplified Chinese, and Traditional Chinese UI is a feature release.
+- Attached `output/release/MacShot-v0.7.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.7.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four assets uploaded. The ZIPs pass integrity checks and local SHA-256 verification; the macOS archive was checked for AppleDouble and Finder metadata before publication.
+- The macOS bundle is `output/release/MacShot-v0.7.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.7.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. Its extracted archive passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle validation, and both archive/checksum checks. Windows runtime behavior remains unverified; macOS screen-capture behavior was not re-exercised from the final versioned bundle.
+- GitHub has no `.github` workflow directory and the `main` branch is not protected. The release was published manually. No production deployment was performed.
+
 ## Current language and delivery checkpoint — 2026-10-28
 
 - Extended the existing four-language selector across capture/edit, evidence, comparison, settings, region selection, permission guidance, completion notices, and dynamic status/error text. Added translations for previously missed save-location, original-resolution, startup-permission, recording-load, microphone-settings success, and restricted-microphone strings. The selector persists `ja`, `en`, `zh-Hans`, or `zh-Hant`; Japanese is restored as the current preference. Noto Sans SC is bundled for Chinese glyph coverage with its SIL Open Font License notice.
