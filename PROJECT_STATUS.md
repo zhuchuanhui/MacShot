@@ -1,10 +1,18 @@
 # Project Status
 
-## Recording list improvements — 2026-10-28 (working tree)
+## GitHub Release v0.10.0 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.10.0 from commit `ee888f5e8bba07a92387cc6d3b47312b53bbdb63` (`feat(recordings): improve recording list and playback`). This feature release follows v0.9.0.
+- Attached `output/release/MacShot-v0.10.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.10.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four uploaded. Both ZIPs pass integrity and local checksum checks; the macOS archive has no AppleDouble or Finder metadata.
+- The macOS bundle is `output/release/MacShot-v0.10.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.10.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The extracted app passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle verification, and both archive/checksum checks. The local preview displayed durations and opened an MP4 in its separate player. The rename dialog was opened and canceled; completing a rename was not exercised. One existing MP4 showed `時間不明` because its metadata could not be read. Windows runtime is unverified.
+- No production deployment was performed.
+
+## Recording list improvements — 2026-10-28
 
 - The recording list now loads GIF/MP4/MOV durations in the background and shows each duration beside the format and file size. New recordings use Japanese date/time/sequence filenames; existing legacy recording names are presented in a readable date/time form.
 - Clicking a supported recording or pressing `再生` opens a separate playback window. `外部で開く` remains available; `編集` opens a rename dialog that preserves the original extension. The former inline preview below the list was removed.
-- Updated the Japanese and English usage guides. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, and `scripts/verify_macos_bundle.sh output/review-recordings-20261028/MacShot.app` pass. The isolated macOS preview lists 21 recordings with durations, visible `外部で開く` / `再生` / `編集` actions, and opens an MP4 in its separate player viewport. The rename dialog was opened and canceled without changing a file. One existing MP4 shows `時間不明` because its metadata could not be read. Tests were not run; Windows runtime/UI remains unverified. No release or remote repository action was performed.
+- Updated the Japanese, English, and Simplified Chinese usage guides. The isolated macOS preview lists 21 recordings with durations and visible `外部で開く` / `再生` / `編集` actions, and opens an MP4 in its separate player viewport. The rename dialog was opened and canceled without changing a file. One existing MP4 shows `時間不明` because its metadata could not be read. All 82 tests, formatting, Clippy, macOS and Windows x64 GNU release builds, bundle validation, and release archive checks passed. Windows runtime/UI remains unverified.
 
 ## GitHub Release v0.9.0 — 2026-10-28
 
