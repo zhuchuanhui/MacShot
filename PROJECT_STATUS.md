@@ -1,5 +1,12 @@
 # Project Status
 
+## Opaque titlebar follow-up — 2026-10-28
+
+- Made the main macOS window opaque with a white clear color and removed the native titlebar separator so its titlebar visually joins the white app header without a divider. The separate borderless range-selection overlay remains transparent.
+- Built the current v0.8.0 source with `cargo build --release`; `cargo fmt --check`, `git diff --check`, and `scripts/verify_macos_bundle.sh output/ui-style-refresh-20261028/MacShot.app` passed. Replaced and ad-hoc signed the local preview bundle.
+- Relaunched the preview and inspected the top window area in the macOS runtime: the titlebar and header are white with no visible separator. The standard capture screen still shows the Screen Recording permission notice; capture was not exercised.
+- This is a local, uncommitted follow-up after the v0.8.0 release. No remote change was made.
+
 ## GitHub Release v0.8.0 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.8.0 from commit `c5755c16ccd48645c36d200b2b644f0a9ab212ee` (`feat(ui): refresh visual style`). The latest release before this was v0.7.0; the shared visual refresh is shipped as a minor update.

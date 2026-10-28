@@ -4772,6 +4772,26 @@ fn configure_macshot_theme(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+#[cfg(target_os = "macos")]
+fn remove_macshot_titlebar_separator() {
+    use objc2_app_kit::{NSApplication, NSTitlebarSeparatorStyle};
+    use objc2_foundation::{MainThreadMarker, NSString};
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    let target_title = NSString::from_str("MacShot");
+    let windows = application.windows();
+    for index in 0..windows.count() {
+        let window = unsafe { windows.objectAtIndex(index) };
+        if unsafe { window.title().isEqualToString(&target_title) } {
+            unsafe { window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None) };
+            return;
+        }
+    }
+}
+
 fn glass_frame() -> egui::Frame {
     glass_frame_with_margin(16)
 }
@@ -9087,10 +9107,12 @@ fn compare_empty_state(ui: &mut egui::Ui, message: &str) {
 
 impl eframe::App for MacShot {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+        [1.0, 1.0, 1.0, 1.0]
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        remove_macshot_titlebar_separator();
         self.apply_display_settings(ctx);
         self.advance_recording_playback(ctx);
         #[cfg(target_os = "macos")]
@@ -9279,7 +9301,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 640.0])
-            .with_transparent(cfg!(target_os = "macos"))
+            .with_transparent(false)
             .with_icon(application_icon()),
         ..Default::default()
     };

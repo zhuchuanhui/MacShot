@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 — 2026-10-28
+
+- Joined the macOS window titlebar to the app header and removed the separator between them.
+- Made the main window background opaque while keeping the range-selection overlay transparent.
+
 ## 0.8.0 — 2026-10-28
 
 - Refined the shared visual style with light surfaces, restrained lavender controls, clearer selection and hover states, and softer card framing.
