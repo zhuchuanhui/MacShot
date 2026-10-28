@@ -1,5 +1,12 @@
 # Project Status
 
+## Shared visual style refresh — 2026-10-28
+
+- Refined the existing egui theme in `src/main.rs` around near-white and very light gray surfaces, pale lavender controls, and restrained purple selection/hover states. Reduced decorative backdrop color, card outlines, and strong primary-button fills; adjusted spacing and corner radii while retaining dark readable text and the red recording cue.
+- Built with `cargo build --release` and checked formatting with `cargo fmt --check` (passed). Packaged a local preview at `output/ui-style-refresh-20261028/MacShot.app` with a distinct preview bundle identifier; the arm64 executable and required privacy descriptions/audio-input entitlement were verified, and the ad-hoc code signature passed `scripts/verify_macos_bundle.sh`.
+- Launched that exact preview and inspected the capture and settings screens in the macOS runtime. Navigation selection, controls, settings cards, and permission guidance rendered. Screen Recording permission is not granted, so actual screenshot/recording capture was not exercised. No tests were run for this visual-only change.
+- No commit, push, release, or deployment was made.
+
 ## GitHub Release v0.7.0 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.7.0 from commit `b9082645fe316452d5f866c68726b84fa8e8ff33` (`feat(i18n): add four-language localization`). This is the next version after v0.6.1; the persistent Japanese, English, Simplified Chinese, and Traditional Chinese UI is a feature release.

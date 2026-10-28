@@ -4711,9 +4711,10 @@ fn annotated_image(
     output
 }
 
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(82, 99, 211);
-const ACCENT_BRIGHT: egui::Color32 = egui::Color32::from_rgb(78, 91, 192);
-const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(76, 86, 107);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(132, 115, 174);
+const ACCENT_BRIGHT: egui::Color32 = egui::Color32::from_rgb(112, 96, 153);
+const LAVENDER_SURFACE: egui::Color32 = egui::Color32::from_rgb(248, 246, 252);
+const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(91, 88, 105);
 
 fn application_icon() -> egui::IconData {
     let image = image::load_from_memory(include_bytes!("../assets/MacShot-Icon.png"))
@@ -4731,44 +4732,39 @@ fn configure_macshot_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Light);
     let mut style = (*ctx.style()).clone();
     let mut visuals = egui::Visuals::light();
-    let foreground = egui::Color32::from_rgb(29, 36, 52);
-    visuals.panel_fill = egui::Color32::from_rgb(238, 242, 250);
-    visuals.window_fill = egui::Color32::from_rgb(250, 251, 255);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(248, 249, 253);
-    visuals.faint_bg_color = egui::Color32::from_rgba_unmultiplied(82, 99, 211, 16);
+    let foreground = egui::Color32::from_rgb(37, 35, 45);
+    visuals.panel_fill = egui::Color32::from_rgb(250, 249, 252);
+    visuals.window_fill = egui::Color32::from_rgb(255, 255, 255);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(247, 246, 249);
+    visuals.faint_bg_color = egui::Color32::from_rgba_unmultiplied(132, 115, 174, 18);
     visuals.override_text_color = Some(foreground);
-    visuals.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(82, 99, 211, 68);
+    visuals.selection.bg_fill = egui::Color32::from_rgb(226, 220, 239);
     visuals.hyperlink_color = ACCENT_BRIGHT;
     visuals.weak_text_color = Some(TEXT_MUTED);
-    visuals.window_corner_radius = egui::CornerRadius::same(22);
-    visuals.window_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(34));
-    visuals.widgets.noninteractive.bg_fill =
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 150);
-    visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(24));
+    visuals.window_corner_radius = egui::CornerRadius::same(18);
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(14));
+    visuals.widgets.noninteractive.bg_fill = LAVENDER_SURFACE;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, foreground);
-    visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(12);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);
-    visuals.widgets.inactive.weak_bg_fill =
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 100);
+    visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(251, 249, 254);
+    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(247, 245, 250);
     visuals.widgets.inactive.bg_stroke =
-        egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(25));
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(232, 228, 239));
     visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, foreground);
-    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(12);
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgba_unmultiplied(110, 126, 232, 40);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(
-        1.0_f32,
-        egui::Color32::from_rgba_unmultiplied(82, 99, 211, 105),
-    );
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(10);
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(239, 234, 247);
+    visuals.widgets.hovered.bg_stroke =
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(187, 174, 211));
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, foreground);
-    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(12);
-    visuals.widgets.active.bg_fill = ACCENT;
-    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT_BRIGHT);
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(10);
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(232, 225, 243);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5_f32, ACCENT_BRIGHT);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, foreground);
-    visuals.widgets.active.corner_radius = egui::CornerRadius::same(12);
-    visuals.widgets.open.bg_fill = egui::Color32::from_rgba_unmultiplied(110, 126, 232, 44);
+    visuals.widgets.active.corner_radius = egui::CornerRadius::same(10);
+    visuals.widgets.open.bg_fill = egui::Color32::from_rgb(241, 237, 248);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, foreground);
-    visuals.widgets.open.corner_radius = egui::CornerRadius::same(12);
+    visuals.widgets.open.corner_radius = egui::CornerRadius::same(10);
     style.visuals = visuals;
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(15.0, 9.0);
@@ -4786,43 +4782,21 @@ fn settings_card_frame(padding: SettingsCardPadding) -> egui::Frame {
 
 fn glass_frame_with_margin(margin: i8) -> egui::Frame {
     egui::Frame::new()
-        .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 170))
-        .stroke(egui::Stroke::new(
-            1.0_f32,
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
-        ))
-        .corner_radius(egui::CornerRadius::same(20))
+        .fill(egui::Color32::from_rgb(255, 255, 255))
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(egui::CornerRadius::same(16))
         .inner_margin(egui::Margin::same(margin))
 }
 
 fn primary_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
-    egui::Button::new(label.into().color(egui::Color32::WHITE))
-        .fill(ACCENT)
-        .stroke(egui::Stroke::new(1.0_f32, ACCENT_BRIGHT))
-        .corner_radius(egui::CornerRadius::same(13))
+    egui::Button::new(label.into().color(egui::Color32::from_rgb(64, 54, 82)))
+        .corner_radius(egui::CornerRadius::same(11))
         .min_size(egui::vec2(112.0, 42.0))
 }
 
 fn paint_glass_backdrop(ui: &egui::Ui) {
-    let rect = ui.max_rect();
-    let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(238, 242, 250));
-    let glow = rect.right_top() + egui::vec2(-100.0, 130.0);
-    for (radius, alpha) in [(610.0, 4), (460.0, 5), (310.0, 6), (190.0, 7)] {
-        painter.circle_filled(
-            glow,
-            radius,
-            egui::Color32::from_rgba_unmultiplied(117, 131, 235, alpha * 2),
-        );
-    }
-    let lower_glow = rect.left_bottom() + egui::vec2(140.0, -35.0);
-    for (radius, alpha) in [(450.0, 2), (320.0, 3), (210.0, 4)] {
-        painter.circle_filled(
-            lower_glow,
-            radius,
-            egui::Color32::from_rgba_unmultiplied(68, 161, 197, alpha * 3),
-        );
-    }
+    ui.painter()
+        .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(249, 248, 251));
 }
 
 fn hotkey_badge_text(value: &str) -> String {
@@ -7440,12 +7414,8 @@ impl MacShot {
         egui::TopBottomPanel::top("macshot_header")
             .frame(
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_unmultiplied(250, 251, 255, 228))
-                    .stroke(egui::Stroke::new(
-                        1.0_f32,
-                        egui::Color32::from_black_alpha(20),
-                    ))
-                    .inner_margin(egui::Margin::symmetric(22, 14)),
+                    .fill(egui::Color32::WHITE)
+                    .inner_margin(egui::Margin::symmetric(24, 16)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -7474,15 +7444,12 @@ impl MacShot {
                     ] {
                         let selected = self.page == page;
                         let fill = if selected {
-                            egui::Color32::from_rgba_unmultiplied(100, 116, 220, 35)
+                            egui::Color32::from_rgb(239, 234, 247)
                         } else {
                             egui::Color32::TRANSPARENT
                         };
                         let stroke = if selected {
-                            egui::Stroke::new(
-                                1.0_f32,
-                                egui::Color32::from_rgba_unmultiplied(82, 99, 211, 100),
-                            )
+                            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(210, 201, 226))
                         } else {
                             egui::Stroke::NONE
                         };
@@ -9180,12 +9147,8 @@ impl eframe::App for MacShot {
         egui::TopBottomPanel::bottom("macshot_status")
             .frame(
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_unmultiplied(250, 251, 255, 235))
-                    .stroke(egui::Stroke::new(
-                        1.0_f32,
-                        egui::Color32::from_black_alpha(20),
-                    ))
-                    .inner_margin(egui::Margin::symmetric(20, 9)),
+                    .fill(egui::Color32::WHITE)
+                    .inner_margin(egui::Margin::symmetric(24, 11)),
             )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -9230,8 +9193,8 @@ impl eframe::App for MacShot {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(238, 242, 250))
-                    .inner_margin(egui::Margin::symmetric(20, 16)),
+                    .fill(egui::Color32::from_rgb(249, 248, 251))
+                    .inner_margin(egui::Margin::symmetric(24, 20)),
             )
             .show(ctx, |ui| {
                 paint_glass_backdrop(ui);

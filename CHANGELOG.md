@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0 — 2026-10-28
+
+- Refined the shared visual style with light surfaces, restrained lavender controls, clearer selection and hover states, and softer card framing.
+- Simplified the backdrop and adjusted spacing and corner radii across capture and settings screens.
+
 ## 0.7.0 — 2026-10-28
 
 - Added a persistent Japanese, English, Simplified Chinese, and Traditional Chinese language selector across the app.
