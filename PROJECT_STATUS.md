@@ -1,5 +1,13 @@
 # Project Status
 
+## GitHub Release v0.8.0 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.8.0 from commit `c5755c16ccd48645c36d200b2b644f0a9ab212ee` (`feat(ui): refresh visual style`). The latest release before this was v0.7.0; the shared visual refresh is shipped as a minor update.
+- Attached `output/release/MacShot-v0.8.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.8.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four assets uploaded. Both ZIPs pass integrity and local checksum checks; the macOS archive contains no AppleDouble or Finder metadata.
+- The macOS bundle is `output/release/MacShot-v0.8.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.8.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The app passes deep/strict signature verification; it is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle verification, and both archive/checksum checks. The style refresh was inspected in the local preview app. The final versioned bundle was not launched for a second UI pass; screen capture remains unverified because Screen Recording permission is unavailable. Windows runtime behavior is unverified.
+- GitHub has no `.github` workflow directory and `main` is not protected. The release was published manually. No production deployment was performed.
+
 ## Shared visual style refresh — 2026-10-28
 
 - Refined the existing egui theme in `src/main.rs` around near-white and very light gray surfaces, pale lavender controls, and restrained purple selection/hover states. Reduced decorative backdrop color, card outlines, and strong primary-button fills; adjusted spacing and corner radii while retaining dark readable text and the red recording cue.
