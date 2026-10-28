@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0 — 2026-10-28
+
+- Set the project version to the first stable `1.0.0` release number. The feature set is the one published in v0.11.0.
+
 ## 0.11.0 — 2026-10-28
 
 - Made the main window close button hide MacShot to the menu bar or notification area without ending recordings or continuous capture.

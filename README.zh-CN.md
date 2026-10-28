@@ -1,4 +1,4 @@
-# MacShot 0.11.0
+# MacShot 1.0.0
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,9 +6,9 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v0.11.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.11.0/MacShot-v0.11.0-macos-arm64.zip)
-- Windows x64：[MacShot-v0.11.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.11.0/MacShot-v0.11.0-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.11.0)
+- macOS Apple Silicon（arm64）：[MacShot-v1.0.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.0.0/MacShot-v1.0.0-macos-arm64.zip)
+- Windows x64：[MacShot-v1.0.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.0.0/MacShot-v1.0.0-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.0.0)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用仅使用 Ad Hoc 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 

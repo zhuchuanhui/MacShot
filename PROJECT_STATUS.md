@@ -1,5 +1,11 @@
 # Project Status
 
+## Version adjustment to 1.0.0 — 2026-10-28
+
+- Updated the project version source, lockfile, changelog, and README headings to `1.0.0` at the user's request.
+- The latest GitHub Release remains v0.11.0. README download URLs remain on v0.11.0 until a v1.0.0 Release is published.
+- Built a local v1.0.0 macOS app bundle at `output/version-1.0.0/MacShot.app` from the current source. No tag, commit, push, or GitHub Release has been created for this version adjustment.
+
 ## GitHub Release v0.11.0 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.11.0 from commit `8384aba1f774ec57ab7bfe36a56a8a40a900ea42` (`feat(window): hide app when closing main window`). This feature release follows v0.10.0.
