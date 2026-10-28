@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 — 2026-10-28
+
+- Added a Settings control to reload the saved app language and refresh localized UI and menu-bar labels.
+- Refined the menu-bar camera icon with smoother curves and a hollow lens ring.
+
 ## 0.8.1 — 2026-10-28
 
 - Joined the macOS window titlebar to the app header and removed the separator between them.

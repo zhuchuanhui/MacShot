@@ -1,5 +1,17 @@
 # Project Status
 
+## Menu bar icon refinement — 2026-10-28
+
+- Reworked the 24 px menu bar camera mark with supersampled rounded geometry for cleaner curves and a hollow lens ring. The system-tinted idle icon and red recording state remain intact.
+- `cargo fmt --check` and `cargo build --release` passed. The icon was not inspected in a running menu bar during this change.
+- Local source/build change only; no release, remote change, or deployment was made.
+
+## Language refresh button — 2026-10-28
+
+- Added a refresh control immediately before the app-language selector in Settings. It reloads the saved language preference, reapplies localized UI/tray labels, and shows a localized confirmation; its tooltip and confirmation are translated for Japanese, English, Simplified Chinese, and Traditional Chinese.
+- `cargo build --release`, `cargo fmt --check`, `git diff --check`, and `scripts/verify_macos_bundle.sh output/ui-language-refresh-20261028/MacShot.app` passed. Launched the dedicated local preview and confirmed the button is next to the language picker and pressing it updates the visible status message.
+- Local preview only; `/Applications/MacShot.app` was not replaced and no release or remote change was made.
+
 ## GitHub Release v0.8.1 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.8.1 from commit `f6184de20c4092845ab3cd721d0aac7b577d952f` (`fix(macos): blend titlebar with app header`). This patch release follows v0.8.0 and includes the opaque main-window/titlebar styling adjustment.

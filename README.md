@@ -1,4 +1,4 @@
-# MacShot 0.8.1
+# MacShot 0.9.0
 
 [English](README.en.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShotは、スクリーンショットの撮影・編集・比較と、GIF／M
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v0.8.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.8.1/MacShot-v0.8.1-macos-arm64.zip)
-- Windows x64: [MacShot-v0.8.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.8.1/MacShot-v0.8.1-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.8.1)
+- macOS Apple Silicon (arm64): [MacShot-v0.9.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-macos-arm64.zip)
+- Windows x64: [MacShot-v0.9.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.9.0)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Ad Hoc署名のみで、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。

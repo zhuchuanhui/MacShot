@@ -575,6 +575,16 @@ impl AppLanguage {
             }
             "画像を編集" => ["Edit Image", "编辑图像", "編輯圖片"],
             "アプリの言語" => ["App language", "应用语言", "應用程式語言"],
+            "言語表示を再読み込み" => [
+                "Reload language display",
+                "重新加载语言显示",
+                "重新載入語言顯示",
+            ],
+            "言語表示を再読み込みしました。" => [
+                "Language display reloaded.",
+                "已重新加载语言显示。",
+                "已重新載入語言顯示。",
+            ],
             "MacShotを自分の撮影手順に合わせます。" => [
                 "Configure MacShot for your capture workflow.",
                 "根据你的截图流程配置 MacShot。",
@@ -2750,67 +2760,58 @@ fn make_tray_icon(recording: bool) -> Icon {
 }
 
 fn tray_icon_pixels(recording: bool) -> Vec<u8> {
+    const SCALE: usize = 4;
     let mut pixels = vec![0_u8; 24 * 24 * 4];
     let color = if recording {
         [220, 35, 45, 255]
     } else {
         [24, 24, 24, 255]
     };
-    // Compact, flat-topped mirrorless body with a large front lens.
-    for y in 8..18 {
-        for x in 3..21 {
-            tray_pixel(&mut pixels, x, y, color);
-        }
-    }
-    for y in 6..9 {
-        for x in 5..19 {
-            tray_pixel(&mut pixels, x, y, color);
-        }
-    }
-    for y in 5..7 {
-        for x in 8..11 {
-            tray_pixel(&mut pixels, x, y, color);
-        }
-    }
-    for y in 6..7 {
-        for x in 15..18 {
-            tray_pixel(&mut pixels, x, y, color);
-        }
-    }
-
-    // Concentric lens rings form the main detail of the tiny silhouette.
-    for y in 7..19 {
-        for x in 7..20 {
-            let dx = x as i32 - 13;
-            let dy = y as i32 - 13;
-            let distance = dx * dx + dy * dy;
-            if distance <= 25 {
-                if distance >= 20 || (8..=12).contains(&distance) {
-                    tray_pixel(&mut pixels, x, y, color);
-                } else {
-                    tray_pixel(&mut pixels, x, y, [0, 0, 0, 0]);
+    // Supersampling keeps the camera's small curves clean at menu-bar size.
+    for y in 0..24 {
+        for x in 0..24 {
+            let mut coverage = 0_u16;
+            for sy in 0..SCALE {
+                for sx in 0..SCALE {
+                    let px = x as f32 + (sx as f32 + 0.5) / SCALE as f32;
+                    let py = y as f32 + (sy as f32 + 0.5) / SCALE as f32;
+                    let body = rounded_rect_contains(px, py, 3.0, 7.5, 21.0, 18.5, 2.0)
+                        || rounded_rect_contains(px, py, 6.5, 5.5, 14.0, 9.0, 1.5);
+                    let dx = px - 13.0;
+                    let dy = py - 13.0;
+                    let lens_distance = (dx * dx + dy * dy).sqrt();
+                    let lens_ring = (3.0..=5.6).contains(&lens_distance);
+                    if (body && lens_distance > 3.0) || lens_ring {
+                        coverage += 1;
+                    }
                 }
             }
-        }
-    }
-    if recording {
-        // The recording lamp sits above the lens; no model name or logo is used.
-        for y in 5..9 {
-            for x in 19..23 {
-                let dx = x as i32 - 21;
-                let dy = y as i32 - 7;
-                if dx * dx + dy * dy <= 4 {
-                    tray_pixel(&mut pixels, x, y, color);
-                }
+            if coverage > 0 {
+                let alpha = (coverage * 255 / (SCALE * SCALE) as u16) as u8;
+                let index = (y * 24 + x) * 4;
+                pixels[index..index + 4].copy_from_slice(&[color[0], color[1], color[2], alpha]);
             }
         }
     }
     pixels
 }
 
-fn tray_pixel(pixels: &mut [u8], x: usize, y: usize, color: [u8; 4]) {
-    let index = (y * 24 + x) * 4;
-    pixels[index..index + 4].copy_from_slice(&color);
+fn rounded_rect_contains(
+    x: f32,
+    y: f32,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    radius: f32,
+) -> bool {
+    let center_x = (left + right) * 0.5;
+    let center_y = (top + bottom) * 0.5;
+    let half_width = (right - left) * 0.5 - radius;
+    let half_height = (bottom - top) * 0.5 - radius;
+    let dx = (x - center_x).abs() - half_width;
+    let dy = (y - center_y).abs() - half_height;
+    dx.max(0.0).powi(2) + dy.max(0.0).powi(2) <= radius * radius
 }
 
 fn dispatch_recording_menu_action(
@@ -8204,8 +8205,13 @@ impl MacShot {
                 .strong(),
         );
         let previous_language = self.language;
+        let mut refresh_language = false;
         ui.horizontal(|ui| {
             ui.label(self.language.language_heading());
+            refresh_language = ui
+                .button("↻")
+                .on_hover_text(self.language.text("言語表示を再読み込み"))
+                .clicked();
             egui::ComboBox::from_id_salt("app_language")
                 .selected_text(self.language.label())
                 .show_ui(ui, |ui| {
@@ -8223,6 +8229,18 @@ impl MacShot {
                     );
                 });
         });
+        if refresh_language {
+            self.language = AppLanguage::from_setting(&load_setting("language", "ja"));
+            self.settings_error = None;
+            self.status = "言語表示を再読み込みしました。".into();
+            self._tray_icon = None;
+            self.tray_initialized = false;
+            self.tray_capture_status_item = None;
+            self.tray_recording_status_item = None;
+            self.tray_recording_state = None;
+            self.tray_recording_seconds = None;
+            self.tray_capture_status_state = None;
+        }
         if self.language != previous_language {
             if let Err(error) = self.save_preferences() {
                 self.language = previous_language;
