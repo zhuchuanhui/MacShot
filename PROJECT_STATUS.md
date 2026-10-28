@@ -1,9 +1,17 @@
 # Project Status
 
-## Close to menu bar — 2026-10-28 (working tree)
+## GitHub Release v0.11.0 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.11.0 from commit `8384aba1f774ec57ab7bfe36a56a8a40a900ea42` (`feat(window): hide app when closing main window`). This feature release follows v0.10.0.
+- Attached `output/release/MacShot-v0.11.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.11.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four uploaded. Both ZIPs pass integrity and local checksum checks; the macOS archive has no AppleDouble or Finder metadata.
+- The macOS bundle is `output/release/MacShot-v0.11.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.11.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The extracted app passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle verification, and both archive/checksum checks. The isolated macOS preview hid the window while the app process stayed running. Explicit Quit behavior was not exercised; Windows runtime is unverified.
+- No production deployment was performed.
+
+## Close to menu bar — 2026-10-28
 
 - Closing the main window now cancels the native close and hides the window on macOS and Windows. The tray app remains running, and explicit `終了` / `Quit` still uses the existing quit flow. Hiding the window does not stop an active recording or continuous capture.
-- Updated the Japanese, English, and Simplified Chinese usage guides. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, and `scripts/verify_macos_bundle.sh output/review-recordings-20261028/MacShot.app` pass. Closing the isolated macOS preview hides its main window while its process remains running. Windows runtime and the explicit Quit menu action were not exercised. Tests were not run. No release or remote repository action was performed.
+- Updated the Japanese, English, and Simplified Chinese usage guides. Closing the isolated macOS preview hides its main window while its process remains running. Windows runtime and the explicit Quit menu action were not exercised. The change is included in v0.11.0.
 
 ## GitHub Release v0.10.0 — 2026-10-28
 
