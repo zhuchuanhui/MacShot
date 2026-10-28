@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.0 — 2026-10-28
+
+- Made the main window close button hide MacShot to the menu bar or notification area without ending recordings or continuous capture.
+- Kept explicit Quit menu actions as the way to exit the app.
+
 ## 0.10.0 — 2026-10-28
 
 - Added recording durations to the recordings list, with duration metadata loaded in the background.

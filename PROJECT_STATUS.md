@@ -1,5 +1,10 @@
 # Project Status
 
+## Close to menu bar — 2026-10-28 (working tree)
+
+- Closing the main window now cancels the native close and hides the window on macOS and Windows. The tray app remains running, and explicit `終了` / `Quit` still uses the existing quit flow. Hiding the window does not stop an active recording or continuous capture.
+- Updated the Japanese, English, and Simplified Chinese usage guides. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, and `scripts/verify_macos_bundle.sh output/review-recordings-20261028/MacShot.app` pass. Closing the isolated macOS preview hides its main window while its process remains running. Windows runtime and the explicit Quit menu action were not exercised. Tests were not run. No release or remote repository action was performed.
+
 ## GitHub Release v0.10.0 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.10.0 from commit `ee888f5e8bba07a92387cc6d3b47312b53bbdb63` (`feat(recordings): improve recording list and playback`). This feature release follows v0.9.0.

@@ -9571,13 +9571,8 @@ impl eframe::App for MacShot {
             self.status = microphone_permission_result_message(granted).into();
         }
         if ctx.input(|input| input.viewport().close_requested()) {
-            if should_defer_quit_until_recording_finishes(self.recording, self.recording_starting) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.quit_after_recording = true;
-                self.stop_recording();
-            } else if cfg!(target_os = "windows") {
-                std::process::exit(0);
-            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
         if cfg!(target_os = "macos")
             && screen_recording_access_granted()
