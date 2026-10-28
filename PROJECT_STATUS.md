@@ -1,11 +1,19 @@
 # Project Status
 
+## GitHub Release v0.8.1 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.8.1 from commit `f6184de20c4092845ab3cd721d0aac7b577d952f` (`fix(macos): blend titlebar with app header`). This patch release follows v0.8.0 and includes the opaque main-window/titlebar styling adjustment.
+- Attached `output/release/MacShot-v0.8.1-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.8.1-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four uploaded. Both ZIPs pass integrity and local checksum checks; the macOS archive has no AppleDouble or Finder metadata.
+- The macOS bundle is `output/release/MacShot-v0.8.1-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.8.1`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The extracted app passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle verification, and both archive/checksum checks. The titlebar appearance was checked in the local preview. Screen capture is still unverified because Screen Recording permission is unavailable; Windows runtime behavior is unverified.
+- No production deployment was performed.
+
 ## Opaque titlebar follow-up — 2026-10-28
 
 - Made the main macOS window opaque with a white clear color and removed the native titlebar separator so its titlebar visually joins the white app header without a divider. The separate borderless range-selection overlay remains transparent.
 - Built the current v0.8.0 source with `cargo build --release`; `cargo fmt --check`, `git diff --check`, and `scripts/verify_macos_bundle.sh output/ui-style-refresh-20261028/MacShot.app` passed. Replaced and ad-hoc signed the local preview bundle.
 - Relaunched the preview and inspected the top window area in the macOS runtime: the titlebar and header are white with no visible separator. The standard capture screen still shows the Screen Recording permission notice; capture was not exercised.
-- This is a local, uncommitted follow-up after the v0.8.0 release. No remote change was made.
+- Published as patch release v0.8.1 after the versioned macOS and Windows packages passed archive and checksum verification.
 
 ## GitHub Release v0.8.0 — 2026-10-28
 
