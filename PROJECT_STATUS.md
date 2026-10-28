@@ -1,16 +1,24 @@
 # Project Status
 
+## GitHub Release v0.9.0 — 2026-10-28
+
+- Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.9.0 from commit `4155c1dd53f80e0f0844fa110029795faa33470a` (`feat: add language refresh and refine tray icon`). This feature release follows v0.8.1 and includes the language-display refresh control and refined menu-bar camera icon.
+- Attached `output/release/MacShot-v0.9.0-macos-arm64.zip` and its SHA-256 sidecar, plus `output/release/MacShot-v0.9.0-windows-x64.zip` and its SHA-256 sidecar. GitHub reports all four uploaded. Both ZIPs pass integrity and local checksum checks; the macOS archive has no AppleDouble or Finder metadata.
+- The macOS bundle is `output/release/MacShot-v0.9.0-macos-arm64/MacShot.app`, with bundle identifier `com.macshot.app`, version `0.9.0`, arm64 executable, privacy descriptions, and microphone audio-input entitlement. The extracted app passes deep/strict signature verification. It is ad-hoc signed and not notarized.
+- Verification passed: `cargo fmt --check`, `cargo test --all-targets` (82 tests), `cargo clippy --all-targets -- -D warnings`, macOS `cargo build --release`, Windows x64 GNU release cross-build using the Rustup compiler, `git diff --check`, Mac bundle verification, and both archive/checksum checks. The language refresh was exercised in the local preview app. Menu-bar icon refinement was not inspected in a running menu bar. Screen capture is unverified because Screen Recording permission is unavailable; Windows runtime behavior is unverified.
+- No production deployment was performed.
+
 ## Menu bar icon refinement — 2026-10-28
 
 - Reworked the 24 px menu bar camera mark with supersampled rounded geometry for cleaner curves and a hollow lens ring. The system-tinted idle icon and red recording state remain intact.
 - `cargo fmt --check` and `cargo build --release` passed. The icon was not inspected in a running menu bar during this change.
-- Local source/build change only; no release, remote change, or deployment was made.
+- Included in v0.9.0; the packaged icon uses the refined camera shape.
 
 ## Language refresh button — 2026-10-28
 
 - Added a refresh control immediately before the app-language selector in Settings. It reloads the saved language preference, reapplies localized UI/tray labels, and shows a localized confirmation; its tooltip and confirmation are translated for Japanese, English, Simplified Chinese, and Traditional Chinese.
 - `cargo build --release`, `cargo fmt --check`, `git diff --check`, and `scripts/verify_macos_bundle.sh output/ui-language-refresh-20261028/MacShot.app` passed. Launched the dedicated local preview and confirmed the button is next to the language picker and pressing it updates the visible status message.
-- Local preview only; `/Applications/MacShot.app` was not replaced and no release or remote change was made.
+- Included in v0.9.0; `/Applications/MacShot.app` was not replaced.
 
 ## GitHub Release v0.8.1 — 2026-10-28
 
