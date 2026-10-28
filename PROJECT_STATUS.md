@@ -1,5 +1,11 @@
 # Project Status
 
+## Recording list improvements — 2026-10-28 (working tree)
+
+- The recording list now loads GIF/MP4/MOV durations in the background and shows each duration beside the format and file size. New recordings use Japanese date/time/sequence filenames; existing legacy recording names are presented in a readable date/time form.
+- Clicking a supported recording or pressing `再生` opens a separate playback window. `外部で開く` remains available; `編集` opens a rename dialog that preserves the original extension. The former inline preview below the list was removed.
+- Updated the Japanese and English usage guides. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, and `scripts/verify_macos_bundle.sh output/review-recordings-20261028/MacShot.app` pass. The isolated macOS preview lists 21 recordings with durations, visible `外部で開く` / `再生` / `編集` actions, and opens an MP4 in its separate player viewport. The rename dialog was opened and canceled without changing a file. One existing MP4 shows `時間不明` because its metadata could not be read. Tests were not run; Windows runtime/UI remains unverified. No release or remote repository action was performed.
+
 ## GitHub Release v0.9.0 — 2026-10-28
 
 - Published https://github.com/zhuchuanhui/MacShot/releases/tag/v0.9.0 from commit `4155c1dd53f80e0f0844fa110029795faa33470a` (`feat: add language refresh and refine tray icon`). This feature release follows v0.8.1 and includes the language-display refresh control and refined menu-bar camera icon.

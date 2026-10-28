@@ -1,4 +1,4 @@
-# MacShot 0.9.0
+# MacShot 0.10.0
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v0.9.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-macos-arm64.zip)
-- Windows x64: [MacShot-v0.9.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.9.0)
+- macOS Apple Silicon (arm64): [MacShot-v0.10.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.10.0/MacShot-v0.10.0-macos-arm64.zip)
+- Windows x64: [MacShot-v0.10.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.10.0/MacShot-v0.10.0-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.10.0)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app is ad hoc signed and not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. macOS 14 or later on Apple Silicon is supported.
 
@@ -30,7 +30,7 @@ On Windows, unzip the package and run `MacShot.exe`. Required Windows runtime DL
 
 ### Screen recording
 
-Choose GIF or MP4 (H.264), resolution, and quality in Settings. Press **Record** or the recording shortcut (default: `Option`+`Shift`+`R`). Stop from the menu bar or with the same shortcut. GIF and MP4 video can be previewed in the app; use **Open File** to hear MP4 audio. MP4 records system audio and, when permitted, microphone audio. GIF has no audio.
+Choose GIF or MP4 (H.264), resolution, and quality in Settings. Press **Record** or the recording shortcut (default: `Option`+`Shift`+`R`). Stop from the menu bar or with the same shortcut. The recordings list shows each duration. Click a row or choose **Play** to open GIF/MP4 playback in a separate window. **Edit** changes the recording name, and **Open Externally** opens the file in its default player (including MP4 audio). MP4 records system audio and, when permitted, microphone audio. GIF has no audio.
 
 ### Edit and compare
 

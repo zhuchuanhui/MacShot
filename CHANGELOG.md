@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 — 2026-10-28
+
+- Added recording durations to the recordings list, with duration metadata loaded in the background.
+- Opened GIF/MP4 playback in a separate window and added recording rename actions that preserve file extensions.
+- Gave new recordings Japanese date/time/sequence names and made existing names easier to read in the list.
+
 ## 0.9.0 — 2026-10-28
 
 - Added a Settings control to reload the saved app language and refresh localized UI and menu-bar labels.

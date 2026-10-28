@@ -1,4 +1,4 @@
-# MacShot 0.9.0
+# MacShot 0.10.0
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,9 +6,9 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v0.9.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-macos-arm64.zip)
-- Windows x64：[MacShot-v0.9.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.9.0/MacShot-v0.9.0-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.9.0)
+- macOS Apple Silicon（arm64）：[MacShot-v0.10.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.10.0/MacShot-v0.10.0-macos-arm64.zip)
+- Windows x64：[MacShot-v0.10.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v0.10.0/MacShot-v0.10.0-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v0.10.0)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用仅使用 Ad Hoc 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 
@@ -30,7 +30,7 @@ Windows：解压后运行 `MacShot.exe`。压缩包内含所需的 Windows 运�
 
 ### 屏幕录制
 
-在设置中选择 GIF 或 MP4（H.264）、分辨率和质量。点按“录制”或按录制快捷键（默认：`Option`+`Shift`+`R`）。可从菜单栏或再次按下快捷键停止。GIF 和 MP4 视频可在应用内预览；使用“打开文件”可播放 MP4 音频。MP4 会录制系统声音，并在获得许可时录制麦克风声音。GIF 不含声音。
+在设置中选择 GIF 或 MP4（H.264）、分辨率和质量。点按“录制”或按录制快捷键（默认：`Option`+`Shift`+`R`）。可从菜单栏或再次按下快捷键停止。录屏列表会显示录制时长；点选录屏或按“播放”可在独立窗口播放 GIF／MP4。“编辑”可修改录屏名称，“外部打开”会使用系统播放器（包含 MP4 音频）。MP4 会录制系统声音，并在获得许可时录制麦克风声音。GIF 不含声音。
 
 ### 编辑和比较
 
