@@ -1,5 +1,16 @@
 # Project Status
 
+## Current language and delivery checkpoint — 2026-10-28
+
+- Extended the existing four-language selector across capture/edit, evidence, comparison, settings, region selection, permission guidance, completion notices, and dynamic status/error text. Added translations for previously missed save-location, original-resolution, startup-permission, recording-load, microphone-settings success, and restricted-microphone strings. The selector persists `ja`, `en`, `zh-Hans`, or `zh-Hant`; Japanese is restored as the current preference. Noto Sans SC is bundled for Chinese glyph coverage with its SIL Open Font License notice.
+- Live-checked the exact `output/review-localization/MacShot.app`: capture, evidence, comparison, and settings surfaces switched between English and Simplified Chinese; settings, capture, and startup permission guidance switched to Traditional Chinese. All four selector choices displayed, including both Chinese labels without missing glyphs. English remained selected after quit/relaunch; Traditional Chinese also remained selected after quit/relaunch. Returned the saved preference to Japanese.
+- Opened the native macOS application menu while the app was in English and Traditional Chinese. About, Services, Hide, Hide Others, Show All, and Quit were Japanese in both cases. The app-owned navigation and tray/menu strings use the selected app language.
+- `README.md`, `README.en.md`, and `README.zh-CN.md` contain reciprocal links to the other two language editions. Each edition retains its language-specific instructions and font license attribution.
+- Current source checks passed: `cargo fmt --check`, `cargo check --all-targets`, `cargo test --all-targets` (82 passed), `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, and `git diff --check`. Localization regression coverage includes translated dynamic statuses, an error prefix, empty preview text, and all four setting values.
+- Replaced the idle local preview executable with the optimized arm64 build, applied an ad-hoc signature with the required audio-input entitlement, and passed `scripts/verify_macos_bundle.sh output/review-localization/MacShot.app`. The bundle declares `ja`, `en`, `zh-Hans`, and `zh-Hant`; the exact bundle launched successfully and displayed the expected v0.6.1 path in Settings. This remains a local preview (`com.macshot.app.localization-preview`), not a published artifact.
+- Unverified: screen capture/recording from this preview, because macOS Screen Recording permission is not granted; no permission prompt or setting was changed. The custom menu-bar pop-up itself and runtime fault-injection of error dialogs were not exercised; their locale routing/error translation have source/test coverage. Physical Windows behavior was also not exercised.
+- No commit, push, release, or deployment was made.
+
 ## Current verification summary — 2026-10-27
 
 - Published MacShot v0.6.1 at https://github.com/zhuchuanhui/MacShot/releases/tag/v0.6.1 from commit `de27880`. Calibrated GIF size forecasts against two saved 1512×982 recordings (about 84–85 MB/min); the forecast range now includes those observed sizes. All 75 tests, formatting, Clippy with warnings denied, macOS release build, and Windows x64 GNU release cross-build passed. Downloaded all four release assets; ZIP checksums and archive integrity passed, the extracted Mac app reports v0.6.1 and passes privacy/signature verification, and the Windows package contains the x64 GUI executable, runtime DLLs, and license notices. The Windows v0.6.1 runtime remains unverified. The first Mac ZIP packaging preserved extra AppleDouble files that invalidated the extracted app signature; it was repacked and both GitHub Mac assets were replaced, then the newly downloaded app passed verification. Mac build is signed but not notarized.
@@ -659,3 +670,99 @@ deployment:
 - Changed the first-run settings-card layout default to match the user's current arrangement: Recording, Capture, Shortcuts, and Permissions in half-width cards, followed by a full-width compact Display card. The current saved preference already matches this layout.
 - Added 5% decrement/increment buttons, direct 80/100/120/140% choices, and kept the 5% step slider. All controls apply and save immediately. Existing density and 100% font-size preferences were preserved after verification.
 - `cargo test --all-targets` (75 passed), macOS and Windows x64 GNU `cargo check --all-targets`, optimized macOS build, `cargo fmt --check`, and `git diff --check` passed. The isolated preview bundle was signed and passed privacy/signature verification. Live UI inspection confirmed card order and controls; clicking +5% changed 100% to 105%, and the 100% preset restored it. No commit, push, or release was made.
+
+## v0.6.1 current-state audit and encoder warning cleanup — 2026-10-27
+
+- Confirmed GitHub's current public release is v0.6.1 with macOS arm64 and Windows x64 ZIPs and SHA-256 assets. The checkout is on `main` at `db1a082`, initially clean and synced with `origin/main`.
+- Re-ran `cargo fmt --check`, all 75 tests, Clippy with warnings denied, macOS release build, and Windows x64 GNU `cargo check --all-targets` using Rustup's `rustc`; all passed. The Homebrew Rust compiler cannot find the Windows target standard library, so Windows cross-checks must set `RUSTC` to `rustup which rustc`.
+- The MP4 tests initially logged OpenH264 warnings because its default adaptive quantization and background detection are unsupported in screen-content mode. Explicitly disabled both options in the production encoder and MP4 test encoders; this matches the encoder's previous effective behavior. Re-running all 75 tests passed with no OpenH264 warnings.
+- Current Mac recording `/Users/d/Pictures/MacShot/recording-20261027-210533-545-001.mp4` has H.264 video at 738×480 and stereo 48 kHz AAC, duration 510.93 seconds, size 7,108,264 bytes. Decoded audio is non-silent (−41.6 dBFS mean, −6.6 dBFS peak); this mixed track alone cannot attribute sound to microphone versus system audio.
+- Sampled video luminance every 30 seconds; frames are not black (YAVG about 192–217). A name-only CUA lookup had launched the old v0.4.7 QA bundle, whose permission status was not allowed; this was mistakenly attributed to v0.6.1. Rebound by the exact bundle path and confirmed the current v0.6.1 app at `/Users/d/github/MacShot/output/release/MacShot-v0.6.1-macos-arm64/MacShot.app` reports both screen/system-audio and microphone permission as allowed. System Settings still shows three `MacShot.app` rows (two on, one off); the stale v0.4.7 QA app was then exited, and only v0.6.1 remains running. No permission toggle was changed.
+- On the exact v0.6.1 app, refreshed permissions again and confirmed screen/system audio and microphone are Allowed. A full-display PNG saved at `/Users/d/Pictures/MacShot/evidence-20261027-214636-073-001.png` (3024×1964); a selected Calculator window PNG saved at `/Users/d/Pictures/MacShot/evidence-20261027-214729-518-002.png` (460×816). Restored the capture target to `Display #41039` and confirmed the persisted value `capture_target=display:0`.
+- Reopened the latest range overlay; the instruction was visible and Escape returned to Capture. CUA's `drag` moved the pointer but did not start a selection, so no range image was produced. This is a computer-use input limitation; a human drag is still required for end-to-end proof. Windows physical v0.6.1 runtime remains deferred. No commit, push, or release was made.
+- After the user turned the previously disabled MacShot permission entry on and restarted, refreshed permission status in the exact v0.6.1 app: screen/system-audio and microphone both report Allowed. No permission changes were made by this verification. A CUA-injected Option+Shift+S while Calculator was frontmost did not create a new image; because CUA global-hotkey injection is not reliable here, that result does not establish a physical keyboard shortcut failure.
+
+## macOS live media and comparison recheck — 2026-10-27
+
+- On the exact v0.6.1 release app, reloaded the saved MP4 and verified the list metadata (H.264, AAC track, 510.45 seconds, 6.8 MB), then started and paused in-app playback. Loaded a 57-frame, 11.23-second GIF and verified its in-app play/pause controls.
+- Loaded two different-size saved screenshots in the comparison view. Visually confirmed side-by-side, overlay, and difference presentations; the difference view reported 5,938,182 changed pixels. No source images or comparison files were modified.
+- Re-ran `cargo test --all-targets` (75 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, and Windows x64 GNU `cargo check --all-targets` with Rustup's compiler; all passed.
+- The latest macOS live check still does not prove physical range drag through saved pixels in the exact v0.6.1 package. CUA drag cannot initiate the range selection. Windows device runtime remains deferred by the user. No commit, push, release, privacy-setting change, or edit to user evidence was made.
+
+## Completion notice overlap improvement — 2026-10-27
+
+- During live comparison review, the persistent capture-complete window covered part of the comparison image and controls. Scoped both capture and recording completion windows to the Capture page; the status bar and evidence list remain available on other pages. This is a source/build-verified UI improvement; the running signed v0.6.1 bundle was not replaced for visual retest.
+- After the change, `cargo test --all-targets` (75 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, Windows x64 GNU `cargo check --all-targets` with Rustup's compiler, and `git diff --check` pass. No commit, push, or release was made.
+
+## Completion notice page scope and regression coverage — 2026-10-27
+
+- Kept capture and recording completion windows on the Capture page so they do not cover evidence-list, comparison, or settings content. Added a focused page-visibility regression test for all four tabs.
+- `cargo test --all-targets` (76 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, Windows x64 GNU `cargo check --all-targets` with Rustup's compiler, and `git diff --check` pass. The running signed v0.6.1 bundle was not replaced, so this UI adjustment has source/build/test evidence but not a live packaged-app retest. No commit, push, or release was made.
+
+## Current-source macOS package retest — 2026-10-27
+
+- Replaced the executable in the local v0.6.1 app bundle with the current release build, re-signed it using the existing Apple Development identity, and passed the bundle privacy/signature verifier plus deep/strict signature verification. Launched this exact bundle as the only running MacShot process.
+- Captured a full display, then confirmed on Capture that the completion window appeared. Switched to Evidence, Compare, and Settings; the completion window was absent on each page. Returning to Capture restored the completion notice. The permission UI still reports screen/system audio and microphone as Allowed; capture target remains Display #41039.
+- User physically tested range selection and confirmed it is working. The resulting image `/Users/d/Pictures/MacShot/evidence-20261027-220701-811-002.png` is 578×342 px; visual inspection shows a saved Finder crop. This provides post-padding-fix drag-to-file evidence on the current local app.
+- The macOS standard screenshot launcher action returned success in MacShot. CUA could not attach to `com.apple.screenshot.launcher` (timeout), so the native panel itself was not visually inspected.
+- The local app bundle now contains the current uncommitted source build for review; the published v0.6.1 ZIP and GitHub release were not changed. `cargo test --all-targets` (76 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, optimized macOS build, Windows x64 GNU cross-check, `git diff --check`, and bundle signature/privacy verification passed. Windows device runtime remains deferred by the user. No commit, push, or release was made.
+
+## macOS standard capture launcher follow-up — 2026-10-27
+
+- Reopened the macOS standard Screenshot panel from MacShot and attached to `screencaptureui.app`. Its accessibility tree exposed controls for full-display, selected-window, and selected-area screenshots and recordings, plus Options and Take. This verifies the launcher opens the native capture UI and exposes its capture modes; native screenshot/record creation from that panel was not performed.
+- Closed the panel; no new Desktop screenshot was created. MacShot remains the only running MacShot process on Capture. `git diff --check` passes. Windows device runtime remains deferred, and the remote v0.6.1 release assets remain unchanged.
+
+## MP4 audio artifact recheck — 2026-10-27
+
+- Re-probed the latest saved Mac MP4: H.264 video 738×480, AAC stereo at 48 kHz, 510.933 s, 7,108,264 bytes; decoded audio remains non-silent (mean −41.6 dB, peak −6.6 dB). This confirms a playable mixed audio track, not microphone attribution.
+- No newer MP4 has appeared in the save folder since the controlled microphone-in-MP4 check was requested. A completed recording with the Mac's system audio silent and a spoken mic sample is still needed to prove the microphone contributes to MP4. Windows device runtime remains deferred by the user.
+
+## Controlled microphone MP4 retest — 2026-10-27
+
+- The user made a 9.664-second screen recording while speaking the requested microphone test phrase with system audio muted, then stopped and saved it from the menu bar. The new file is `/Users/d/Pictures/MacShot/recording-20261027-221912-529-001.mp4`.
+- `ffprobe` confirms H.264 video at 3024×1964 and stereo 48 kHz AAC. Decoded audio is non-silent (mean −38.5 dB, peak −18.2 dB), compared with −91 dBFS on the prior silent microphone-path recording. This verifies non-silent audio in the controlled microphone-only recording; the phrase itself was not transcribed.
+- Windows device runtime remains deferred by the user. No commit, push, release, or permission-setting change was made.
+
+## macOS native screenshot panel and final source checks — 2026-10-27
+
+- Opened the macOS screenshot toolbar from MacShot. The system UI was visually confirmed with buttons for full-display, selected-window, and selected-area screenshots and recordings. The Options menu exposed save destinations, 0/5/10-second timers, floating thumbnail, remember-last-selection, SDR/HDR, and pointer visibility.
+- Invoked the native toolbar's full-display capture action and verified a new 3024×1964 screenshot was created in `/Users/d/Pictures/MacShot`. The image showed MacShot plus unrelated open windows, so the test capture and four computer-use observation snapshots were moved to Trash after verification; no existing evidence was changed. The current macOS screenshot save location reads `~/Pictures/MacShot`.
+- Started and stopped a full-display recording from the native toolbar. The resulting MOV is 105.936 seconds, H.264 at 3024×1964 with an AAC audio track; decoding the first video frame succeeded. Its audio source was not isolated. The recording showed the desktop, so it was moved to Trash after checking metadata; the current MacShot window was restored afterward.
+- The Other Location folder picker opened, but the computer-use connection could not reliably activate its Select button.
+- Re-ran `cargo test --all-targets` (76 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `git diff --check`; all passed.
+- Found and gracefully exited an idle stale v0.4.7 review process. Exactly one MacShot process remains, from the v0.6.1 release bundle. Windows device runtime remains deferred. No commit, push, release, or permission-setting change was made.
+
+## Current-source feature audit continuation — 2026-10-27
+
+- Re-ran `cargo test --all-targets` (76 passed), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, Windows x64 GNU `cargo check --all-targets`, and `scripts/verify_macos_bundle.sh`; all passed. The v0.6.1 Windows ZIP passes archive integrity and its SHA-256 sidecar check, and contains `MacShot.exe`, `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libwinpthread-1.dll`, README, and license notices. Windows physical runtime remains deferred.
+- On the exact current-source MacShot bundle, confirmed the latest 9.51-second MP4 entry, AAC-track label, and in-app video play/pause behavior. Current Settings displays MP4/H.264, original resolution, 10 Mbps, 60 fps, an estimated 78 MB/minute, permissions Allowed, and the running bundle path; settings were not changed.
+- Loaded two disposable generated PNG fixtures into Image Compare and visually verified side-by-side, overlay, and difference modes. The synthetic 96×64 pair reports 676 changed pixels. Cancelled the unrelated user-image picker without selecting user files; temporary fixtures were removed afterward.
+- The latest user-recorded mic-only MP4 was independently inspected in the app list and by `ffprobe`/`ffmpeg`: H.264 video, stereo AAC at 48 kHz, 9.105-second video, 9.664-second audio, non-silent audio (−38.5 dB mean, −18.2 dB peak). User reports speaking the mic test with system audio muted. Audio contains the mic test signal; speech was not transcribed.
+- Returned MacShot to the Capture page and left its saved capture/recording settings unchanged. No commit, push, release, permission-setting change, or modification to the user's saved evidence was made.
+
+## macOS image editing interaction audit — 2026-10-27
+
+- Used disposable synthetic 640×400 PNGs in the MacShot save folder. The Capture page loaded the chosen image into its editor and showed the correct queue position. The crop tool's documented two-click selection visibly drew a selection and saved a 569×325 PNG.
+- Two-click red rectangle and arrow annotations rendered visibly and saved as PNGs. Pixel comparison confirmed 708 changed pixels for the rectangle and 1,017 changed pixels after adding the arrow; both kept the original 640×400 dimensions. A rapid CUA drag did not produce a visible annotation, so drag-specific annotation input remains unverified through this automation path; the supported click-start/click-end flow passed.
+- Removed all six disposable test images and outputs after inspection. Existing evidence and saved settings were not changed.
+
+## macOS multi-image edit queue audit — 2026-10-27
+
+- Used two disposable 800×500 PNGs to exercise the Evidence list's edit queue. The first image received a red rectangle and “保存して次へ” saved it and advanced from `1 / 46` to `2 / 46`. The second image received a crop and the same action saved it and advanced to `3 / 46`.
+- The annotated PNG stayed 800×500 and differed from its source by 940 pixels. The cropped PNG is 366×319. Both saves used new files and kept the source images intact.
+- Removed all four temporary input/output images, relaunched the exact v0.6.1 app, and confirmed it returned to the ready Capture screen. Settings and existing evidence were unchanged.
+
+## macOS recording estimate and preference persistence audit — 2026-10-27
+
+- In the exact v0.6.1 Settings UI, GIF at original 3024×1964, 70% color quality, and 10 fps estimated 216–864 MB/minute. Changing to 480p reduced it to 13–52 MB/minute; changing to 5 fps reduced it further to 6–26 MB/minute. Raising color quality to 100% at the original resolution/10 fps changed the estimate to 223–891 MB/minute. The UI reflected each change immediately.
+- Restored GIF to 70%/10 fps, resolution to original, and format to MP4. After quitting and relaunching the exact app, Settings still showed MP4/H.264, original resolution (3024×1964), 10 Mbps, 60 fps, and about 78 MB/minute. No recording test or capture file was created in this check.
+
+## macOS standard screenshot panel auto-import — 2026-10-27
+
+- Added a saved Settings checkbox, on by default, that watches for supported images and recordings after opening the macOS standard screenshot panel from MacShot. It checks Desktop, Documents, Downloads, Pictures, Movies, and the configured MacShot folder; completed files outside the configured folder are copied there without overwriting existing files. In-progress files are deferred until their size stabilizes.
+- Native .mov recordings now appear in the recordings list and can be opened in the system player. GIF and MP4 in-app preview behavior is unchanged.
+- cargo fmt --check, 80 tests, cargo clippy --all-targets -- -D warnings, Windows x64 GNU cargo check with warnings denied, optimized macOS build, and git diff --check passed. Tests cover the persisted switch, supported file scan, delayed import until file size stabilizes, duplicate-name preservation, and MOV listing.
+- Prepared a separate signed preview app at output/review-native-import/MacShot.app, verified its privacy descriptions and deep/strict signature, and confirmed its arm64 executable UUID matches the current optimized build. Replaced the idle v0.6.1 process with this single preview process; its live Settings page reports screen/system-audio and microphone as Allowed, and the native-import checkbox remains on after restart.
+- Opened the standard-panel action from MacShot and confirmed its success status. While the monitor was active, a disposable synthetic PNG in Pictures/MacShot appeared automatically in Evidence; a second disposable PNG created on Desktop was copied to the configured save folder byte-for-byte and appeared in Evidence. Removed all three temporary files and relaunched the preview to stop the watch session.
+- Follow-up runtime check captured the full-screen MacShot window through macOS's actual standard screenshot panel. The resulting 3024×1964 PNG appeared with its native Japanese filename in Evidence and the app reported one item imported. Deleted that test capture and refreshed the Evidence list; the count returned from 45 to 44. The native toolbar's MOV start/stop interaction did not produce a recording, so native MOV auto-import remains unverified.
+- The Windows x64 GNU cross-check passed with warnings denied using the rustup-managed compiler and target library. No commit, push, release, or permission-setting change was made.

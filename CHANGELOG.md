@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — 2026-10-28
+
+- Added a persistent Japanese, English, Simplified Chinese, and Traditional Chinese language selector across the app.
+- Expanded localization across capture, editing, evidence, comparison, settings, permissions, and status/error messages.
+- Bundled Noto Sans SC and its SIL Open Font License notice for Chinese glyph coverage.
+- Added English and Simplified Chinese README editions with reciprocal language links.
+
 ## 0.6.1 — 2026-10-27
 
 - Calibrate the GIF size estimate against saved MacShot recordings so its range better reflects real screen-capture files.

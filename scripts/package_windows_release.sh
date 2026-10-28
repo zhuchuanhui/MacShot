@@ -85,6 +85,9 @@ cp "$repo_root/docs/windows/THIRD-PARTY-NOTICES.txt" "$package_dir/THIRD-PARTY-N
 cp "$repo_root/docs/windows/COPYING.RUNTIME" "$package_dir/COPYING.RUNTIME"
 cp "$repo_root/docs/windows/COPYING3" "$package_dir/COPYING3"
 cp "$repo_root/docs/windows/WINPTHREADS-COPYING" "$package_dir/WINPTHREADS-COPYING"
+mkdir "$package_dir/FONT-LICENSES"
+cp "$repo_root/assets/OFL-NotoSansJP.txt" "$package_dir/FONT-LICENSES/"
+cp "$repo_root/assets/OFL-NotoSansSC.txt" "$package_dir/FONT-LICENSES/"
 
 pending=("$package_dir/MacShot.exe")
 while [[ ${#pending[@]} -gt 0 ]]; do

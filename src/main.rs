@@ -36,6 +36,8 @@ use screencapturekit::{
     shareable_content::{SCShareableContent, SCShareableContentInfo, SCWindow},
     stream::{configuration::SCStreamConfiguration, content_filter::SCContentFilter},
 };
+#[cfg(target_os = "macos")]
+use std::collections::{HashMap, HashSet};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -214,6 +216,7 @@ fn restore_main_window(ctx: &egui::Context) {
 }
 
 struct MacShot {
+    language: AppLanguage,
     monitors: Vec<Monitor>,
     windows: Vec<WindowChoice>,
     capture_target: CaptureTarget,
@@ -239,6 +242,9 @@ struct MacShot {
     #[cfg(target_os = "windows")]
     region_background_texture: Option<egui::TextureHandle>,
     save_folder: Option<PathBuf>,
+    auto_import_native_captures: bool,
+    #[cfg(target_os = "macos")]
+    native_capture_watch: Option<NativeCaptureWatch>,
     evidence_files: Vec<PathBuf>,
     recording_files: Vec<PathBuf>,
     recording_preview_path: Option<PathBuf>,
@@ -399,6 +405,1768 @@ enum Page {
     Evidence,
     Compare,
     Settings,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum AppLanguage {
+    #[default]
+    Japanese,
+    English,
+    SimplifiedChinese,
+    TraditionalChinese,
+}
+
+impl AppLanguage {
+    fn text(self, japanese: &str) -> String {
+        if self == Self::Japanese {
+            return japanese.to_owned();
+        }
+
+        let translated = match japanese {
+            "撮影・編集" => ["Capture & Edit", "截图与编辑", "螢幕截圖與編輯"],
+            "証跡一覧" => ["Evidence", "证据列表", "證據清單"],
+            "画像比較" => ["Compare", "图像比较", "圖片比較"],
+            "設定" => ["Settings", "设置", "設定"],
+            "録画を終了" => ["Stop Recording", "停止录制", "停止錄製"],
+            "録画" => ["Record", "录制", "錄製"],
+            "■  録画を終了" => ["■  Stop Recording", "■  停止录制", "■  停止錄製"],
+            "●  録画" => ["●  Record", "●  录制", "●  錄製"],
+            "撮影中…" => ["Capturing…", "正在截图…", "正在截圖…"],
+            "撮影してプレビュー" => ["Capture & Preview", "截图并预览", "截圖並預覽"],
+            "撮影対象" => ["Capture Target", "截图目标", "截圖目標"],
+            "アクティブウィンドウ" => ["Active Window", "活动窗口", "作用中視窗"],
+            "メインディスプレイ" => ["Main Display", "主显示器", "主要顯示器"],
+            "すべてのディスプレイ" => ["All Displays", "所有显示器", "所有顯示器"],
+            "Display" => ["Display", "显示器", "顯示器"],
+            "Full Display" => ["Full Display", "整个显示器", "整個顯示器"],
+            "Window" => ["Window", "窗口", "視窗"],
+            "ウィンドウを選択" => ["Select a Window", "选择窗口", "選取視窗"],
+            "デスクトップ（メイン画面）" => [
+                "Desktop (Main Display)",
+                "桌面（主显示器）",
+                "桌面（主要顯示器）",
+            ],
+            "全画面（全ディスプレイ）" => ["All Displays", "所有显示器", "所有顯示器"],
+            "範囲を選択" => ["Select Region", "选择区域", "選取區域"],
+            "↻  ウィンドウ一覧を更新" => [
+                "↻  Refresh Window List",
+                "↻  刷新窗口列表",
+                "↻  重新整理視窗清單",
+            ],
+            "追加の操作" => ["More Actions", "更多操作", "更多操作"],
+            "連続撮影を終了" => ["Stop Continuous Capture", "停止连续截图", "停止連續截圖"],
+            "連続撮影を開始" => ["Start Continuous Capture", "开始连续截图", "開始連續截圖"],
+            "macOS標準の撮影・録画…" => [
+                "Open macOS Screenshot…",
+                "打开 macOS 截图…",
+                "開啟 macOS 螢幕截圖…",
+            ],
+            "撮影" => ["Capture", "截图", "截圖"],
+            "保存先を変更" => ["Change Save Location", "更改保存位置", "變更儲存位置"],
+            "画面撮影・録画には画面収録の許可が必要です。" => [
+                "Screen Recording permission is required to capture or record the screen.",
+                "截屏或录屏需要屏幕录制权限。",
+                "擷取或錄製螢幕需要螢幕錄製權限。",
+            ],
+            "権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。" => {
+                [
+                    "Check permission in Settings. If capture is still denied, add MacShot.app again and restart it.",
+                    "请在设置中查看权限。如果仍无法截图，请重新添加 MacShot.app 并重启。",
+                    "請在設定中查看權限。如果仍無法截圖，請重新加入 MacShot.app 並重新啟動。",
+                ]
+            }
+            "画面収録設定を開く" => [
+                "Open Screen Recording Settings",
+                "打开屏幕录制设置",
+                "開啟螢幕錄製設定",
+            ],
+            "FinderでMacShotを表示" => [
+                "Show MacShot in Finder",
+                "在 Finder 中显示 MacShot",
+                "在 Finder 中顯示 MacShot",
+            ],
+            "権限状態を更新" => [
+                "Refresh Permission Status",
+                "刷新权限状态",
+                "重新整理權限狀態",
+            ],
+            "▦  撮影済みを開く" => {
+                ["▦  Open Captures", "▦  打开已截取项目", "▦  開啟已擷取項目"]
+            }
+            "‹ 前へ" => ["‹ Previous", "‹ 上一张", "‹ 上一張"],
+            "次へ ›" => ["Next ›", "下一张 ›", "下一張 ›"],
+            "保存して次へ" => ["Save & Next", "保存并继续", "儲存並繼續"],
+            "編集ツール" => ["Editing Tools", "编辑工具", "編輯工具"],
+            "⌗  切り出し" => ["⌗  Crop", "⌗  裁剪", "⌗  裁切"],
+            "□  赤枠" => ["□  Red Box", "□  红框", "□  紅框"],
+            "↗  矢印" => ["↗  Arrow", "↗  箭头", "↗  箭頭"],
+            "注釈を消去" => ["Clear Annotations", "清除标注", "清除註記"],
+            "注釈画像を保存" => ["Save Annotated Image", "保存标注图片", "儲存註記圖片"],
+            "選択解除" => ["Clear Selection", "清除选区", "清除選取範圍"],
+            "範囲を保存" => ["Save Crop", "保存裁剪区域", "儲存裁切範圍"],
+            "撮影した画面は、ここで切り出しや注釈を追加できます。" => [
+                "Crop captures and add annotations here.",
+                "在这里裁剪截图并添加标注。",
+                "在這裡裁切截圖並新增註記。",
+            ],
+            "ショートカット" => ["Shortcut", "快捷键", "快速鍵"],
+            "2枚の画面を並べて、変更点を確認します。" => [
+                "Place two images side by side to review changes.",
+                "并排查看两张图像以确认更改。",
+                "並排檢視兩張圖片以確認變更。",
+            ],
+            "差分ピクセル" => ["Changed Pixels", "差异像素", "差異像素"],
+            "＋  基準画像" => ["＋  Reference Image", "＋  基准图像", "＋  參考圖片"],
+            "＋  比較画像" => ["＋  Comparison Image", "＋  比较图像", "＋  比較圖片"],
+            "画像を選択してください" => ["Select an image", "请选择图像", "請選取圖片"],
+            "比較する2枚の画像を選んでください" => [
+                "Choose two images to compare",
+                "请选择两张要比较的图像",
+                "請選取兩張要比較的圖片",
+            ],
+            "録画は一覧からプレビュー、画像は編集して保存できます。" => {
+                [
+                    "Preview recordings or edit and save images from this list.",
+                    "可在列表中预览录屏，或编辑并保存图像。",
+                    "可在清單中預覽錄影，或編輯並儲存圖片。",
+                ]
+            }
+            "▣  保存先を開く" => [
+                "▣  Open Save Location",
+                "▣  打开保存位置",
+                "▣  開啟儲存位置",
+            ],
+            "↻  更新" => ["↻  Refresh", "↻  刷新", "↻  重新整理"],
+            "録画一覧" => ["Recordings", "录屏列表", "錄影清單"],
+            "GIF・MP4はアプリ内でプレビューできます。MOVは「外部で開く」から再生できます。" => {
+                [
+                    "Preview GIF and MP4 in the app. Open MOV files externally.",
+                    "可在应用内预览 GIF 和 MP4。MOV 文件可通过“外部打开”播放。",
+                    "可在 App 內預覽 GIF 和 MP4。MOV 檔案可透過「以外部程式開啟」播放。",
+                ]
+            }
+            "録画が見つかりません。保存先を確認するか「更新」を押してください。" => {
+                [
+                    "No recordings found. Check the save location or select Refresh.",
+                    "未找到录屏。请检查保存位置或点按“刷新”。",
+                    "找不到錄影。請檢查儲存位置或點按「重新整理」。",
+                ]
+            }
+            "MOV形式は「外部で開く」から再生できます。" => [
+                "MOV files can be played with Open Externally.",
+                "MOV 文件可通过“外部打开”播放。",
+                "MOV 檔案可透過「以外部程式開啟」播放。",
+            ],
+            "録画情報を読み込めません" => [
+                "Unable to read recording information",
+                "无法读取录屏信息",
+                "無法讀取錄影資訊",
+            ],
+            "外部で開く" => ["Open Externally", "外部打开", "以外部程式開啟"],
+            "⏸ 一時停止" => ["⏸ Pause", "⏸ 暂停", "⏸ 暫停"],
+            "▶ アプリ内再生" => ["▶ Play in App", "▶ 在应用内播放", "▶ 在 App 內播放"],
+            "まだ画像がありません" => ["No images yet", "尚无图像", "尚無圖片"],
+            "撮影した画像はここに並びます。保存先を変更した場合は設定を確認してください。" => {
+                [
+                    "Captured images appear here. Check Settings if you changed the save location.",
+                    "截图会显示在这里。如果更改了保存位置，请检查设置。",
+                    "截圖會顯示在這裡。如果變更了儲存位置，請檢查設定。",
+                ]
+            }
+            "画像を編集" => ["Edit Image", "编辑图像", "編輯圖片"],
+            "アプリの言語" => ["App language", "应用语言", "應用程式語言"],
+            "MacShotを自分の撮影手順に合わせます。" => [
+                "Configure MacShot for your capture workflow.",
+                "根据你的截图流程配置 MacShot。",
+                "依照你的擷取流程設定 MacShot。",
+            ],
+            "MacShot 範囲選択" => [
+                "MacShot Region Selection",
+                "MacShot 区域选择",
+                "MacShot 區域選取",
+            ],
+            "画面全体またはウィンドウを撮影すると、ここにプレビューが表示されます。\n画像をドラッグして必要な範囲を切り出せます。" => {
+                [
+                    "Capture the full screen or a window to preview it here.\nDrag on the image to select a crop area.",
+                    "截取整个屏幕或窗口后，预览会显示在这里。\n拖动图像即可选择裁剪区域。",
+                    "擷取整個螢幕或視窗後，預覽會顯示於此。\n拖曳圖片即可選取裁切範圍。",
+                ]
+            }
+            "↻  権限状態を更新" => [
+                "↻  Refresh Permission Status",
+                "↻  刷新权限状态",
+                "↻  重新整理權限狀態",
+            ],
+            "macOS標準の撮影・録画を開く" => [
+                "Open macOS Screenshot",
+                "打开 macOS 截图",
+                "開啟 macOS 螢幕截圖",
+            ],
+            "▣  保存先を変更" => [
+                "▣  Change Save Location",
+                "▣  更改保存位置",
+                "▣  變更儲存位置",
+            ],
+            "起動中のMacShot" => ["Running MacShot", "正在运行的 MacShot", "執行中的 MacShot"],
+            "元の画面サイズ" => ["Original Screen Size", "原始屏幕尺寸", "原始螢幕大小"],
+            "画面収録の許可を設定してください。撮影画面の案内から要求できます。" => {
+                [
+                    "Set up Screen Recording permission from the capture screen guidance.",
+                    "请根据截图页面的提示设置屏幕录制权限。",
+                    "請依照截圖頁面的提示設定螢幕錄製權限。",
+                ]
+            }
+            "録画を再生できませんでした。" => [
+                "Could not play recording.",
+                "无法播放录屏。",
+                "無法播放錄影。",
+            ],
+            "録画の再生を開始できませんでした。" => [
+                "Could not start recording playback.",
+                "无法开始播放录屏。",
+                "無法開始播放錄影。",
+            ],
+            "録画の再生が終わりました。もう一度再生できます。" => [
+                "Recording playback ended. You can play it again.",
+                "录屏播放已结束。你可以再次播放。",
+                "錄影播放已結束。你可以再次播放。",
+            ],
+            "録画時間 00:00" => ["Recording time 00:00", "录制时间 00:00", "錄製時間 00:00"],
+            "● REC 準備中" => ["● REC Preparing", "● REC 准备中", "● REC 準備中"],
+            "キャンセル" => ["Cancel", "取消", "取消"],
+            "保存して固定" => ["Save & Lock Layout", "保存并固定", "儲存並固定"],
+            "カード配置を調整" => ["Arrange Cards", "调整卡片布局", "調整卡片配置"],
+            "撮影設定を保存" => ["Save Capture Settings", "保存截图设置", "儲存截圖設定"],
+            "カード配置" => ["Card Layout", "卡片布局", "卡片配置"],
+            "上へ" => ["Move Up", "上移", "上移"],
+            "下へ" => ["Move Down", "下移", "下移"],
+            "録画設定" => ["Recording Settings", "录制设置", "錄製設定"],
+            "保存形式" => ["Format", "格式", "格式"],
+            "録画解像度" => ["Recording Resolution", "录制分辨率", "錄製解析度"],
+            "選んだ高さを上限にして縮小します。元の画面より大きくはしません。" => {
+                [
+                    "The selected height is a maximum; output will not exceed the source display size.",
+                    "所选高度为上限，输出不会大于原始屏幕。",
+                    "所選高度為上限，輸出不會大於原始螢幕。",
+                ]
+            }
+            "GIFの画質" => ["GIF Quality", "GIF 画质", "GIF 畫質"],
+            "色の再現を上げるほど、変換に時間がかかることがあります。" => {
+                [
+                    "Higher color fidelity can increase conversion time.",
+                    "色彩还原度越高，转换时间可能越长。",
+                    "色彩還原度越高，轉換時間可能越長。",
+                ]
+            }
+            "色の再現" => ["Color Fidelity", "色彩还原", "色彩還原"],
+            "なめらかさ" => ["Frame Rate", "帧率", "影格率"],
+            "GIFは音声なしです。" => [
+                "GIF recordings do not include audio.",
+                "GIF 录制不包含音频。",
+                "GIF 錄製不包含音訊。",
+            ],
+            "画質・容量" => ["Quality / Size", "画质 / 容量", "畫質 / 容量"],
+            "システム音声を録音し、マイク許可時はマイク音声も追加します。" => {
+                [
+                    "Records system audio and adds microphone audio when permission is granted.",
+                    "录制系统音频；获得麦克风权限后也会录制麦克风音频。",
+                    "錄製系統音訊；取得麥克風權限後也會錄製麥克風音訊。",
+                ]
+            }
+            "撮影の動作" => ["Capture Behavior", "截图行为", "截圖行為"],
+            "撮影対象や画像に記録する情報を調整できます。設定は次回起動後も引き継がれます。" => {
+                [
+                    "Choose capture targets and information saved in images. Settings persist across launches.",
+                    "可设置截图目标和图像中记录的信息。设置会在下次启动后保留。",
+                    "可設定截圖目標和圖片中記錄的資訊。設定會在下次啟動後保留。",
+                ]
+            }
+            "撮影とファイル名" => ["Capture & Filename", "截图与文件名", "截圖與檔名"],
+            "既定の撮影対象" => ["Default Capture Target", "默认截图目标", "預設截圖目標"],
+            "ファイル名の先頭" => ["Filename Prefix", "文件名前缀", "檔名前綴"],
+            "画像に撮影日時を表示" => [
+                "Add Capture Date and Time to Image",
+                "在图像中显示截图时间",
+                "在圖片中顯示截圖時間",
+            ],
+            "撮影後に完了小窓を表示" => [
+                "Show Completion Notice After Capture",
+                "截图后显示完成提示",
+                "截圖後顯示完成提示",
+            ],
+            "macOS標準パネルの撮影結果を自動で取り込む" => [
+                "Automatically Import Captures from macOS Screenshot",
+                "自动导入 macOS 截图工具的结果",
+                "自動匯入 macOS 螢幕截圖的結果",
+            ],
+            "オンにすると、MacShotから標準パネルを開いた後に保存された画像・録画を探し、保存先へコピーします。対象はデスクトップ、書類、ダウンロード、ピクチャ、ムービーです。" => {
+                [
+                    "After opening the macOS capture panel from MacShot, saved images and recordings are found and copied to the save location. Folders checked: Desktop, Documents, Downloads, Pictures, and Movies.",
+                    "启用后，从 MacShot 打开 macOS 截图工具时，会查找保存的图像和录屏并复制到保存位置。扫描桌面、文稿、下载、图片和影片文件夹。",
+                    "啟用後，從 MacShot 開啟 macOS 螢幕截圖時，會尋找已儲存的圖片和錄影並複製到儲存位置。掃描桌面、文件、下載項目、圖片和影片資料夾。",
+                ]
+            }
+            "注釈" => ["Annotations", "标注", "註記"],
+            "色" => ["Color", "颜色", "顏色"],
+            "線の太さ" => ["Line Width", "线条粗细", "線條粗細"],
+            "保存先" => ["Save Location", "保存位置", "儲存位置"],
+            "権限とデバイス" => ["Permissions & Devices", "权限与设备", "權限與裝置"],
+            "許可済み" => ["Allowed", "已允许", "已允許"],
+            "未許可、またはmacOSへの反映待ち" => [
+                "Not allowed, or waiting for macOS to apply the change",
+                "未允许，或等待 macOS 应用更改",
+                "未允許，或等待 macOS 套用變更",
+            ],
+            "画面収録・システム音声" => [
+                "Screen Recording & System Audio",
+                "屏幕录制与系统音频",
+                "螢幕錄製與系統音訊",
+            ],
+            "マイク" => ["Microphone", "麦克风", "麥克風"],
+            "マイクテスト中…" => {
+                ["Testing Microphone…", "正在测试麦克风…", "正在測試麥克風…"]
+            }
+            "マイク入力をテスト（5秒）" => [
+                "Test Microphone Input (5 sec)",
+                "测试麦克风输入（5 秒）",
+                "測試麥克風輸入（5 秒）",
+            ],
+            "画面収録の一覧にMacShotがない場合は「＋」から追加できます。マイク一覧には追加ボタンがありません。MacShotから許可を要求すると一覧に表示されます。拒否済みで一覧にもない場合は「拒否記録を解除」を使ってください。" => {
+                [
+                    "If MacShot is missing from Screen Recording, add it with +. Microphone has no add button; request permission from MacShot to make it appear. If permission was denied and it is missing, reset the denied permission first.",
+                    "如果屏幕录制列表中没有 MacShot，可点按“+”添加。麦克风列表没有添加按钮；请从 MacShot 请求权限以使其显示。如果权限已拒绝且列表中仍没有，请先重置已拒绝的权限。",
+                    "如果螢幕錄製清單中沒有 MacShot，可點按「+」加入。麥克風清單沒有加入按鈕；請從 MacShot 要求權限，讓它顯示於清單中。如果權限已拒絕且清單中仍沒有，請先重設已拒絕的權限。",
+                ]
+            }
+            "MP4は既定の再生デバイスとマイクを使います。Windowsのマイク設定でデスクトップアプリへのアクセスも確認してください。" => {
+                [
+                    "MP4 uses the default playback device and microphone. Check desktop app access in Windows microphone settings.",
+                    "MP4 使用默认播放设备和麦克风。请在 Windows 麦克风设置中检查桌面应用访问权限。",
+                    "MP4 使用預設播放裝置和麥克風。請在 Windows 麥克風設定中檢查桌面 App 存取權限。",
+                ]
+            }
+            "状態未決定（MP4はシステム音声のみ）" => [
+                "Not determined (MP4 records system audio only)",
+                "尚未确定（MP4 仅录制系统音频）",
+                "尚未決定（MP4 僅錄製系統音訊）",
+            ],
+            "拒否されています（MP4はシステム音声のみ）。マイク設定で許可してください" => {
+                [
+                    "Denied (MP4 records system audio only). Allow access in Microphone Settings.",
+                    "已拒绝（MP4 仅录制系统音频）。请在麦克风设置中允许访问。",
+                    "已拒絕（MP4 僅錄製系統音訊）。請在麥克風設定中允許存取。",
+                ]
+            }
+            "このMacではマイク利用が制限されています" => [
+                "Microphone access is restricted on this Mac",
+                "此 Mac 的麦克风访问受到限制",
+                "此 Mac 的麥克風存取受到限制",
+            ],
+            "既定のマイクが見つかりません" => [
+                "No default microphone found",
+                "找不到默认麦克风",
+                "找不到預設麥克風",
+            ],
+            "Windowsでは個別の画面収録許可は不要です" => [
+                "Windows does not require separate screen recording permission",
+                "Windows 无需单独授予屏幕录制权限",
+                "Windows 不需要個別授予螢幕錄製權限",
+            ],
+            "Windowsでは個別の画面収録許可は不要です。" => [
+                "Windows does not require separate screen recording permission.",
+                "Windows 无需单独授予屏幕录制权限。",
+                "Windows 不需要個別授予螢幕錄製權限。",
+            ],
+            "このOSでは状態を確認できません" => [
+                "Status is unavailable on this OS",
+                "无法在此操作系统上查看状态",
+                "無法在此作業系統上查看狀態",
+            ],
+            "macOSに許可を確認" => [
+                "Request Permission from macOS",
+                "向 macOS 请求权限",
+                "向 macOS 要求權限",
+            ],
+            "設定でMacShotを許可" => [
+                "Allow MacShot in Settings",
+                "在设置中允许 MacShot",
+                "在設定中允許 MacShot",
+            ],
+            "マイク設定を開く" => [
+                "Open Microphone Settings",
+                "打开麦克风设置",
+                "開啟麥克風設定",
+            ],
+            "マイク設定を開きました。変更後に「権限状態を更新」を押してください。" => {
+                [
+                    "Opened Microphone Settings. Refresh the permission status after making changes.",
+                    "已打开麦克风设置。更改后请刷新权限状态。",
+                    "已開啟麥克風設定。變更後請重新整理權限狀態。",
+                ]
+            }
+            "このMacではマイク利用が制限されています。管理者に確認してください。" => {
+                [
+                    "Microphone use is restricted on this Mac. Check with your administrator.",
+                    "此 Mac 的麦克风使用受到限制。请联系管理员。",
+                    "此 Mac 的麥克風使用受到限制。請洽詢管理者。",
+                ]
+            }
+            "画面・音声の設定を開く" => [
+                "Open Screen & Audio Settings",
+                "打开屏幕与音频设置",
+                "開啟螢幕與音訊設定",
+            ],
+            "拒否記録を解除" => [
+                "Reset Denied Permission",
+                "重置已拒绝的权限",
+                "重設已拒絕的權限",
+            ],
+            "マイクの拒否記録を解除" => [
+                "Reset Denied Microphone Permission",
+                "重置已拒绝的麦克风权限",
+                "重設已拒絕的麥克風權限",
+            ],
+            "MacShotだけのマイク拒否記録を解除して、macOSに許可を確認します。解除してもマイクは許可されません。確認画面が表示された場合は、そこで許可を選んでください。" => {
+                [
+                    "This resets only MacShot's denied microphone record and asks macOS for permission again. Resetting does not grant permission. If prompted, choose Allow.",
+                    "此操作仅重置 MacShot 的麦克风拒绝记录并重新向 macOS 请求权限。重置不会直接授予权限；出现提示时请选择允许。",
+                    "此操作僅重設 MacShot 的麥克風拒絕記錄，並重新向 macOS 要求權限。重設不會直接授予權限；出現提示時請選擇允許。",
+                ]
+            }
+            "解除して許可を確認" => [
+                "Reset and Request Permission",
+                "重置并请求权限",
+                "重設並要求權限",
+            ],
+            "5秒間テストします。マイクに向かって話してください。" => [
+                "Test for 5 seconds. Speak into the microphone.",
+                "测试 5 秒钟。请对着麦克风说话。",
+                "測試 5 秒鐘。請對著麥克風說話。",
+            ],
+            "MacShotのウィンドウを表示しました。" => [
+                "MacShot window is now visible.",
+                "已显示 MacShot 窗口。",
+                "已顯示 MacShot 視窗。",
+            ],
+            "macOS標準パネルを開きました。撮影後の画像・録画を保存先へ自動で取り込みます。" => {
+                [
+                    "Opened the macOS capture panel. Captures will be imported to the save location automatically.",
+                    "已打开 macOS 截图面板。截图后会自动导入到保存位置。",
+                    "已開啟 macOS 螢幕截圖面板。截圖後會自動匯入至儲存位置。",
+                ]
+            }
+            "macOS標準の撮影パネルを開きました。撮影・録画の対象とオプションを選べます。" => {
+                [
+                    "Opened the macOS capture panel. Choose a capture target and options.",
+                    "已打开 macOS 截图面板。可选择截图目标和选项。",
+                    "已開啟 macOS 螢幕截圖面板。可選擇截圖目標和選項。",
+                ]
+            }
+            "macOS標準の撮影パネルはmacOSで利用できます。" => [
+                "The macOS capture panel is available on macOS.",
+                "macOS 截图面板仅可在 macOS 上使用。",
+                "macOS 螢幕截圖面板僅可在 macOS 上使用。",
+            ],
+            "画面収録の許可設定はmacOSで利用できます。" => [
+                "Screen Recording settings are available on macOS.",
+                "屏幕录制设置仅可在 macOS 上使用。",
+                "螢幕錄製設定僅可在 macOS 上使用。",
+            ],
+            "マイク設定への移動はこのOSでは利用できません。" => [
+                "Microphone Settings navigation is unavailable on this OS.",
+                "此操作系统不支持打开麦克风设置。",
+                "此作業系統不支援開啟麥克風設定。",
+            ],
+            "マイクは既に許可されています。" => [
+                "Microphone access is already allowed.",
+                "麦克风访问已获允许。",
+                "麥克風存取已獲允許。",
+            ],
+            "マイクが拒否されています。設定でMacShotを許可してください。" => {
+                [
+                    "Microphone access is denied. Allow MacShot in Settings.",
+                    "麦克风访问已被拒绝。请在设置中允许 MacShot。",
+                    "麥克風存取已遭拒絕。請在設定中允許 MacShot。",
+                ]
+            }
+            "Windowsのマイク設定を開きました。デスクトップアプリのアクセスを確認してください。" => {
+                [
+                    "Opened Windows microphone settings. Check desktop app access.",
+                    "已打开 Windows 麦克风设置。请检查桌面应用访问权限。",
+                    "已開啟 Windows 麥克風設定。請檢查桌面 App 存取權限。",
+                ]
+            }
+            "録画を保存しています…" => {
+                ["Saving recording…", "正在保存录屏…", "正在儲存錄影…"]
+            }
+            "録画をアプリ内で再生しています（映像のみ）。" => [
+                "Playing recording in the app (video only).",
+                "正在应用内播放录屏（仅视频）。",
+                "正在 App 內播放錄影（僅視訊）。",
+            ],
+            "録画を一時停止しました。" => [
+                "Recording playback paused.",
+                "录屏播放已暂停。",
+                "錄影播放已暫停。",
+            ],
+            "連続撮影を終了しました。" => [
+                "Continuous capture stopped.",
+                "已停止连续截图。",
+                "已停止連續截圖。",
+            ],
+            "範囲撮影をキャンセルしました。" => [
+                "Region capture cancelled.",
+                "已取消区域截图。",
+                "已取消區域截圖。",
+            ],
+            "範囲選択の準備が時間切れになりました。画面収録の許可と他の撮影アプリを確認して、もう一度お試しください。" => {
+                [
+                    "Region selection timed out. Check Screen Recording permission and other capture apps, then try again.",
+                    "区域选择准备超时。请检查屏幕录制权限和其他截图应用，然后重试。",
+                    "區域選取準備逾時。請檢查螢幕錄製權限和其他截圖 App，然後再試一次。",
+                ]
+            }
+            "言語設定を保存しました。" => [
+                "Language preference saved.",
+                "已保存语言设置。",
+                "已儲存語言設定。",
+            ],
+            "カード配置を保存して固定しました。" => [
+                "Card layout saved and locked.",
+                "已保存并固定卡片布局。",
+                "已儲存並固定卡片配置。",
+            ],
+            "表示設定を保存しました。" => [
+                "Display settings saved.",
+                "已保存显示设置。",
+                "已儲存顯示設定。",
+            ],
+            "録画設定を保存しました。" => [
+                "Recording settings saved.",
+                "已保存录制设置。",
+                "已儲存錄製設定。",
+            ],
+            "撮影設定を保存しました。" => [
+                "Capture settings saved.",
+                "已保存截图设置。",
+                "已儲存截圖設定。",
+            ],
+            "ショートカットを保存しました。" => {
+                ["Shortcuts saved.", "已保存快捷键。", "已儲存快速鍵。"]
+            }
+            "設定を保存できません" => {
+                ["Unable to save settings", "无法保存设置", "無法儲存設定"]
+            }
+            "撮影完了" => ["Capture Complete", "截图完成", "截圖完成"],
+            "●  撮影しました" => ["●  Capture Saved", "●  已保存截图", "●  已儲存截圖"],
+            "録画を保存しました" => ["Recording Saved", "录屏已保存", "錄影已儲存"],
+            "●  録画を保存しました" => {
+                ["●  Recording Saved", "●  录屏已保存", "●  錄影已儲存"]
+            }
+            "で続けて撮影できます" => {
+                ["Press to capture again", "可按此继续截图", "可按此繼續截圖"]
+            }
+            "ドラッグして撮影範囲を選択　·　Escでキャンセル" => [
+                "Drag to select a capture region · Esc to cancel",
+                "拖动以选择截图区域 · 按 Esc 取消",
+                "拖曳以選取截圖範圍 · 按 Esc 取消",
+            ],
+            "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。" => {
+                [
+                    "Drag to select a capture region. Press Esc to cancel.",
+                    "请拖动以选择截图区域。按 Esc 可取消。",
+                    "請拖曳以選取截圖範圍。按 Esc 可取消。",
+                ]
+            }
+            "範囲選択を準備しています…画面の確認に時間がかかる場合は自動で戻ります。" => {
+                [
+                    "Preparing region selection… It will return automatically if screen inspection takes too long.",
+                    "正在准备区域选择…如果屏幕检查耗时过长，将自动返回。",
+                    "正在準備區域選取…如果螢幕檢查耗時過長，將自動返回。",
+                ]
+            }
+            "録画または撮影が終わってから範囲撮影を開始してください。" => {
+                [
+                    "Wait for recording or capture to finish before selecting a region.",
+                    "请等待录制或截图完成后再选择区域。",
+                    "請等待錄製或截圖完成後再選取範圍。",
+                ]
+            }
+            "録画を終了してからスクリーンショットを撮影してください。" => {
+                [
+                    "Stop recording before taking a screenshot.",
+                    "请先停止录制再截图。",
+                    "請先停止錄製再截圖。",
+                ]
+            }
+            "選択範囲が小さすぎます。ドラッグして範囲を選択してください。" => {
+                [
+                    "The selection is too small. Drag to select a larger region.",
+                    "选区太小。请拖动以选择更大的区域。",
+                    "選取範圍太小。請拖曳以選取更大的範圍。",
+                ]
+            }
+            "切り出す範囲が小さすぎます。もう一度ドラッグしてください。" => {
+                [
+                    "The crop area is too small. Drag again.",
+                    "裁剪区域太小。请重新拖动。",
+                    "裁切範圍太小。請重新拖曳。",
+                ]
+            }
+            "先にマイクを許可してください。" => [
+                "Allow microphone access first.",
+                "请先允许麦克风访问。",
+                "請先允許麥克風存取。",
+            ],
+            "マイク入力を検出できませんでした。入力デバイスと入力音量を確認してください。" => {
+                [
+                    "No microphone input detected. Check the input device and input volume.",
+                    "未检测到麦克风输入。请检查输入设备和输入音量。",
+                    "未偵測到麥克風輸入。請檢查輸入裝置和輸入音量。",
+                ]
+            }
+            "設定でMacShotをオンにして再起動してください。オンでも許可されない場合は、一度オフ→オンして再起動します。" => {
+                [
+                    "Enable MacShot in Settings and restart. If access is still denied, turn it off and on, then restart.",
+                    "请在设置中启用 MacShot 并重新启动。如果仍未获允许，请先关闭再开启，然后重新启动。",
+                    "請在設定中啟用 MacShot 並重新啟動。如果仍未獲允許，請先關閉再開啟，然後重新啟動。",
+                ]
+            }
+            "画面収録の許可を確認しました。反映のためMacShotを再起動してください。" => {
+                [
+                    "Screen Recording permission is confirmed. Restart MacShot to apply it.",
+                    "已确认屏幕录制权限。请重新启动 MacShot 以应用更改。",
+                    "已確認螢幕錄製權限。請重新啟動 MacShot 以套用變更。",
+                ]
+            }
+            "画面収録の許可設定を開きました。MacShotをオンにして再起動してください。" => {
+                [
+                    "Opened Screen Recording settings. Enable MacShot and restart it.",
+                    "已打开屏幕录制设置。请启用 MacShot 并重新启动。",
+                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新啟動。",
+                ]
+            }
+            "macOSにマイクの許可を確認しています。表示された画面で選択してください。" => {
+                [
+                    "Requesting microphone permission from macOS. Choose an option in the prompt.",
+                    "正在向 macOS 请求麦克风权限。请在显示的提示中选择。",
+                    "正在向 macOS 要求麥克風權限。請在顯示的提示中選擇。",
+                ]
+            }
+            "MacShot.appの場所を特定できません。アプリケーション版からお試しください。" => {
+                [
+                    "Could not locate MacShot.app. Try the application bundle.",
+                    "找不到 MacShot.app。请尝试从应用程序包运行。",
+                    "找不到 MacShot.app。請嘗試從 App 套件執行。",
+                ]
+            }
+            "MacShotのアプリ識別子を確認できず、マイク許可をリセットできません。" => {
+                [
+                    "Could not determine MacShot's bundle identifier; microphone permission was not reset.",
+                    "无法确定 MacShot 的应用标识符，因此未重置麦克风权限。",
+                    "無法確認 MacShot 的 App 識別碼，因此未重設麥克風權限。",
+                ]
+            }
+            "録画を保存しました ({finished_at})" => [
+                "Recording saved ({finished_at})",
+                "录屏已保存（{finished_at}）",
+                "錄影已儲存（{finished_at}）",
+            ],
+            "コンパクト" => ["Compact", "紧凑", "精簡"],
+            "日時不明" => ["Date and time unknown", "日期和时间未知", "日期和時間未知"],
+            "画像サイズ: " => ["Image size: ", "图像尺寸：", "圖片尺寸："],
+            "文字サイズ" => ["Text Size", "文字大小", "文字大小"],
+            "表示量" => ["Density", "显示密度", "顯示密度"],
+            "表示" => ["Display", "显示", "顯示"],
+            "標準" => ["Standard", "标准", "標準"],
+            "ゆったり" => ["Relaxed", "宽松", "寬鬆"],
+            "文字サイズと画面の密度" => [
+                "Text Size & Density",
+                "文字大小与显示密度",
+                "文字大小與顯示密度",
+            ],
+            "コンパクトにすると一画面に多く表示し、文字サイズを上げると全体を拡大します。" => {
+                [
+                    "Compact density shows more at once. Increase text size to enlarge the interface.",
+                    "紧凑模式可在一屏显示更多内容。增大文字可放大整个界面。",
+                    "精簡模式可在一個畫面顯示更多內容。調大文字可放大整個介面。",
+                ]
+            }
+            "配置" => ["Layout", "布局", "配置"],
+            "↑ 上へ" => ["↑ Move Up", "↑ 上移", "↑ 上移"],
+            "↓ 下へ" => ["↓ Move Down", "↓ 下移", "↓ 下移"],
+            "幅: 半分" => ["Width: Half", "宽度：一半", "寬度：一半"],
+            "幅: 全体" => ["Width: Full", "宽度：全宽", "寬度：全寬"],
+            "余白: 小" => ["Padding: Small", "边距：小", "邊距：小"],
+            "余白: 中" => ["Padding: Medium", "边距：中", "邊距：中"],
+            "余白: 大" => ["Padding: Large", "边距：大", "邊距：大"],
+            "赤色" => ["Red", "红色", "紅色"],
+            "黄色" => ["Yellow", "黄色", "黃色"],
+            "青色" => ["Blue", "蓝色", "藍色"],
+            "スクリーンショット" => ["Screenshot", "屏幕截图", "螢幕截圖"],
+            "録画の開始／終了" => [
+                "Start / Stop Recording",
+                "开始 / 停止录制",
+                "開始 / 停止錄製",
+            ],
+            "どのアプリを使っていても呼び出せます。設定後すぐに反映されます." => {
+                [
+                    "Available from any app. Changes take effect immediately.",
+                    "可在任何应用中调用。设置后立即生效。",
+                    "可在任何 App 中呼叫。設定後立即生效。",
+                ]
+            }
+            "例: Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4" => [
+                "Example: Alt+Shift+KeyS, Control+Alt+KeyF, Super+Shift+Key4",
+                "示例：Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4",
+                "範例：Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4",
+            ],
+            "macOSのAltはOptionキーです。WindowsではAltキーとして動作します。" => {
+                [
+                    "Alt is Option on macOS and Alt on Windows.",
+                    "Alt 在 macOS 上对应 Option，在 Windows 上对应 Alt。",
+                    "Alt 在 macOS 上對應 Option，在 Windows 上對應 Alt。",
+                ]
+            }
+            "設定を保存して反映" => [
+                "Save and Apply Settings",
+                "保存并应用设置",
+                "儲存並套用設定",
+            ],
+            "予想ファイルサイズ（1分録画）" => [
+                "Estimated File Size (1 min)",
+                "预计文件大小（录制 1 分钟）",
+                "預估檔案大小（錄製 1 分鐘）",
+            ],
+            "映像ビットレート・AAC音声・コンテナ分を含む目安です。" => [
+                "Estimate includes video bitrate, AAC audio, and container overhead.",
+                "估算包含视频比特率、AAC 音频和容器开销。",
+                "估算包含視訊位元率、AAC 音訊和容器額外資料。",
+            ],
+            "画面の動きや色で大きく変わります。解像度とfpsからの概算です。" => {
+                [
+                    "Varies with motion and color; estimated from resolution and frame rate.",
+                    "大小会因画面运动和颜色而异；根据分辨率和帧率估算。",
+                    "大小會因畫面動態和色彩而異；依解析度和影格率估算。",
+                ]
+            }
+            "メイン画面を仮定" => {
+                ["Main display assumed", "假设为主显示器", "假設為主要顯示器"]
+            }
+            "recording formats" => [
+                "recordings (GIF / MP4 / MOV)",
+                "个录屏（GIF / MP4 / MOV）",
+                "個錄影（GIF / MP4 / MOV）",
+            ],
+            "基準画像" => ["Reference Image", "基准图像", "參考圖片"],
+            "比較画像" => ["Comparison Image", "比较图像", "比較圖片"],
+            "約" => ["About", "约", "約"],
+            _ => return japanese.to_owned(),
+        };
+        translated[match self {
+            Self::Japanese => unreachable!(),
+            Self::English => 0,
+            Self::SimplifiedChinese => 1,
+            Self::TraditionalChinese => 2,
+        }]
+        .to_owned()
+    }
+
+    fn message(self, japanese: &str) -> String {
+        let exact = self.text(japanese);
+        if exact != japanese {
+            return exact;
+        }
+        if self == Self::Japanese {
+            return japanese.to_owned();
+        }
+
+        const PREFIXES: &[(&str, [&str; 3])] = &[
+            (
+                "撮影に失敗しました: ",
+                ["Capture failed: ", "截图失败：", "截圖失敗："],
+            ),
+            (
+                "撮影できません: ",
+                ["Unable to capture: ", "无法截图：", "無法截圖："],
+            ),
+            (
+                "画面を撮影できません: ",
+                [
+                    "Unable to capture screen: ",
+                    "无法截取屏幕：",
+                    "無法擷取螢幕：",
+                ],
+            ),
+            (
+                "画面を確認できません: ",
+                [
+                    "Unable to inspect screen: ",
+                    "无法检查屏幕：",
+                    "無法檢查螢幕：",
+                ],
+            ),
+            (
+                "画面収録の許可設定を開けません: ",
+                [
+                    "Unable to open Screen Recording settings: ",
+                    "无法打开屏幕录制设置：",
+                    "無法開啟螢幕錄製設定：",
+                ],
+            ),
+            (
+                "画面収録の許可設定を開けませんでした (",
+                [
+                    "Could not open Screen Recording settings (",
+                    "无法打开屏幕录制设置（",
+                    "無法開啟螢幕錄製設定（",
+                ],
+            ),
+            (
+                "マイク設定を開けません: ",
+                [
+                    "Unable to open Microphone settings: ",
+                    "无法打开麦克风设置：",
+                    "無法開啟麥克風設定：",
+                ],
+            ),
+            (
+                "マイク設定を開けませんでした (",
+                [
+                    "Could not open Microphone settings (",
+                    "无法打开麦克风设置（",
+                    "無法開啟麥克風設定（",
+                ],
+            ),
+            (
+                "Finderでアプリを表示できません: ",
+                [
+                    "Unable to reveal app in Finder: ",
+                    "无法在 Finder 中显示应用：",
+                    "無法在 Finder 中顯示 App：",
+                ],
+            ),
+            (
+                "Finderでアプリを表示できませんでした (",
+                [
+                    "Could not reveal app in Finder (",
+                    "无法在 Finder 中显示应用（",
+                    "無法在 Finder 中顯示 App（",
+                ],
+            ),
+            (
+                "macOS標準の撮影パネルを開けません: ",
+                [
+                    "Unable to open the macOS Screenshot panel: ",
+                    "无法打开 macOS 截图面板：",
+                    "無法開啟 macOS 螢幕截圖面板：",
+                ],
+            ),
+            (
+                "macOS標準の撮影パネルを開けませんでした (",
+                [
+                    "Could not open the macOS Screenshot panel (",
+                    "无法打开 macOS 截图面板（",
+                    "無法開啟 macOS 螢幕截圖面板（",
+                ],
+            ),
+            (
+                "画像を開けません: ",
+                ["Unable to open image: ", "无法打开图像：", "無法開啟圖片："],
+            ),
+            (
+                "録画を読み込めませんでした: ",
+                [
+                    "Unable to load recording: ",
+                    "无法加载录屏：",
+                    "無法載入錄影：",
+                ],
+            ),
+            (
+                "録画を再生できませんでした: ",
+                [
+                    "Unable to play recording: ",
+                    "无法播放录屏：",
+                    "無法播放錄影：",
+                ],
+            ),
+            (
+                "保存先を作成できません: ",
+                [
+                    "Unable to create save location: ",
+                    "无法创建保存位置：",
+                    "無法建立儲存位置：",
+                ],
+            ),
+            (
+                "設定を保存できません: ",
+                [
+                    "Unable to save settings: ",
+                    "无法保存设置：",
+                    "無法儲存設定：",
+                ],
+            ),
+            (
+                "表示設定を保存できません: ",
+                [
+                    "Unable to save display settings: ",
+                    "无法保存显示设置：",
+                    "無法儲存顯示設定：",
+                ],
+            ),
+            (
+                "録画設定を保存できません: ",
+                [
+                    "Unable to save recording settings: ",
+                    "无法保存录制设置：",
+                    "無法儲存錄製設定：",
+                ],
+            ),
+            (
+                "撮影設定を保存できません: ",
+                [
+                    "Unable to save capture settings: ",
+                    "无法保存截图设置：",
+                    "無法儲存截圖設定：",
+                ],
+            ),
+            (
+                "録画形式を保存できません: ",
+                [
+                    "Unable to save recording format: ",
+                    "无法保存录制格式：",
+                    "無法儲存錄製格式：",
+                ],
+            ),
+            (
+                "録画解像度を保存できません: ",
+                [
+                    "Unable to save recording resolution: ",
+                    "无法保存录制分辨率：",
+                    "無法儲存錄製解析度：",
+                ],
+            ),
+            (
+                "言語設定を保存できません: ",
+                [
+                    "Unable to save language setting: ",
+                    "无法保存语言设置：",
+                    "無法儲存語言設定：",
+                ],
+            ),
+            (
+                "カード配置を保存できません: ",
+                [
+                    "Unable to save card layout: ",
+                    "无法保存卡片布局：",
+                    "無法儲存卡片配置：",
+                ],
+            ),
+            (
+                "ショートカットを初期化できません: ",
+                [
+                    "Unable to initialize shortcuts: ",
+                    "无法初始化快捷键：",
+                    "無法初始化快速鍵：",
+                ],
+            ),
+            (
+                "注釈画像を保存できません: ",
+                [
+                    "Unable to save annotated image: ",
+                    "无法保存标注图像：",
+                    "無法儲存註記圖片：",
+                ],
+            ),
+            (
+                "切り出し画像を保存できません: ",
+                [
+                    "Unable to save cropped image: ",
+                    "无法保存裁剪图像：",
+                    "無法儲存裁切圖片：",
+                ],
+            ),
+            (
+                "録画を保存できません: ",
+                [
+                    "Unable to save recording: ",
+                    "无法保存录屏：",
+                    "無法儲存錄影：",
+                ],
+            ),
+            (
+                "撮影メニューを作成できません: ",
+                [
+                    "Unable to create capture menu: ",
+                    "无法创建截图菜单：",
+                    "無法建立截圖選單：",
+                ],
+            ),
+            (
+                "メニューバーのメニューを作成できません: ",
+                [
+                    "Unable to create menu bar menu: ",
+                    "无法创建菜单栏菜单：",
+                    "無法建立選單列選單：",
+                ],
+            ),
+            (
+                "メニューバーを表示できません: ",
+                [
+                    "Unable to show menu bar: ",
+                    "无法显示菜单栏：",
+                    "無法顯示選單列：",
+                ],
+            ),
+            (
+                "メニューバーアイコンを更新できません: ",
+                [
+                    "Unable to update menu bar icon: ",
+                    "无法更新菜单栏图标：",
+                    "無法更新選單列圖示：",
+                ],
+            ),
+            (
+                "録画を読み込みました: ",
+                ["Loaded recording: ", "已加载录屏：", "已載入錄影："],
+            ),
+            (
+                "撮影済み画像を保存しました: ",
+                ["Saved capture: ", "已保存截图：", "已儲存截圖："],
+            ),
+            (
+                "切り出して保存しました: ",
+                ["Cropped and saved: ", "已裁剪并保存：", "已裁切並儲存："],
+            ),
+            (
+                "注釈付き画像を保存しました: ",
+                [
+                    "Saved annotated image: ",
+                    "已保存标注图像：",
+                    "已儲存註記圖片：",
+                ],
+            ),
+            ("保存先: ", ["Save location: ", "保存位置：", "儲存位置："]),
+            ("読み込みました: ", ["Loaded: ", "已加载：", "已載入："]),
+        ];
+
+        for (prefix, translated) in PREFIXES {
+            if let Some(suffix) = japanese.strip_prefix(prefix) {
+                let localized = translated[match self {
+                    Self::Japanese => unreachable!(),
+                    Self::English => 0,
+                    Self::SimplifiedChinese => 1,
+                    Self::TraditionalChinese => 2,
+                }];
+                return format!("{localized}{suffix}");
+            }
+        }
+        if let Some((count, _)) = japanese.split_once("枚目を保存しています…")
+            && let Some(count) = count.strip_prefix("撮影 ")
+        {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "Saving capture #{}…",
+                Self::SimplifiedChinese => "正在保存第 {} 张截图…",
+                Self::TraditionalChinese => "正在儲存第 {} 張截圖…",
+            };
+            return template.replacen("{}", count.trim(), 1);
+        }
+        if let Some(count) = japanese.strip_suffix("個のウィンドウを確認しました。")
+        {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "Found {} windows.",
+                Self::SimplifiedChinese => "已找到 {} 个窗口。",
+                Self::TraditionalChinese => "已找到 {} 個視窗。",
+            };
+            return template.replacen("{}", count, 1);
+        }
+        if let Some(count) = japanese.strip_suffix(" 枚の画像") {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "{} images",
+                Self::SimplifiedChinese => "{} 张图像",
+                Self::TraditionalChinese => "{} 張圖片",
+            };
+            return template.replacen("{}", count, 1);
+        }
+        if let Some(value) = japanese
+            .strip_prefix("録画形式を")
+            .and_then(|message| message.strip_suffix("に変更しました"))
+        {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "Recording format changed to {}",
+                Self::SimplifiedChinese => "录制格式已更改为 {}",
+                Self::TraditionalChinese => "錄製格式已變更為 {}",
+            };
+            return template.replacen("{}", value, 1);
+        }
+        if let Some(value) = japanese
+            .strip_prefix("録画解像度を")
+            .and_then(|message| message.strip_suffix("に変更しました"))
+        {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "Recording resolution changed to {}",
+                Self::SimplifiedChinese => "录制分辨率已更改为 {}",
+                Self::TraditionalChinese => "錄製解析度已變更為 {}",
+            };
+            return template.replacen("{}", value, 1);
+        }
+        if let Some(rest) = japanese.strip_prefix("撮影 ")
+            && let Some((sequence, details)) = rest.split_once(" 枚目を保存しました (")
+            && let Some((timestamp, size)) = details.split_once(") · ")
+        {
+            let template = match self {
+                Self::Japanese => unreachable!(),
+                Self::English => "Capture #{} saved ({}) · {}",
+                Self::SimplifiedChinese => "第 {} 张截图已保存（{}）· {}",
+                Self::TraditionalChinese => "第 {} 張截圖已儲存（{}）· {}",
+            };
+            return template
+                .replacen("{}", sequence, 1)
+                .replacen("{}", timestamp, 1)
+                .replacen("{}", size, 1);
+        }
+
+        const FRAGMENTS: &[(&str, [&str; 3])] = &[
+            (
+                "システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音",
+                [
+                    "System Settings > Privacy & Security > Screen & System Audio Recording",
+                    "系统设置 > 隐私与安全性 > 屏幕录制与系统音频录制",
+                    "系統設定 > 隱私權與安全性 > 螢幕與系統音訊錄製",
+                ],
+            ),
+            (
+                "画面収録の許可設定を開きました。MacShotをオンにして再起動してください。",
+                [
+                    "Opened Screen Recording settings. Enable MacShot and restart it.",
+                    "已打开屏幕录制设置。请启用 MacShot 并重新启动。",
+                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新啟動。",
+                ],
+            ),
+            (
+                "画面収録の許可を確認しました。反映のためMacShotを再起動してください。",
+                [
+                    "Screen Recording permission is confirmed. Restart MacShot to apply it.",
+                    "已确认屏幕录制权限。请重新启动 MacShot 以应用更改。",
+                    "已確認螢幕錄製權限。請重新啟動 MacShot 以套用變更。",
+                ],
+            ),
+            (
+                "拒否されています（MP4はシステム音声のみ）。マイク設定で許可してください",
+                [
+                    "Denied (MP4 records system audio only). Allow in Microphone Settings.",
+                    "已拒绝（MP4 仅录制系统音频）。请在麦克风设置中允许访问。",
+                    "已拒絕（MP4 僅錄製系統音訊）。請在麥克風設定中允許存取。",
+                ],
+            ),
+            (
+                "MacShotのマイク許可状態をリセットしました。許可確認を表示します。",
+                [
+                    "Reset MacShot microphone permission. A new permission prompt will appear.",
+                    "已重置 MacShot 麦克风权限。将显示新的权限提示。",
+                    "已重設 MacShot 麥克風權限。將顯示新的權限提示。",
+                ],
+            ),
+            (
+                "始点を指定しました。終点をクリックするかドラッグしてください。",
+                [
+                    "Start point set. Click or drag to set the end point.",
+                    "已设置起点。请点按或拖动以设置终点。",
+                    "已設定起點。請點按或拖曳以設定終點。",
+                ],
+            ),
+            (
+                "オンでも許可されない場合は、一度オフ→オンして再起動します。",
+                [
+                    "If still denied, turn it off and on, then restart.",
+                    "如果仍未获允许，请先关闭再开启，然后重新启动。",
+                    "如果仍未獲允許，請先關閉再開啟，然後重新啟動。",
+                ],
+            ),
+            (
+                "MacShotのマイク許可状態をリセットできませんでした (",
+                [
+                    "Could not reset MacShot microphone permission (",
+                    "无法重置 MacShot 麦克风权限（",
+                    "無法重設 MacShot 麥克風權限（",
+                ],
+            ),
+            (
+                "システム設定 > プライバシーとセキュリティ > マイク",
+                [
+                    "System Settings > Privacy & Security > Microphone",
+                    "系统设置 > 隐私与安全性 > 麦克风",
+                    "系統設定 > 隱私權與安全性 > 麥克風",
+                ],
+            ),
+            (
+                "録画を終了してからスクリーンショットを撮影してください。",
+                [
+                    "Stop recording before taking a screenshot.",
+                    "请先停止录制再截图。",
+                    "請先停止錄製再截圖。",
+                ],
+            ),
+            (
+                "FinderでMacShot.appを表示しました: ",
+                [
+                    "Revealed MacShot.app in Finder: ",
+                    "已在 Finder 中显示 MacShot.app：",
+                    "已在 Finder 中顯示 MacShot.app：",
+                ],
+            ),
+            (
+                "MacShotのマイク許可状態をリセットできません: ",
+                [
+                    "Could not reset MacShot microphone permission: ",
+                    "无法重置 MacShot 麦克风权限：",
+                    "無法重設 MacShot 麥克風權限：",
+                ],
+            ),
+            (
+                "MacShotのウィンドウを表示しました。",
+                [
+                    "MacShot window is now visible.",
+                    "MacShot 窗口已显示。",
+                    "MacShot 視窗已顯示。",
+                ],
+            ),
+            (
+                "状態未決定（MP4はシステム音声のみ）",
+                [
+                    "Not determined (MP4 records system audio only)",
+                    "尚未确定（MP4 仅录制系统音频）",
+                    "尚未決定（MP4 僅錄製系統音訊）",
+                ],
+            ),
+            (
+                "「画面収録」の許可を確認してください。",
+                [
+                    "Check Screen Recording permission.",
+                    "请检查屏幕录制权限。",
+                    "請檢查螢幕錄製權限。",
+                ],
+            ),
+            (
+                "macOSから画面収録を拒否されました",
+                [
+                    "macOS denied Screen Recording access",
+                    "macOS 已拒绝屏幕录制权限",
+                    "macOS 已拒絕螢幕錄製權限",
+                ],
+            ),
+            (
+                "マイクテストを開始できませんでした: ",
+                [
+                    "Could not start microphone test: ",
+                    "无法开始麦克风测试：",
+                    "無法開始麥克風測試：",
+                ],
+            ),
+            (
+                "未許可、またはmacOSへの反映待ち",
+                [
+                    "Not allowed or waiting for macOS",
+                    "未允许，或等待 macOS 应用更改",
+                    "未允許，或等待 macOS 套用變更",
+                ],
+            ),
+            (
+                "アクティブウィンドウが見つかりません",
+                [
+                    "No active window found",
+                    "找不到活动窗口",
+                    "找不到作用中視窗",
+                ],
+            ),
+            (
+                "カード配置を保存して固定しました。",
+                [
+                    "Card layout saved and locked.",
+                    "卡片布局已保存并固定。",
+                    "卡片配置已儲存並固定。",
+                ],
+            ),
+            (
+                "範囲選択の背景を撮影できません: ",
+                [
+                    "Unable to capture region selection background: ",
+                    "无法截取区域选择背景：",
+                    "無法擷取區域選取背景：",
+                ],
+            ),
+            (
+                "マイクの使用が拒否されています。",
+                [
+                    "Microphone access was denied.",
+                    "麦克风访问已被拒绝。",
+                    "麥克風存取已遭拒絕。",
+                ],
+            ),
+            (
+                "画面収録の許可を設定してください",
+                [
+                    "Set up Screen Recording permission",
+                    "请设置屏幕录制权限",
+                    "請設定螢幕錄製權限",
+                ],
+            ),
+            (
+                "ショートカットを保存しました。",
+                ["Shortcuts saved.", "快捷键已保存。", "快速鍵已儲存。"],
+            ),
+            (
+                "撮影できる画面が見つかりません",
+                [
+                    "No capturable display found",
+                    "找不到可截图的显示器",
+                    "找不到可截圖的顯示器",
+                ],
+            ),
+            (
+                "選択した画面が見つかりません",
+                [
+                    "Selected display not found",
+                    "找不到所选显示器",
+                    "找不到所選顯示器",
+                ],
+            ),
+            (
+                "録画または撮影が終わってから",
+                [
+                    "Wait for recording or capture to finish before",
+                    "请等待录制或截图完成后再",
+                    "請等待錄製或截圖完成後再",
+                ],
+            ),
+            (
+                "撮影を順番待ちに追加しました",
+                ["Capture added to queue", "截图已加入队列", "截圖已加入佇列"],
+            ),
+            (
+                "切り出し画像を保存できません",
+                [
+                    "Unable to save cropped image",
+                    "无法保存裁剪图像",
+                    "無法儲存裁切圖片",
+                ],
+            ),
+            (
+                "録画を再生できませんでした",
+                ["Unable to play recording", "无法播放录屏", "無法播放錄影"],
+            ),
+            (
+                "録画を読み込めませんでした",
+                ["Unable to load recording", "无法加载录屏", "無法載入錄影"],
+            ),
+            (
+                "録画解像度を保存できません",
+                [
+                    "Unable to save recording resolution",
+                    "无法保存录制分辨率",
+                    "無法儲存錄製解析度",
+                ],
+            ),
+            (
+                "切り出す範囲が小さすぎます",
+                ["Crop area is too small", "裁剪区域太小", "裁切範圍太小"],
+            ),
+            (
+                "注釈付き画像を保存しました",
+                ["Saved annotated image", "已保存标注图像", "已儲存註記圖片"],
+            ),
+            (
+                "録画形式を保存できません",
+                [
+                    "Unable to save recording format",
+                    "无法保存录制格式",
+                    "無法儲存錄製格式",
+                ],
+            ),
+            (
+                "録画設定を保存できません",
+                [
+                    "Unable to save recording settings",
+                    "无法保存录制设置",
+                    "無法儲存錄製設定",
+                ],
+            ),
+            (
+                "撮影設定を保存できません",
+                [
+                    "Unable to save capture settings",
+                    "无法保存截图设置",
+                    "無法儲存截圖設定",
+                ],
+            ),
+            (
+                "表示設定を保存できません",
+                [
+                    "Unable to save display settings",
+                    "无法保存显示设置",
+                    "無法儲存顯示設定",
+                ],
+            ),
+            (
+                "言語設定を保存できません",
+                [
+                    "Unable to save language preference",
+                    "无法保存语言设置",
+                    "無法儲存語言設定",
+                ],
+            ),
+            (
+                "言語設定を保存しました。",
+                [
+                    "Language preference saved.",
+                    "已保存语言设置。",
+                    "已儲存語言設定。",
+                ],
+            ),
+            (
+                "撮影設定を保存しました。",
+                [
+                    "Capture settings saved.",
+                    "截图设置已保存。",
+                    "截圖設定已儲存。",
+                ],
+            ),
+            (
+                "表示設定を保存しました。",
+                [
+                    "Display settings saved.",
+                    "显示设置已保存。",
+                    "顯示設定已儲存。",
+                ],
+            ),
+            (
+                "録画設定を保存しました。",
+                [
+                    "Recording settings saved.",
+                    "录制设置已保存。",
+                    "錄製設定已儲存。",
+                ],
+            ),
+            (
+                "編集する画像を開きました",
+                [
+                    "Opened image for editing",
+                    "已打开图像以进行编辑",
+                    "已開啟圖片以供編輯",
+                ],
+            ),
+            (
+                "注釈画像を保存できません",
+                [
+                    "Unable to save annotated image",
+                    "无法保存标注图像",
+                    "無法儲存註記圖片",
+                ],
+            ),
+            (
+                "マイク入力を検出しました",
+                [
+                    "Microphone input detected",
+                    "已检测到麦克风输入",
+                    "已偵測到麥克風輸入",
+                ],
+            ),
+            (
+                "連続撮影を開始しました。",
+                [
+                    "Continuous capture started.",
+                    "已开始连续截图。",
+                    "已開始連續截圖。",
+                ],
+            ),
+            (
+                "画面収録・システム音声",
+                [
+                    "Screen Recording & System Audio",
+                    "屏幕录制与系统音频",
+                    "螢幕錄製與系統音訊",
+                ],
+            ),
+            (
+                "保存先を作成できません",
+                [
+                    "Unable to create save location",
+                    "无法创建保存位置",
+                    "無法建立儲存位置",
+                ],
+            ),
+            (
+                "切り出して保存しました",
+                ["Cropped and saved", "已裁剪并保存", "已裁切並儲存"],
+            ),
+            (
+                "録画を保存しました (",
+                ["Recording saved (", "录屏已保存（", "錄影已儲存（"],
+            ),
+            (
+                "録画を開始しています（",
+                ["Starting recording (", "正在开始录制（", "正在開始錄製（"],
+            ),
+            (
+                "撮影できませんでした",
+                ["Capture failed", "截图失败", "截圖失敗"],
+            ),
+            (
+                "録画できませんでした",
+                ["Recording failed", "录制失败", "錄製失敗"],
+            ),
+            (
+                "録画を読み込みました",
+                ["Loaded recording", "已加载录屏", "已載入錄影"],
+            ),
+            (
+                "設定を保存できません",
+                ["Unable to save settings", "无法保存设置", "無法儲存設定"],
+            ),
+            (
+                "設定を保存しました。",
+                ["Settings saved.", "设置已保存。", "設定已儲存。"],
+            ),
+            (
+                "録画を開始しています",
+                ["Starting recording", "正在开始录制", "正在開始錄製"],
+            ),
+            (
+                "前回の連続撮影 — ",
+                [
+                    "Last continuous capture — ",
+                    "上次连续截图 — ",
+                    "上次連續截圖 — ",
+                ],
+            ),
+            ("読み込みました: ", ["Loaded: ", "已加载：", "已載入："]),
+            (
+                "撮影終了待ち — ",
+                [
+                    "Waiting for capture to finish — ",
+                    "等待截图完成 — ",
+                    "等待截圖完成 — ",
+                ],
+            ),
+            (
+                "録画を終了してから",
+                [
+                    "Stop recording before",
+                    "请先停止录制，再",
+                    "請先停止錄製，再",
+                ],
+            ),
+            (
+                "画像を開けません",
+                ["Unable to open image", "无法打开图像", "無法開啟圖片"],
+            ),
+            (
+                "連続撮影中 — ",
+                ["Continuous capture — ", "连续截图 — ", "連續截圖 — "],
+            ),
+            ("画像サイズ: ", ["Image size: ", "图像尺寸：", "圖片尺寸："]),
+            (
+                "録画解像度を",
+                ["Recording resolution ", "录制分辨率", "錄製解析度"],
+            ),
+            ("録画中 — ", ["Recording — ", "录制中 — ", "錄製中 — "]),
+            (
+                "枚保存・失敗",
+                [" saved · failed", " 张已保存 · 失败", " 張已儲存 · 失敗"],
+            ),
+            ("録画形式を", ["Recording format ", "录制格式", "錄製格式"]),
+            (
+                "連続撮影中",
+                [
+                    "Continuous capture active",
+                    "连续截图进行中",
+                    "連續截圖進行中",
+                ],
+            ),
+            ("録画中 —", ["Recording —", "录制中 —", "錄製中 —"]),
+            ("保存先: ", ["Save location: ", "保存位置：", "儲存位置："]),
+            ("枚保存済み", [" captures saved", " 张已保存", " 張已儲存"]),
+            ("録画時間 ", ["Recording time ", "录制时间 ", "錄製時間 "]),
+            ("保存待ち", ["Waiting to capture", "等待截图", "等待截圖"]),
+            ("枚・失敗", [" · failed ", " 张 · 失败 ", " 張 · 失敗 "]),
+            ("枚保存", [" saved", " 张已保存", " 張已儲存"]),
+            ("撮影中", ["Capturing", "正在截图", "正在截圖"]),
+        ];
+
+        let mut localized = japanese.to_owned();
+        for (source, translations) in FRAGMENTS {
+            let translation = translations[match self {
+                Self::Japanese => unreachable!(),
+                Self::English => 0,
+                Self::SimplifiedChinese => 1,
+                Self::TraditionalChinese => 2,
+            }];
+            localized = localized.replace(source, translation);
+        }
+        localized
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "en" => Self::English,
+            "zh-Hans" => Self::SimplifiedChinese,
+            "zh-Hant" => Self::TraditionalChinese,
+            _ => Self::Japanese,
+        }
+    }
+
+    fn setting_value(self) -> &'static str {
+        match self {
+            Self::Japanese => "ja",
+            Self::English => "en",
+            Self::SimplifiedChinese => "zh-Hans",
+            Self::TraditionalChinese => "zh-Hant",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Japanese => "日本語",
+            Self::English => "English",
+            Self::SimplifiedChinese => "简体中文",
+            Self::TraditionalChinese => "繁體中文",
+        }
+    }
+
+    fn language_heading(self) -> &'static str {
+        match self {
+            Self::Japanese => "アプリの言語",
+            Self::English => "App language",
+            Self::SimplifiedChinese => "应用语言",
+            Self::TraditionalChinese => "應用程式語言",
+        }
+    }
+
+    fn page_heading(self, page: Page) -> &'static str {
+        match (self, page) {
+            (Self::Japanese, Page::Capture) => "証跡の撮影を始めましょう",
+            (Self::Japanese, Page::Evidence) => "撮影済みの画像・録画",
+            (Self::Japanese, Page::Compare) => "画像比較",
+            (Self::Japanese, Page::Settings) => "設定",
+            (Self::English, Page::Capture) => "Start capturing evidence",
+            (Self::English, Page::Evidence) => "Captured Images & Recordings",
+            (Self::English, Page::Compare) => "Compare Images",
+            (Self::English, Page::Settings) => "Settings",
+            (Self::SimplifiedChinese, Page::Capture) => "开始截取证据",
+            (Self::SimplifiedChinese, Page::Evidence) => "已截取的图像与录屏",
+            (Self::SimplifiedChinese, Page::Compare) => "图像比较",
+            (Self::SimplifiedChinese, Page::Settings) => "设置",
+            (Self::TraditionalChinese, Page::Capture) => "開始擷取證據",
+            (Self::TraditionalChinese, Page::Evidence) => "已擷取的圖片與錄影",
+            (Self::TraditionalChinese, Page::Compare) => "圖片比較",
+            (Self::TraditionalChinese, Page::Settings) => "設定",
+        }
+    }
+
+    fn compare_mode_label(self, mode: CompareMode) -> &'static str {
+        match (self, mode) {
+            (Self::Japanese, CompareMode::SideBySide) => "左右",
+            (Self::Japanese, CompareMode::Overlay) => "重ね合わせ",
+            (Self::Japanese, CompareMode::Difference) => "差分",
+            (Self::English, CompareMode::SideBySide) => "Side by Side",
+            (Self::English, CompareMode::Overlay) => "Overlay",
+            (Self::English, CompareMode::Difference) => "Difference",
+            (Self::SimplifiedChinese, CompareMode::SideBySide) => "并排",
+            (Self::SimplifiedChinese, CompareMode::Overlay) => "叠加",
+            (Self::SimplifiedChinese, CompareMode::Difference) => "差异",
+            (Self::TraditionalChinese, CompareMode::SideBySide) => "並排",
+            (Self::TraditionalChinese, CompareMode::Overlay) => "疊加",
+            (Self::TraditionalChinese, CompareMode::Difference) => "差異",
+        }
+    }
+
+    fn page_label(self, page: Page) -> &'static str {
+        match (self, page) {
+            (Self::Japanese, Page::Capture) => "◉  撮影・編集",
+            (Self::Japanese, Page::Evidence) => "▦  証跡一覧",
+            (Self::Japanese, Page::Compare) => "⇄  画像比較",
+            (Self::Japanese, Page::Settings) => "⚙  設定",
+            (Self::English, Page::Capture) => "◉  Capture & Edit",
+            (Self::English, Page::Evidence) => "▦  Evidence",
+            (Self::English, Page::Compare) => "⇄  Compare",
+            (Self::English, Page::Settings) => "⚙  Settings",
+            (Self::SimplifiedChinese, Page::Capture) => "◉  截图与编辑",
+            (Self::SimplifiedChinese, Page::Evidence) => "▦  证据列表",
+            (Self::SimplifiedChinese, Page::Compare) => "⇄  图像比较",
+            (Self::SimplifiedChinese, Page::Settings) => "⚙  设置",
+            (Self::TraditionalChinese, Page::Capture) => "◉  螢幕截圖與編輯",
+            (Self::TraditionalChinese, Page::Evidence) => "▦  證據清單",
+            (Self::TraditionalChinese, Page::Compare) => "⇄  圖片比較",
+            (Self::TraditionalChinese, Page::Settings) => "⚙  設定",
+        }
+    }
+
+    fn tray_label(self, key: &str) -> &'static str {
+        match (self, key) {
+            (Self::Japanese, "show") => "MacShotを開く",
+            (Self::Japanese, "capture") => "スクリーンショット",
+            (Self::Japanese, "area") => "範囲を選択して撮影…",
+            (Self::Japanese, "active") => "アクティブウィンドウを撮影",
+            (Self::Japanese, "all") => "全画面を撮影",
+            (Self::Japanese, "selected") => "選択中の撮影対象で撮影",
+            (Self::Japanese, "continuous") => "連続撮影モードを開始／終了",
+            (Self::Japanese, "native") => "macOS標準の撮影・録画を開く…",
+            (Self::Japanese, "capture_stopped") => "連続撮影 — 停止中",
+            (Self::Japanese, "record_time") => "録画時間 00:00",
+            (Self::Japanese, "recording") => "録画中",
+            (Self::Japanese, "record_toggle") => "録画開始／停止",
+            (Self::Japanese, "quit") => "終了",
+            (Self::English, "show") => "Open MacShot",
+            (Self::English, "capture") => "Screenshot",
+            (Self::English, "area") => "Select Region…",
+            (Self::English, "active") => "Capture Active Window",
+            (Self::English, "all") => "Capture All Displays",
+            (Self::English, "selected") => "Capture Selected Target",
+            (Self::English, "continuous") => "Start / Stop Continuous Capture",
+            (Self::English, "native") => "Open macOS Screenshot…",
+            (Self::English, "capture_stopped") => "Continuous Capture — Stopped",
+            (Self::English, "record_time") => "Recording Time 00:00",
+            (Self::English, "recording") => "Recording",
+            (Self::English, "record_toggle") => "Start / Stop Recording",
+            (Self::English, "quit") => "Quit",
+            (Self::SimplifiedChinese, "show") => "打开 MacShot",
+            (Self::SimplifiedChinese, "capture") => "屏幕截图",
+            (Self::SimplifiedChinese, "area") => "选择区域并截图…",
+            (Self::SimplifiedChinese, "active") => "截取活动窗口",
+            (Self::SimplifiedChinese, "all") => "截取所有显示器",
+            (Self::SimplifiedChinese, "selected") => "截取所选目标",
+            (Self::SimplifiedChinese, "continuous") => "开始／停止连续截图",
+            (Self::SimplifiedChinese, "native") => "打开 macOS 标准截图…",
+            (Self::SimplifiedChinese, "capture_stopped") => "连续截图 — 已停止",
+            (Self::SimplifiedChinese, "record_time") => "录制时间 00:00",
+            (Self::SimplifiedChinese, "recording") => "正在录制",
+            (Self::SimplifiedChinese, "record_toggle") => "开始／停止录制",
+            (Self::SimplifiedChinese, "quit") => "退出",
+            (Self::TraditionalChinese, "show") => "開啟 MacShot",
+            (Self::TraditionalChinese, "capture") => "螢幕截圖",
+            (Self::TraditionalChinese, "area") => "選取區域並截圖…",
+            (Self::TraditionalChinese, "active") => "擷取作用中視窗",
+            (Self::TraditionalChinese, "all") => "擷取所有顯示器",
+            (Self::TraditionalChinese, "selected") => "擷取所選目標",
+            (Self::TraditionalChinese, "continuous") => "開始／停止連續截圖",
+            (Self::TraditionalChinese, "native") => "開啟 macOS 標準截圖…",
+            (Self::TraditionalChinese, "capture_stopped") => "連續截圖 — 已停止",
+            (Self::TraditionalChinese, "record_time") => "錄製時間 00:00",
+            (Self::TraditionalChinese, "recording") => "正在錄製",
+            (Self::TraditionalChinese, "record_toggle") => "開始／停止錄製",
+            (Self::TraditionalChinese, "quit") => "結束",
+            _ => "MacShot",
+        }
+    }
+}
+
+fn should_show_completion_notice(page: Page) -> bool {
+    page == Page::Capture
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1083,6 +2851,8 @@ impl Default for MacShot {
         let recording_hotkey_text = canonical_hotkey_text(&recording_hotkey_text);
         let folder_setting = load_setting("save_folder", "");
         let save_folder = (!folder_setting.is_empty()).then(|| PathBuf::from(folder_setting));
+        let auto_import_native_captures =
+            load_setting("auto_import_native_captures", "true") != "false";
         let target_setting = load_setting("capture_target", "active");
         let capture_target = match target_setting.as_str() {
             "primary" => CaptureTarget::PrimaryDisplay,
@@ -1130,11 +2900,13 @@ impl Default for MacShot {
         let display_density =
             DisplayDensity::from_setting(&load_setting("display_density", "standard"));
         let font_size_percent = parse_font_size_percent(&load_setting("font_size_percent", "100"));
+        let language = AppLanguage::from_setting(&load_setting("language", "ja"));
         let settings_layout = parse_settings_layout(&load_setting(
             "settings_layout",
             &serialize_settings_layout(&default_settings_layout()),
         ));
         Self {
+            language,
             monitors,
             windows,
             capture_target,
@@ -1160,6 +2932,9 @@ impl Default for MacShot {
             #[cfg(target_os = "windows")]
             region_background_texture: None,
             save_folder,
+            auto_import_native_captures,
+            #[cfg(target_os = "macos")]
+            native_capture_watch: None,
             evidence_files: Vec::new(),
             recording_files: Vec::new(),
             recording_preview_path: None,
@@ -1383,6 +3158,7 @@ fn parse_setting(contents: &str, key: &str, fallback: &str) -> String {
 }
 
 struct Preferences<'a> {
+    language: AppLanguage,
     capture_hotkey: &'a str,
     recording_hotkey: &'a str,
     capture_target: &'a str,
@@ -1392,6 +3168,7 @@ struct Preferences<'a> {
     annotation_color: &'a str,
     annotation_width: f32,
     save_folder: &'a Path,
+    auto_import_native_captures: bool,
     recording_format: RecordingFormat,
     recording_quality: RecordingQuality,
     display_density: DisplayDensity,
@@ -1432,10 +3209,18 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         .map_err(|error| error.to_string())?;
     writeln!(
         file,
+        "auto_import_native_captures={}",
+        preferences.auto_import_native_captures
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
         "recording_format={}",
         preferences.recording_format.extension()
     )
     .map_err(|error| error.to_string())?;
+    writeln!(file, "language={}", preferences.language.setting_value())
+        .map_err(|error| error.to_string())?;
     writeln!(
         file,
         "mp4_bitrate_mbps={}",
@@ -1528,7 +3313,10 @@ fn recording_files(folder: &Path) -> Vec<PathBuf> {
             path.extension()
                 .and_then(|extension| extension.to_str())
                 .is_some_and(|extension| {
-                    matches!(extension.to_ascii_lowercase().as_str(), "gif" | "mp4")
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "gif" | "mp4" | "mov"
+                    )
                 })
         })
         .collect();
@@ -1542,6 +3330,126 @@ fn recording_files(folder: &Path) -> Vec<PathBuf> {
         right_time.cmp(&left_time)
     });
     files
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn is_native_capture_file(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'))
+    {
+        return false;
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "mp4" | "mov"
+            )
+        })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn copy_native_capture(source: &Path, folder: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    let name = source
+        .file_name()
+        .ok_or_else(|| "撮影ファイル名を取得できません。".to_string())?;
+    let preferred = folder.join(name);
+    let (destination, mut output) = create_unique_file(folder, &preferred)?;
+    let copied =
+        std::fs::File::open(source).and_then(|mut input| std::io::copy(&mut input, &mut output));
+    match copied {
+        Ok(_) => Ok(destination),
+        Err(error) => {
+            let _ = std::fs::remove_file(&destination);
+            Err(error.to_string())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct NativeCaptureWatch {
+    started_at: Instant,
+    known_files: HashSet<PathBuf>,
+    pending_sizes: HashMap<PathBuf, (u64, u8)>,
+}
+
+#[cfg(target_os = "macos")]
+fn native_capture_directories(save_folder: &Path) -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let mut directories = vec![
+        save_folder.to_path_buf(),
+        home.join("Desktop"),
+        home.join("Documents"),
+        home.join("Downloads"),
+        home.join("Pictures"),
+        home.join("Movies"),
+    ];
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
+#[cfg(target_os = "macos")]
+fn scan_native_capture_files(directories: &[PathBuf]) -> HashMap<PathBuf, u64> {
+    let mut files = HashMap::new();
+    for directory in directories {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !is_native_capture_file(&path) {
+                continue;
+            }
+            if let Ok(metadata) = entry.metadata()
+                && metadata.is_file()
+            {
+                files.insert(path, metadata.len());
+            }
+        }
+    }
+    files
+}
+
+#[cfg(target_os = "macos")]
+fn completed_native_capture_files(
+    watch: &mut NativeCaptureWatch,
+    current: HashMap<PathBuf, u64>,
+) -> Vec<PathBuf> {
+    let mut ready = Vec::new();
+    for (path, size) in &current {
+        if watch.known_files.contains(path) {
+            continue;
+        }
+        let stable = match watch.pending_sizes.get_mut(path) {
+            Some((previous_size, stable_scans)) if *previous_size == *size => {
+                *stable_scans = stable_scans.saturating_add(1);
+                *stable_scans >= 2
+            }
+            Some((previous_size, stable_scans)) => {
+                *previous_size = *size;
+                *stable_scans = 0;
+                false
+            }
+            None => {
+                watch.pending_sizes.insert(path.clone(), (*size, 0));
+                false
+            }
+        };
+        if stable && *size > 0 {
+            ready.push(path.clone());
+        }
+    }
+    watch
+        .pending_sizes
+        .retain(|path, _| current.contains_key(path));
+    ready
 }
 
 fn recording_preview_display_size(
@@ -2581,7 +4489,7 @@ fn raise_window_above_system_bars(title: &str) {
 }
 
 #[cfg(target_os = "macos")]
-fn set_standard_quit_items_enabled(enabled: bool) {
+fn set_standard_quit_items_enabled(enabled: bool, _language: AppLanguage) {
     use objc2::{runtime::Sel, sel};
     use objc2_app_kit::NSApplication;
     use objc2_foundation::{MainThreadMarker, NSString};
@@ -2594,12 +4502,28 @@ fn set_standard_quit_items_enabled(enabled: bool) {
         return;
     };
     let terminate_action: Sel = sel!(terminate:);
+    let about_action: Sel = sel!(orderFrontStandardAboutPanel:);
+    let hide_action: Sel = sel!(hide:);
+    let hide_others_action: Sel = sel!(hideOtherApplications:);
+    let show_all_action: Sel = sel!(unhideAllApplications:);
     unsafe {
         for menu_item in main_menu.itemArray().iter() {
             let Some(submenu) = menu_item.submenu() else {
                 continue;
             };
             for action_item in submenu.itemArray().iter() {
+                let localized_title = match action_item.action() {
+                    Some(action) if action == about_action => Some("MacShotについて"),
+                    Some(action) if action == hide_action => Some("MacShotを隠す"),
+                    Some(action) if action == hide_others_action => Some("ほかを隠す"),
+                    Some(action) if action == show_all_action => Some("すべてを表示"),
+                    _ if action_item.submenu().is_some() => Some("サービス"),
+                    Some(action) if action == terminate_action => Some("MacShotを終了"),
+                    _ => None,
+                };
+                if let Some(title) = localized_title {
+                    action_item.setTitle(&NSString::from_str(title));
+                }
                 if action_item.action() == Some(terminate_action) {
                     let item_key = std::ptr::from_ref(&**action_item) as usize;
                     QUIT_MENU_KEY_EQUIVALENTS.with(|saved| {
@@ -3281,7 +5205,11 @@ fn record_screen_to_mp4(
         EncoderConfig::new()
             .bitrate(BitRate::from_bps(quality.mp4_bitrate()))
             .max_frame_rate(FrameRate::from_hz(quality.mp4_frame_rate as f32))
-            .usage_type(UsageType::ScreenContentRealTime),
+            .usage_type(UsageType::ScreenContentRealTime)
+            // OpenH264 ignores these defaults for screen-content encoding and logs a
+            // warning each time the encoder starts. Keep the effective behavior explicit.
+            .adaptive_quantization(false)
+            .background_detection(false),
     )
     .map_err(|error| error.to_string())?;
     let (sps, pps, initial_packets) = prime_h264_encoder(&mut h264, &first)?;
@@ -3619,42 +5547,69 @@ impl MacShot {
             return;
         }
         self.tray_initialized = true;
-        let show_window_item =
-            MenuItem::with_id("macshot.window.show", "MacShotを開く", true, None);
-        let capture_area_item =
-            MenuItem::with_id("macshot.capture.area", "範囲を選択して撮影…", true, None);
-        let capture_active_item = MenuItem::with_id(
-            "macshot.capture.active",
-            "アクティブウィンドウを撮影",
+        let show_window_item = MenuItem::with_id(
+            "macshot.window.show",
+            self.language.tray_label("show"),
             true,
             None,
         );
-        let capture_all_item = MenuItem::with_id("macshot.capture.all", "全画面を撮影", true, None);
+        let capture_area_item = MenuItem::with_id(
+            "macshot.capture.area",
+            self.language.tray_label("area"),
+            true,
+            None,
+        );
+        let capture_active_item = MenuItem::with_id(
+            "macshot.capture.active",
+            self.language.tray_label("active"),
+            true,
+            None,
+        );
+        let capture_all_item = MenuItem::with_id(
+            "macshot.capture.all",
+            self.language.tray_label("all"),
+            true,
+            None,
+        );
         let capture_selected_item = MenuItem::with_id(
             "macshot.capture.selected",
-            "選択中の撮影対象で撮影",
+            self.language.tray_label("selected"),
             true,
             None,
         );
         let continuous_capture_item = MenuItem::with_id(
             "macshot.capture.continuous",
-            "連続撮影モードを開始／終了",
+            self.language.tray_label("continuous"),
             true,
             None,
         );
         let native_screenshot_item = MenuItem::with_id(
             "macshot.capture.native",
-            "macOS標準の撮影・録画を開く…",
+            self.language.tray_label("native"),
             cfg!(target_os = "macos"),
             None,
         );
-        let capture_submenu = Submenu::new("スクリーンショット", true);
-        let capture_status_item =
-            MenuItem::with_id("macshot.capture.status", "連続撮影 — 停止中", false, None);
-        let recording_status_item =
-            MenuItem::with_id("macshot.recording.status", "録画時間 00:00", false, None);
-        let recording_item = MenuItem::with_id("macshot.record", "録画開始／停止", true, None);
-        let quit_item = MenuItem::with_id("macshot.quit", "終了", true, None);
+        let capture_submenu = Submenu::new(self.language.tray_label("capture"), true);
+        let capture_status_item = MenuItem::with_id(
+            "macshot.capture.status",
+            self.language.tray_label("capture_stopped"),
+            false,
+            None,
+        );
+        let recording_status_item = MenuItem::with_id(
+            "macshot.recording.status",
+            self.language.tray_label("record_time"),
+            false,
+            None,
+        );
+        let recording_item = MenuItem::with_id(
+            "macshot.record",
+            self.language.tray_label("record_toggle"),
+            true,
+            None,
+        );
+        let quit_item =
+            MenuItem::with_id("macshot.quit", self.language.tray_label("quit"), true, None);
         if let Err(error) = capture_submenu.append_items(&[
             &capture_area_item,
             &capture_active_item,
@@ -3761,23 +5716,24 @@ impl MacShot {
         self.tray_capture_status_state = Some(capture_status_state);
         let label = if active {
             format!(
-                "録画中 {}",
+                "{} {}",
+                self.language.tray_label("recording"),
                 recording_time_label(Duration::from_secs(seconds))
             )
         } else {
-            "録画時間 00:00".to_owned()
+            self.language.text("録画時間 00:00")
         };
         if let Some(item) = &self.tray_recording_status_item {
             item.set_text(label);
         }
         if let Some(item) = &self.tray_capture_status_item {
-            item.set_text(continuous_capture_status_label(
+            item.set_text(self.language.message(&continuous_capture_status_label(
                 self.continuous_capture,
                 self.continuous_capture_session_active,
                 self.capture_in_progress,
                 self.continuous_capture_saved_count,
                 self.continuous_capture_failed_count,
-            ));
+            )));
         }
         if let Some(tray) = &self._tray_icon {
             let icon = make_tray_icon(active);
@@ -3861,7 +5817,21 @@ impl MacShot {
                 .status()
             {
                 Ok(status) if status.success() => {
-                    self.status = "macOS標準の撮影パネルを開きました。撮影・録画の対象とオプションを選べます。".into();
+                    if self.auto_import_native_captures {
+                        let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
+                        let directories = native_capture_directories(&folder);
+                        let known_files = scan_native_capture_files(&directories)
+                            .into_keys()
+                            .collect();
+                        self.native_capture_watch = Some(NativeCaptureWatch {
+                            started_at: Instant::now(),
+                            known_files,
+                            pending_sizes: HashMap::new(),
+                        });
+                        self.status = "macOS標準パネルを開きました。撮影後の画像・録画を保存先へ自動で取り込みます。".into();
+                    } else {
+                        self.status = "macOS標準の撮影パネルを開きました。撮影・録画の対象とオプションを選べます。".into();
+                    }
                 }
                 Ok(status) => {
                     self.status = format!("macOS標準の撮影パネルを開けませんでした ({status})");
@@ -3875,6 +5845,65 @@ impl MacShot {
         {
             self.status = "macOS標準の撮影パネルはmacOSで利用できます。".into();
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn poll_native_capture_imports(&mut self, ctx: &egui::Context) {
+        if !self.auto_import_native_captures {
+            self.native_capture_watch = None;
+            return;
+        }
+        let Some(watch) = self.native_capture_watch.as_mut() else {
+            return;
+        };
+        if watch.started_at.elapsed() > Duration::from_secs(12 * 60 * 60) {
+            self.native_capture_watch = None;
+            return;
+        }
+
+        let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
+        let directories = native_capture_directories(&folder);
+        let current = scan_native_capture_files(&directories);
+        let ready = completed_native_capture_files(watch, current);
+
+        if ready.is_empty() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+            return;
+        }
+        let mut imported = 0;
+        let mut failures = Vec::new();
+        for source in ready {
+            if source.parent() == Some(folder.as_path()) {
+                imported += 1;
+            } else {
+                match copy_native_capture(&source, &folder) {
+                    Ok(_) => imported += 1,
+                    Err(error) => failures.push(error),
+                }
+            }
+            if let Some(watch) = self.native_capture_watch.as_mut() {
+                watch.known_files.insert(source.clone());
+                watch.pending_sizes.remove(&source);
+            }
+        }
+        if imported > 0 {
+            self.evidence_files = evidence_images(&folder);
+            self.recording_files = recording_files(&folder);
+            let failure_note = if failures.is_empty() {
+                String::new()
+            } else {
+                format!(" 一部失敗: {}", failures.join("、"))
+            };
+            self.status = format!(
+                "macOS標準パネルの撮影結果を{imported}件取り込みました。証跡一覧に追加しました。{failure_note}"
+            );
+        } else if !failures.is_empty() {
+            self.status = format!(
+                "標準パネルの撮影結果を取り込めませんでした: {}",
+                failures.join("、")
+            );
+        }
+        ctx.request_repaint_after(Duration::from_secs(1));
     }
 
     fn open_screen_recording_settings(&mut self) {
@@ -4268,6 +6297,7 @@ impl MacShot {
     fn save_preferences(&self) -> Result<(), String> {
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         save_preferences(&Preferences {
+            language: self.language,
             capture_hotkey: &self.capture_hotkey_text,
             recording_hotkey: &self.recording_hotkey_text,
             capture_target: &self.capture_target_setting(),
@@ -4277,6 +6307,7 @@ impl MacShot {
             annotation_color: &self.annotation_color,
             annotation_width: self.annotation_width,
             save_folder: &folder,
+            auto_import_native_captures: self.auto_import_native_captures,
             recording_format: self.recording_format,
             recording_quality: self.recording_quality,
             display_density: self.display_density,
@@ -4575,9 +6606,11 @@ impl MacShot {
     }
 
     fn show_region_overlay(&mut self, ctx: &egui::Context) {
+        let language = self.language;
+        let title = language.text("MacShot 範囲選択");
         let viewport_id = egui::ViewportId::from_hash_of("macshot-region-selector");
         let builder = egui::ViewportBuilder::default()
-            .with_title("MacShot 範囲選択")
+            .with_title(&title)
             .with_position(self.region_overlay_position)
             .with_inner_size(self.region_overlay_size)
             .with_min_inner_size(self.region_overlay_size)
@@ -4590,7 +6623,7 @@ impl MacShot {
         let mut action = None;
         ctx.show_viewport_immediate(viewport_id, builder, |viewport_ctx, _class| {
             #[cfg(target_os = "macos")]
-            raise_window_above_system_bars("MacShot 範囲選択");
+            raise_window_above_system_bars(&title);
 
             if viewport_ctx.input(|input| input.key_pressed(egui::Key::Escape))
                 || viewport_ctx.input(|input| input.viewport().close_requested())
@@ -4708,7 +6741,7 @@ impl MacShot {
                         painter.text(
                             screen.center_top() + egui::vec2(0.0, 30.0),
                             egui::Align2::CENTER_TOP,
-                            "ドラッグして撮影範囲を選択　·　Escでキャンセル",
+                            language.text("ドラッグして撮影範囲を選択　·　Escでキャンセル"),
                             egui::FontId::proportional(22.0),
                             egui::Color32::WHITE,
                         );
@@ -5161,7 +7194,7 @@ impl MacShot {
     fn show_croppable_image(&mut self, ui: &mut egui::Ui) {
         let Some(image) = &self.left_image else {
             ui.centered_and_justified(|ui| {
-                ui.label("画面全体またはウィンドウを撮影すると、ここにプレビューが表示されます。\n画像をドラッグして必要な範囲を切り出せます。");
+                ui.label(self.language.text("画面全体またはウィンドウを撮影すると、ここにプレビューが表示されます。\n画像をドラッグして必要な範囲を切り出せます。"));
             });
             return;
         };
@@ -5385,20 +7418,20 @@ fn compare_images(
 impl MacShot {
     fn target_caption(&self) -> String {
         match self.capture_target {
-            CaptureTarget::ActiveWindow => "アクティブウィンドウ".into(),
-            CaptureTarget::PrimaryDisplay => "メインディスプレイ".into(),
-            CaptureTarget::AllDisplays => "すべてのディスプレイ".into(),
+            CaptureTarget::ActiveWindow => self.language.text("アクティブウィンドウ"),
+            CaptureTarget::PrimaryDisplay => self.language.text("メインディスプレイ"),
+            CaptureTarget::AllDisplays => self.language.text("すべてのディスプレイ"),
             CaptureTarget::Display(index) => self
                 .monitors
                 .get(index)
                 .and_then(|monitor| monitor.name().ok())
-                .unwrap_or_else(|| format!("ディスプレイ {}", index + 1)),
+                .unwrap_or_else(|| format!("{} {}", self.language.text("Display"), index + 1)),
             CaptureTarget::Window(id) => self
                 .windows
                 .iter()
                 .find(|window| window.id == id)
                 .map(|window| window.title.clone())
-                .unwrap_or_else(|| "ウィンドウを選択".into()),
+                .unwrap_or_else(|| self.language.text("ウィンドウを選択")),
         }
     }
 
@@ -5434,10 +7467,10 @@ impl MacShot {
                     });
                     ui.add_space(22.0);
                     for (page, label) in [
-                        (Page::Capture, "◉  撮影・編集"),
-                        (Page::Evidence, "▦  証跡一覧"),
-                        (Page::Compare, "⇄  画像比較"),
-                        (Page::Settings, "⚙  設定"),
+                        (Page::Capture, self.language.page_label(Page::Capture)),
+                        (Page::Evidence, self.language.page_label(Page::Evidence)),
+                        (Page::Compare, self.language.page_label(Page::Compare)),
+                        (Page::Settings, self.language.page_label(Page::Settings)),
                     ] {
                         let selected = self.page == page;
                         let fill = if selected {
@@ -5474,9 +7507,9 @@ impl MacShot {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let record_label = if recording {
-                            "■  録画を終了"
+                            self.language.text("■  録画を終了")
                         } else {
-                            "●  録画"
+                            self.language.text("●  録画")
                         };
                         if ui
                             .add(
@@ -5497,9 +7530,9 @@ impl MacShot {
                             self.toggle_recording(ctx);
                         }
                         let capture_label = if self.capture_in_progress {
-                            "撮影中…"
+                            self.language.text("撮影中…")
                         } else {
-                            "撮影してプレビュー"
+                            self.language.text("撮影してプレビュー")
                         };
                         if ui
                             .add_enabled(!self.capture_in_progress, primary_button(capture_label))
@@ -5517,7 +7550,7 @@ impl MacShot {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("撮影対象").size(11.0).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(self.language.text("撮影対象")).size(11.0).color(TEXT_MUTED));
                         ui.add_space(4.0);
                         egui::ComboBox::from_id_salt("capture_target")
                             .selected_text(self.target_caption())
@@ -5526,27 +7559,27 @@ impl MacShot {
                                 ui.selectable_value(
                                     &mut self.capture_target,
                                     CaptureTarget::ActiveWindow,
-                                    "アクティブウィンドウ",
+                                    self.language.text("アクティブウィンドウ"),
                                 );
                                 ui.selectable_value(
                                     &mut self.capture_target,
                                     CaptureTarget::PrimaryDisplay,
-                                    "デスクトップ（メイン画面）",
+                                    self.language.text("デスクトップ（メイン画面）"),
                                 );
                                 ui.selectable_value(
                                     &mut self.capture_target,
                                     CaptureTarget::AllDisplays,
-                                    "全画面（全ディスプレイ）",
+                                    self.language.text("全画面（全ディスプレイ）"),
                                 );
                                 ui.separator();
                                 for (index, monitor) in self.monitors.iter().enumerate() {
                                     let name = monitor
                                         .name()
-                                        .unwrap_or_else(|_| format!("画面 {}", index + 1));
+                                        .unwrap_or_else(|_| format!("{} {}", self.language.text("Display"), index + 1));
                                     ui.selectable_value(
                                         &mut self.capture_target,
                                         CaptureTarget::Display(index),
-                                        format!("画面全体 — {name}"),
+                                        format!("{} — {name}", self.language.text("Full Display")),
                                     );
                                 }
                                 if !self.windows.is_empty() {
@@ -5555,16 +7588,16 @@ impl MacShot {
                                         ui.selectable_value(
                                             &mut self.capture_target,
                                             CaptureTarget::Window(window.id),
-                                            format!("ウィンドウ — {}", window.title),
+                                            format!("{} — {}", self.language.text("Window"), window.title),
                                         );
                                     }
                                 }
                             });
                     });
-                    if ui.add(primary_button("範囲を選択")).clicked() {
+                    if ui.add(primary_button(self.language.text("範囲を選択"))).clicked() {
                         self.begin_region_selection(ui.ctx());
                     }
-                    if ui.button("↻  ウィンドウ一覧を更新").clicked() {
+                    if ui.button(self.language.text("↻  ウィンドウ一覧を更新")).clicked() {
                         match discover_windows() {
                             Ok(windows) => {
                                 self.windows = windows;
@@ -5580,24 +7613,24 @@ impl MacShot {
                 });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("追加の操作").size(11.0).color(TEXT_MUTED));
+                    ui.label(egui::RichText::new(self.language.text("追加の操作")).size(11.0).color(TEXT_MUTED));
                     let continuous_label = if self.continuous_capture {
-                        "連続撮影を終了"
+                        self.language.text("連続撮影を終了")
                     } else {
-                        "連続撮影を開始"
+                        self.language.text("連続撮影を開始")
                     };
                     if ui.button(continuous_label).clicked() {
                         self.toggle_continuous_capture(ui.ctx());
                     }
                     if cfg!(target_os = "macos")
-                        && ui.button("macOS標準の撮影・録画…").clicked()
+                        && ui.button(self.language.text("macOS標準の撮影・録画…")).clicked()
                     {
                         self.open_native_screenshot();
                     }
                     ui.separator();
                     for (title, value) in [
-                        ("撮影", self.capture_hotkey_text.as_str()),
-                        ("録画", self.recording_hotkey_text.as_str()),
+                        (self.language.text("撮影"), self.capture_hotkey_text.as_str()),
+                        (self.language.text("録画"), self.recording_hotkey_text.as_str()),
                     ] {
                         egui::Frame::new()
                             .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 145))
@@ -5606,7 +7639,7 @@ impl MacShot {
                             .inner_margin(egui::Margin::symmetric(10, 7))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(title).size(10.0).color(TEXT_MUTED));
+                                    ui.label(egui::RichText::new(&title).size(10.0).color(TEXT_MUTED));
                                     ui.label(
                                         egui::RichText::new(hotkey_badge_text(value))
                                             .size(11.0)
@@ -5615,7 +7648,7 @@ impl MacShot {
                                 });
                             });
                     }
-                    if ui.button("▣  保存先を変更").clicked() {
+                    if ui.button(self.language.text("▣  保存先を変更")).clicked() {
                         self.choose_folder();
                     }
                 });
@@ -5633,24 +7666,24 @@ impl MacShot {
             glass_frame().show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new("画面撮影・録画には画面収録の許可が必要です。")
+                        egui::RichText::new(self.language.text("画面撮影・録画には画面収録の許可が必要です。"))
                             .strong(),
                     );
                     ui.label(
-                        egui::RichText::new("権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。")
+                        egui::RichText::new(self.language.text("権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。"))
                             .size(12.0)
                             .color(TEXT_MUTED),
                     );
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
-                        if ui.add(primary_button("画面収録設定を開く")).clicked() {
+                        if ui.add(primary_button(self.language.text("画面収録設定を開く"))).clicked() {
                             self.open_screen_recording_settings();
                         }
                         #[cfg(target_os = "macos")]
-                        if ui.button("FinderでMacShotを表示").clicked() {
+                        if ui.button(self.language.text("FinderでMacShotを表示")).clicked() {
                             self.reveal_macshot_app();
                         }
-                        if ui.button("権限状態を更新").clicked() {
+                        if ui.button(self.language.text("権限状態を更新")).clicked() {
                             self.refresh_permission_status();
                         }
                     });
@@ -5662,7 +7695,7 @@ impl MacShot {
         ui.add_space(12.0);
         glass_frame().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("▦  撮影済みを開く").clicked() {
+                if ui.button(self.language.text("▦  撮影済みを開く")).clicked() {
                     self.page = Page::Evidence;
                     let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                     self.evidence_files = evidence_images(&folder);
@@ -5680,35 +7713,37 @@ impl MacShot {
                         .strong(),
                     );
                     if ui
-                        .add_enabled(index > 0, egui::Button::new("‹ 前へ"))
+                        .add_enabled(index > 0, egui::Button::new(self.language.text("‹ 前へ")))
                         .clicked()
                     {
                         self.move_in_edit_queue(-1);
                     }
                     let has_next = index + 1 < self.editing_queue.len();
                     if ui
-                        .add_enabled(has_next, egui::Button::new("次へ ›"))
+                        .add_enabled(has_next, egui::Button::new(self.language.text("次へ ›")))
                         .clicked()
                     {
                         self.move_in_edit_queue(1);
                     }
                     if has_next
                         && self.has_pending_edit()
-                        && ui.add(primary_button("保存して次へ")).clicked()
+                        && ui
+                            .add(primary_button(self.language.text("保存して次へ")))
+                            .clicked()
                     {
                         self.save_then_next();
                     }
                 }
                 ui.label(
-                    egui::RichText::new("編集ツール")
+                    egui::RichText::new(self.language.text("編集ツール"))
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
                 ui.separator();
                 for (tool, label) in [
-                    (EditTool::Crop, "⌗  切り出し"),
-                    (EditTool::Rectangle, "□  赤枠"),
-                    (EditTool::Arrow, "↗  矢印"),
+                    (EditTool::Crop, self.language.text("⌗  切り出し")),
+                    (EditTool::Rectangle, self.language.text("□  赤枠")),
+                    (EditTool::Arrow, self.language.text("↗  矢印")),
                 ] {
                     let selected = self.edit_tool == tool;
                     if ui
@@ -5733,20 +7768,23 @@ impl MacShot {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.annotations.is_empty() {
-                        if ui.button("注釈を消去").clicked() {
+                        if ui.button(self.language.text("注釈を消去")).clicked() {
                             self.annotations.clear();
                             self.live_annotation = None;
                         }
-                        if ui.button("注釈画像を保存").clicked() {
+                        if ui.button(self.language.text("注釈画像を保存")).clicked() {
                             self.save_annotated_image();
                         }
                     }
                     if self.edit_tool == EditTool::Crop && self.crop_selection.is_some() {
-                        if ui.button("選択解除").clicked() {
+                        if ui.button(self.language.text("選択解除")).clicked() {
                             self.crop_selection = None;
                             self.crop_drag_start = None;
                         }
-                        if ui.add(primary_button("範囲を保存")).clicked() {
+                        if ui
+                            .add(primary_button(self.language.text("範囲を保存")))
+                            .clicked()
+                        {
                             self.save_crop();
                         }
                     }
@@ -5765,23 +7803,30 @@ impl MacShot {
                     ui.label(egui::RichText::new("◉").size(64.0).color(ACCENT));
                     ui.add_space(7.0);
                     ui.label(
-                        egui::RichText::new("証跡の撮影を始めましょう")
+                        egui::RichText::new(self.language.page_heading(Page::Capture))
                             .size(22.0)
                             .strong(),
                     );
                     ui.label(
-                        egui::RichText::new("撮影した画面は、ここで切り出しや注釈を追加できます。")
-                            .size(13.0)
-                            .color(TEXT_MUTED),
+                        egui::RichText::new(
+                            self.language
+                                .text("撮影した画面は、ここで切り出しや注釈を追加できます。"),
+                        )
+                        .size(13.0)
+                        .color(TEXT_MUTED),
                     );
                     ui.add_space(18.0);
-                    if ui.add(primary_button("撮影してプレビュー")).clicked() {
+                    if ui
+                        .add(primary_button(self.language.text("撮影してプレビュー")))
+                        .clicked()
+                    {
                         self.begin_capture(ctx);
                     }
                     ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new(format!(
-                            "ショートカット  {}",
+                            "{}  {}",
+                            self.language.text("ショートカット"),
                             hotkey_badge_text(&self.capture_hotkey_text)
                         ))
                         .size(11.0)
@@ -5793,21 +7838,29 @@ impl MacShot {
     }
 
     fn show_compare_page(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         glass_frame().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("画像比較").size(20.0).strong());
                     ui.label(
-                        egui::RichText::new("2枚の画面を並べて、変更点を確認します。")
-                            .color(TEXT_MUTED),
+                        egui::RichText::new(self.language.page_heading(Page::Compare))
+                            .size(20.0)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            language.text("2枚の画面を並べて、変更点を確認します。"),
+                        )
+                        .color(TEXT_MUTED),
                     );
                 });
                 ui.separator();
-                for (mode, label) in [
-                    (CompareMode::SideBySide, "左右"),
-                    (CompareMode::Overlay, "重ね合わせ"),
-                    (CompareMode::Difference, "差分"),
+                for mode in [
+                    CompareMode::SideBySide,
+                    CompareMode::Overlay,
+                    CompareMode::Difference,
                 ] {
+                    let label = self.language.compare_mode_label(mode);
                     let selected = self.compare_mode == mode;
                     if ui
                         .add(
@@ -5830,14 +7883,18 @@ impl MacShot {
                     }
                 }
                 ui.label(
-                    egui::RichText::new(format!("差分ピクセル  {}", self.diff_count))
-                        .size(11.0)
-                        .color(TEXT_MUTED),
+                    egui::RichText::new(format!(
+                        "{}  {}",
+                        language.text("差分ピクセル"),
+                        self.diff_count
+                    ))
+                    .size(11.0)
+                    .color(TEXT_MUTED),
                 );
-                if ui.button("＋  基準画像").clicked() {
+                if ui.button(language.text("＋  基準画像")).clicked() {
                     self.choose_image(true);
                 }
-                if ui.button("＋  比較画像").clicked() {
+                if ui.button(language.text("＋  比較画像")).clicked() {
                     self.choose_image(false);
                 }
             });
@@ -5861,9 +7918,9 @@ impl MacShot {
                             })
                             .unwrap_or_else(|| {
                                 if index == 0 {
-                                    "基準画像".into()
+                                    language.text("基準画像")
                                 } else {
-                                    "比較画像".into()
+                                    language.text("比較画像")
                                 }
                             });
                         glass_frame().show(column, |ui| {
@@ -5874,12 +7931,15 @@ impl MacShot {
                                 if let Some(image) = &self.left_image {
                                     Self::show_image(ui, image, &mut self.left_texture, "left");
                                 } else {
-                                    compare_empty_state(ui, "画像を選択してください");
+                                    compare_empty_state(
+                                        ui,
+                                        &language.text("画像を選択してください"),
+                                    );
                                 }
                             } else if let Some(image) = &self.right_image {
                                 Self::show_image(ui, image, &mut self.right_texture, "right");
                             } else {
-                                compare_empty_state(ui, "画像を選択してください");
+                                compare_empty_state(ui, &language.text("画像を選択してください"));
                             }
                         });
                     }
@@ -5890,7 +7950,10 @@ impl MacShot {
                     if let Some(image) = &self.overlay_image {
                         Self::show_image(ui, image, &mut self.overlay_texture, "overlay");
                     } else {
-                        compare_empty_state(ui, "比較する2枚の画像を選んでください");
+                        compare_empty_state(
+                            ui,
+                            &language.text("比較する2枚の画像を選んでください"),
+                        );
                     }
                 });
             }
@@ -5899,7 +7962,10 @@ impl MacShot {
                     if let Some(image) = &self.diff_image {
                         Self::show_image(ui, image, &mut self.diff_texture, "diff");
                     } else {
-                        compare_empty_state(ui, "比較する2枚の画像を選んでください");
+                        compare_empty_state(
+                            ui,
+                            &language.text("比較する2枚の画像を選んでください"),
+                        );
                     }
                 });
             }
@@ -5959,28 +8025,31 @@ impl MacShot {
     }
 
     fn show_evidence_page(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
-                    egui::RichText::new("撮影済みの画像・録画")
+                    egui::RichText::new(self.language.page_heading(Page::Evidence))
                         .size(24.0)
                         .strong(),
                 );
                 ui.label(
-                    egui::RichText::new("録画は一覧からプレビュー、画像は編集して保存できます。")
-                        .color(TEXT_MUTED),
+                    egui::RichText::new(
+                        language.text("録画は一覧からプレビュー、画像は編集して保存できます。"),
+                    )
+                    .color(TEXT_MUTED),
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("▣  保存先を開く").clicked() {
+                if ui.button(language.text("▣  保存先を開く")).clicked() {
                     #[cfg(target_os = "macos")]
                     let command = "open";
                     #[cfg(target_os = "windows")]
                     let command = "explorer";
                     let _ = std::process::Command::new(command).arg(&folder).spawn();
                 }
-                if ui.button("↻  更新").clicked() {
+                if ui.button(language.text("↻  更新")).clicked() {
                     self.evidence_files = evidence_images(&folder);
                     self.recording_files = recording_files(&folder);
                 }
@@ -5991,13 +8060,13 @@ impl MacShot {
             ui.label(egui::RichText::new(folder.display().to_string()).size(11.0).color(TEXT_MUTED));
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("録画一覧").size(19.0).strong());
-                ui.label(egui::RichText::new(format!("{} 件（GIF / MP4）", self.recording_files.len())).color(TEXT_MUTED));
+                ui.label(egui::RichText::new(language.text("録画一覧")).size(19.0).strong());
+                ui.label(egui::RichText::new(format!("{} {}", self.recording_files.len(), language.text("recording formats"))).color(TEXT_MUTED));
             });
-            ui.label(egui::RichText::new("録画名を選ぶとプレビューを表示します。MP4の音声を聴くときは「外部で開く」を使ってください。").size(11.0).color(TEXT_MUTED));
+            ui.label(egui::RichText::new(language.text("GIF・MP4はアプリ内でプレビューできます。MOVは「外部で開く」から再生できます。")).size(11.0).color(TEXT_MUTED));
             ui.add_space(8.0);
             if self.recording_files.is_empty() {
-                ui.label(egui::RichText::new("録画が見つかりません。保存先を確認するか「更新」を押してください。").color(TEXT_MUTED));
+                ui.label(egui::RichText::new(language.text("録画が見つかりません。保存先を確認するか「更新」を押してください。")).color(TEXT_MUTED));
             } else {
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     let files = self.recording_files.clone();
@@ -6006,17 +8075,28 @@ impl MacShot {
                         let name = path.file_name().unwrap_or_default().to_string_lossy();
                         ui.horizontal_wrapped(|ui| {
                             if ui.selectable_label(selected, format!("▧  {name}")).clicked() {
-                                match recording_preview(&path) {
-                                    Ok((image, details)) => {
-                                        self.recording_playback = None;
-                                        self.recording_preview_path = Some(path.clone());
-                                        self.recording_preview_image = Some(image);
-                                        self.recording_preview_texture = None;
-                                        self.recording_preview_details = Some(details.clone());
-                                        self.scroll_to_recording_preview = true;
-                                        self.status = format!("録画を読み込みました: {details}");
+                                let is_native_mov = path
+                                    .extension()
+                                    .and_then(|extension| extension.to_str())
+                                    .is_some_and(|extension| extension.eq_ignore_ascii_case("mov"));
+                                if is_native_mov {
+                                    self.status = language.text("MOV形式は「外部で開く」から再生できます。");
+                                } else {
+                                    match recording_preview(&path) {
+                                        Ok((image, details)) => {
+                                            self.recording_playback = None;
+                                            self.recording_preview_path = Some(path.clone());
+                                            self.recording_preview_image = Some(image);
+                                            self.recording_preview_texture = None;
+                                            self.recording_preview_details = Some(details.clone());
+                                            self.scroll_to_recording_preview = true;
+                                            self.status =
+                                                format!("録画を読み込みました: {details}");
+                                        }
+                                        Err(error) => {
+                                            self.status = format!("{}: {error}", language.message("録画を読み込めませんでした"));
+                                        }
                                     }
-                                    Err(error) => self.status = format!("録画を読み込めませんでした: {error}"),
                                 }
                             }
                             let recording_summary = std::fs::metadata(&path)
@@ -6028,13 +8108,13 @@ impl MacShot {
                                         .to_ascii_uppercase();
                                     format!("{format} · {}", format_file_size(metadata.len()))
                                 })
-                                .unwrap_or_else(|_| "録画情報を読み込めません".into());
+                                .unwrap_or_else(|_| language.text("録画情報を読み込めません"));
                             ui.label(
                                 egui::RichText::new(recording_summary)
                                     .size(11.0)
                                     .color(TEXT_MUTED),
                             );
-                            if ui.small_button("外部で開く").clicked() {
+                            if ui.small_button(language.text("外部で開く")).clicked() {
                                 #[cfg(target_os = "macos")]
                                 let command = "open";
                                 #[cfg(target_os = "windows")]
@@ -6054,7 +8134,7 @@ impl MacShot {
                         .recording_playback
                         .as_ref()
                         .is_some_and(|playback| playback.playing);
-                    if ui.button(if playing { "⏸ 一時停止" } else { "▶ アプリ内再生" }).clicked() {
+                    if ui.button(if playing { language.text("⏸ 一時停止") } else { language.text("▶ アプリ内再生") }).clicked() {
                         let next_playing;
                         if let Some(playback) = &mut self.recording_playback {
                             playback.playing = !playback.playing;
@@ -6087,12 +8167,12 @@ impl MacShot {
                 ui.vertical_centered(|ui| {
                     ui.add_space(34.0);
                     ui.label(egui::RichText::new("▦").size(42.0).color(ACCENT_BRIGHT));
-                    ui.label(egui::RichText::new("まだ画像がありません").size(17.0).strong());
-                    ui.label(egui::RichText::new("撮影した画像はここに並びます。保存先を変更した場合は設定を確認してください。").color(TEXT_MUTED));
+                    ui.label(egui::RichText::new(language.text("まだ画像がありません")).size(17.0).strong());
+                    ui.label(egui::RichText::new(language.text("撮影した画像はここに並びます。保存先を変更した場合は設定を確認してください。")).color(TEXT_MUTED));
                     ui.add_space(24.0);
                 });
             } else {
-                ui.label(format!("{} 枚の画像", self.evidence_files.len()));
+                ui.label(language.message(&format!("{} 枚の画像", self.evidence_files.len())));
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height(570.0).show(ui, |ui| {
                     let files = self.evidence_files.clone();
@@ -6103,7 +8183,7 @@ impl MacShot {
                             .ok()
                             .map(chrono::DateTime::<chrono::Local>::from)
                             .map(|date| date.format("%Y-%m-%d %H:%M:%S").to_string())
-                            .unwrap_or_else(|| "日時不明".into());
+                            .unwrap_or_else(|| language.text("日時不明"));
                         egui::Frame::new()
                             .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 135))
                             .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(18)))
@@ -6117,7 +8197,7 @@ impl MacShot {
                                         ui.label(egui::RichText::new(modified).size(10.0).color(TEXT_MUTED));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.add(primary_button("画像を編集")).clicked() {
+                                        if ui.add(primary_button(language.text("画像を編集"))).clicked() {
                                             self.open_evidence_image(self.evidence_files.clone(), index);
                                         }
                                     });
@@ -6131,18 +8211,62 @@ impl MacShot {
     }
 
     fn show_settings_page(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("設定").size(24.0).strong());
+        ui.label(
+            egui::RichText::new(self.language.page_heading(Page::Settings))
+                .size(24.0)
+                .strong(),
+        );
+        let previous_language = self.language;
+        ui.horizontal(|ui| {
+            ui.label(self.language.language_heading());
+            egui::ComboBox::from_id_salt("app_language")
+                .selected_text(self.language.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.language, AppLanguage::Japanese, "日本語");
+                    ui.selectable_value(&mut self.language, AppLanguage::English, "English");
+                    ui.selectable_value(
+                        &mut self.language,
+                        AppLanguage::SimplifiedChinese,
+                        "简体中文",
+                    );
+                    ui.selectable_value(
+                        &mut self.language,
+                        AppLanguage::TraditionalChinese,
+                        "繁體中文",
+                    );
+                });
+        });
+        if self.language != previous_language {
+            if let Err(error) = self.save_preferences() {
+                self.language = previous_language;
+                self.settings_error = Some(format!("言語設定を保存できません: {error}"));
+            } else {
+                self.settings_error = None;
+                self.status = "言語設定を保存しました。".into();
+                self._tray_icon = None;
+                self.tray_initialized = false;
+                self.tray_capture_status_item = None;
+                self.tray_recording_status_item = None;
+                self.tray_recording_state = None;
+                self.tray_recording_seconds = None;
+                self.tray_capture_status_state = None;
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("MacShotを自分の撮影手順に合わせます。").color(TEXT_MUTED),
+                egui::RichText::new(self.language.text("MacShotを自分の撮影手順に合わせます。"))
+                    .color(TEXT_MUTED),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.editing_settings_layout {
-                    if ui.button("キャンセル").clicked() {
+                    if ui.button(self.language.text("キャンセル")).clicked() {
                         self.settings_layout = self.saved_settings_layout.clone();
                         self.editing_settings_layout = false;
                     }
-                    if ui.add(primary_button("保存して固定")).clicked() {
+                    if ui
+                        .add(primary_button(self.language.text("保存して固定")))
+                        .clicked()
+                    {
                         let previous_saved_layout = self.saved_settings_layout.clone();
                         self.saved_settings_layout = self.settings_layout.clone();
                         match self.save_preferences() {
@@ -6158,14 +8282,17 @@ impl MacShot {
                             }
                         }
                     }
-                } else if ui.button("カード配置を調整").clicked() {
+                } else if ui.button(self.language.text("カード配置を調整")).clicked() {
                     self.saved_settings_layout = self.settings_layout.clone();
                     self.editing_settings_layout = true;
                 }
             });
         });
         if let Some(error) = &self.settings_error {
-            ui.colored_label(egui::Color32::from_rgb(188, 51, 73), error);
+            ui.colored_label(
+                egui::Color32::from_rgb(188, 51, 73),
+                self.language.message(error),
+            );
         }
         ui.add_space(12.0);
 
@@ -6228,12 +8355,16 @@ impl MacShot {
         ui.push_id(id.setting(), |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} · 配置", id.label()))
-                        .size(11.0)
-                        .color(TEXT_MUTED),
+                    egui::RichText::new(format!(
+                        "{} · {}",
+                        self.language.text(id.label()),
+                        self.language.text("配置")
+                    ))
+                    .size(11.0)
+                    .color(TEXT_MUTED),
                 );
                 if ui
-                    .add_enabled(index > 0, egui::Button::new("↑ 上へ"))
+                    .add_enabled(index > 0, egui::Button::new(self.language.text("↑ 上へ")))
                     .clicked()
                 {
                     self.settings_layout.swap(index, index - 1);
@@ -6241,7 +8372,7 @@ impl MacShot {
                 if ui
                     .add_enabled(
                         index + 1 < self.settings_layout.len(),
-                        egui::Button::new("↓ 下へ"),
+                        egui::Button::new(self.language.text("↓ 下へ")),
                     )
                     .clicked()
                 {
@@ -6249,8 +8380,8 @@ impl MacShot {
                 }
                 if let Some(card) = self.settings_layout.iter_mut().find(|card| card.id == id) {
                     let width_label = match card.width {
-                        SettingsCardWidth::Half => "幅: 半分",
-                        SettingsCardWidth::Full => "幅: 全体",
+                        SettingsCardWidth::Half => self.language.text("幅: 半分"),
+                        SettingsCardWidth::Full => self.language.text("幅: 全体"),
                     };
                     if ui.button(width_label).clicked() {
                         card.width = match card.width {
@@ -6259,9 +8390,9 @@ impl MacShot {
                         };
                     }
                     let padding_label = match card.padding {
-                        SettingsCardPadding::Compact => "余白: 小",
-                        SettingsCardPadding::Standard => "余白: 中",
-                        SettingsCardPadding::Spacious => "余白: 大",
+                        SettingsCardPadding::Compact => self.language.text("余白: 小"),
+                        SettingsCardPadding::Standard => self.language.text("余白: 中"),
+                        SettingsCardPadding::Spacious => self.language.text("余白: 大"),
                     };
                     if ui.button(padding_label).clicked() {
                         card.padding = match card.padding {
@@ -6278,32 +8409,38 @@ impl MacShot {
 
     fn show_display_settings_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new("表示").size(18.0).strong());
-            ui.label(egui::RichText::new("文字サイズと画面の密度").color(TEXT_MUTED));
+            ui.label(
+                egui::RichText::new(self.language.text("表示"))
+                    .size(18.0)
+                    .strong(),
+            );
+            ui.label(
+                egui::RichText::new(self.language.text("文字サイズと画面の密度")).color(TEXT_MUTED),
+            );
         });
         ui.add_space(8.0);
         let display_context = ui.ctx().clone();
         ui.columns(2, |columns| {
             columns[0].horizontal(|ui| {
-                ui.label("表示量");
+                ui.label(self.language.text("表示量"));
                 let previous = self.display_density;
                 egui::ComboBox::from_id_salt("display_density")
-                    .selected_text(self.display_density.label())
+                    .selected_text(self.language.text(self.display_density.label()))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.display_density,
                             DisplayDensity::Compact,
-                            DisplayDensity::Compact.label(),
+                            self.language.text(DisplayDensity::Compact.label()),
                         );
                         ui.selectable_value(
                             &mut self.display_density,
                             DisplayDensity::Standard,
-                            DisplayDensity::Standard.label(),
+                            self.language.text(DisplayDensity::Standard.label()),
                         );
                         ui.selectable_value(
                             &mut self.display_density,
                             DisplayDensity::Relaxed,
-                            DisplayDensity::Relaxed.label(),
+                            self.language.text(DisplayDensity::Relaxed.label()),
                         );
                     });
                 if self.display_density != previous {
@@ -6323,7 +8460,7 @@ impl MacShot {
             let mut save_font_size = false;
             columns[1].vertical(|ui| {
                 ui.horizontal(|ui| {
-                    ui.label("文字サイズ");
+                    ui.label(self.language.text("文字サイズ"));
                     if ui.button("− 5%").clicked() {
                         self.font_size_percent = self.font_size_percent.saturating_sub(5).max(80);
                         save_font_size = true;
@@ -6370,33 +8507,40 @@ impl MacShot {
             }
         });
         ui.label(
-            egui::RichText::new(
+            egui::RichText::new(self.language.text(
                 "コンパクトにすると一画面に多く表示し、文字サイズを上げると全体を拡大します。",
-            )
+            ))
             .size(11.0)
             .color(TEXT_MUTED),
         );
     }
 
     fn show_shortcut_settings_contents(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("ショートカット").size(18.0).strong());
         ui.label(
-            egui::RichText::new("どのアプリを使っていても呼び出せます。設定後すぐに反映されます.")
-                .color(TEXT_MUTED),
+            egui::RichText::new(self.language.text("ショートカット"))
+                .size(18.0)
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(
+                self.language
+                    .text("どのアプリを使っていても呼び出せます。設定後すぐに反映されます."),
+            )
+            .color(TEXT_MUTED),
         );
         ui.add_space(12.0);
         egui::Grid::new("shortcut_settings")
             .num_columns(2)
             .spacing([12.0, 10.0])
             .show(ui, |ui| {
-                ui.label("スクリーンショット");
+                ui.label(self.language.text("スクリーンショット"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.capture_hotkey_text)
                         .desired_width(220.0)
                         .hint_text("Alt+Shift+KeyS"),
                 );
                 ui.end_row();
-                ui.label("録画の開始／終了");
+                ui.label(self.language.text("録画の開始／終了"));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.recording_hotkey_text)
                         .desired_width(220.0)
@@ -6406,17 +8550,26 @@ impl MacShot {
             });
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("例: Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4")
-                .size(11.0)
-                .color(TEXT_MUTED),
+            egui::RichText::new(
+                self.language
+                    .text("例: Alt+Shift+KeyS、Control+Alt+KeyF、Super+Shift+Key4"),
+            )
+            .size(11.0)
+            .color(TEXT_MUTED),
         );
         ui.label(
-            egui::RichText::new("macOSのAltはOptionキーです。WindowsではAltキーとして動作します。")
-                .size(11.0)
-                .color(TEXT_MUTED),
+            egui::RichText::new(
+                self.language
+                    .text("macOSのAltはOptionキーです。WindowsではAltキーとして動作します。"),
+            )
+            .size(11.0)
+            .color(TEXT_MUTED),
         );
         ui.add_space(10.0);
-        if ui.add(primary_button("設定を保存して反映")).clicked() {
+        if ui
+            .add(primary_button(self.language.text("設定を保存して反映")))
+            .clicked()
+        {
             self.apply_hotkey_settings();
         }
     }
@@ -6466,25 +8619,34 @@ impl MacShot {
             height,
         );
         ui.add_space(4.0);
-        ui.label(egui::RichText::new("予想ファイルサイズ（1分録画）").strong());
+        ui.label(egui::RichText::new(self.language.text("予想ファイルサイズ（1分録画）")).strong());
         match self.recording_format {
             RecordingFormat::Mp4 => {
-                ui.label(format!("約 {}", format_estimated_size(estimate.high_bytes)));
+                ui.label(format!(
+                    "{} {}",
+                    self.language.text("約"),
+                    format_estimated_size(estimate.high_bytes)
+                ));
                 ui.label(
-                    egui::RichText::new("映像ビットレート・AAC音声・コンテナ分を含む目安です。")
-                        .size(11.0)
-                        .color(TEXT_MUTED),
+                    egui::RichText::new(
+                        self.language
+                            .text("映像ビットレート・AAC音声・コンテナ分を含む目安です。"),
+                    )
+                    .size(11.0)
+                    .color(TEXT_MUTED),
                 );
             }
             RecordingFormat::Gif => {
                 ui.label(format!(
-                    "約 {}〜{}",
+                    "{} {}–{}",
+                    self.language.text("約"),
                     format_estimated_size(estimate.low_bytes),
                     format_estimated_size(estimate.high_bytes)
                 ));
                 ui.label(
                     egui::RichText::new(
-                        "画面の動きや色で大きく変わります。解像度とfpsからの概算です。",
+                        self.language
+                            .text("画面の動きや色で大きく変わります。解像度とfpsからの概算です。"),
                     )
                     .size(11.0)
                     .color(TEXT_MUTED),
@@ -6492,7 +8654,12 @@ impl MacShot {
             }
         }
         let dimensions_note = if approximate {
-            format!("{}×{} px（メイン画面を仮定）", width, height)
+            format!(
+                "{}×{} px ({})",
+                width,
+                height,
+                self.language.text("メイン画面を仮定")
+            )
         } else {
             format!("{}×{} px", width, height)
         };
@@ -6504,13 +8671,17 @@ impl MacShot {
     }
 
     fn show_recording_settings_contents(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("録画").size(18.0).strong());
+        ui.label(
+            egui::RichText::new(self.language.text("録画"))
+                .size(18.0)
+                .strong(),
+        );
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label("保存形式");
+            ui.label(self.language.text("保存形式"));
             let previous = self.recording_format;
             egui::ComboBox::from_id_salt("recording_format")
-                .selected_text(self.recording_format.label())
+                .selected_text(self.language.text(self.recording_format.label()))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.recording_format, RecordingFormat::Gif, "GIF");
                     ui.selectable_value(
@@ -6530,16 +8701,19 @@ impl MacShot {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("録画解像度");
+            ui.label(self.language.text("録画解像度"));
             let previous = self.recording_quality.resolution;
             egui::ComboBox::from_id_salt("recording_resolution")
-                .selected_text(self.recording_quality.resolution.label())
+                .selected_text(
+                    self.language
+                        .text(self.recording_quality.resolution.label()),
+                )
                 .show_ui(ui, |ui| {
                     for resolution in RecordingResolution::ALL {
                         ui.selectable_value(
                             &mut self.recording_quality.resolution,
                             resolution,
-                            resolution.label(),
+                            self.language.text(resolution.label()),
                         );
                     }
                 });
@@ -6557,33 +8731,39 @@ impl MacShot {
             }
         });
         ui.label(
-            egui::RichText::new("選んだ高さを上限にして縮小します。元の画面より大きくはしません。")
-                .size(11.0)
-                .color(TEXT_MUTED),
+            egui::RichText::new(
+                self.language
+                    .text("選んだ高さを上限にして縮小します。元の画面より大きくはしません。"),
+            )
+            .size(11.0)
+            .color(TEXT_MUTED),
         );
         match self.recording_format {
             RecordingFormat::Gif => {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("GIFの画質").strong());
+                ui.label(egui::RichText::new(self.language.text("GIFの画質")).strong());
                 ui.label(
-                    egui::RichText::new("色の再現を上げるほど、変換に時間がかかることがあります。")
-                        .size(11.0)
-                        .color(TEXT_MUTED),
+                    egui::RichText::new(
+                        self.language
+                            .text("色の再現を上げるほど、変換に時間がかかることがあります。"),
+                    )
+                    .size(11.0)
+                    .color(TEXT_MUTED),
                 );
                 let quality = ui.add(
                     egui::Slider::new(&mut self.recording_quality.gif_quality_percent, 10..=100)
                         .suffix("%")
-                        .text("色の再現"),
+                        .text(self.language.text("色の再現")),
                 );
                 self.save_settings_after_slider_change(&quality, ui, "録画設定を保存しました。");
                 let frame_rate = ui.add(
                     egui::Slider::new(&mut self.recording_quality.gif_frame_rate, 1..=30)
                         .suffix(" fps")
-                        .text("なめらかさ"),
+                        .text(self.language.text("なめらかさ")),
                 );
                 self.save_settings_after_slider_change(&frame_rate, ui, "録画設定を保存しました。");
                 ui.label(
-                    egui::RichText::new("GIFは音声なしです。")
+                    egui::RichText::new(self.language.text("GIFは音声なしです。"))
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
@@ -6594,18 +8774,19 @@ impl MacShot {
                 let bitrate = ui.add(
                     egui::Slider::new(&mut self.recording_quality.mp4_bitrate_mbps, 2..=30)
                         .suffix(" Mbps")
-                        .text("画質・容量"),
+                        .text(self.language.text("画質・容量")),
                 );
                 self.save_settings_after_slider_change(&bitrate, ui, "録画設定を保存しました。");
                 let frame_rate = ui.add(
                     egui::Slider::new(&mut self.recording_quality.mp4_frame_rate, 5..=60)
                         .suffix(" fps")
-                        .text("なめらかさ"),
+                        .text(self.language.text("なめらかさ")),
                 );
                 self.save_settings_after_slider_change(&frame_rate, ui, "録画設定を保存しました。");
                 ui.label(
                     egui::RichText::new(
-                        "システム音声を録音し、マイク許可時はマイク音声も追加します。",
+                        self.language
+                            .text("システム音声を録音し、マイク許可時はマイク音声も追加します。"),
                     )
                     .size(11.0)
                     .color(TEXT_MUTED),
@@ -6615,27 +8796,34 @@ impl MacShot {
         }
         if cfg!(target_os = "macos") {
             ui.add_space(8.0);
-            if ui.button("macOS標準の撮影・録画を開く").clicked() {
+            if ui
+                .button(self.language.text("macOS標準の撮影・録画を開く"))
+                .clicked()
+            {
                 self.open_native_screenshot();
             }
         }
     }
 
     fn show_capture_settings_contents(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("撮影の動作").size(18.0).strong());
         ui.label(
-            egui::RichText::new(
+            egui::RichText::new(self.language.text("撮影の動作"))
+                .size(18.0)
+                .strong(),
+        );
+        ui.label(
+            egui::RichText::new(self.language.text(
                 "撮影対象や画像に記録する情報を調整できます。設定は次回起動後も引き継がれます。",
-            )
+            ))
             .color(TEXT_MUTED),
         );
         ui.add_space(12.0);
         ui.columns(2, |columns| {
             glass_frame().show(&mut columns[0], |ui| {
-                ui.label(egui::RichText::new("撮影とファイル名").size(16.0).strong());
+                ui.label(egui::RichText::new(self.language.text("撮影とファイル名")).size(16.0).strong());
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new("既定の撮影対象")
+                    egui::RichText::new(self.language.text("既定の撮影対象"))
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
@@ -6646,80 +8834,98 @@ impl MacShot {
                         ui.selectable_value(
                             &mut self.capture_target,
                             CaptureTarget::ActiveWindow,
-                            "アクティブウィンドウ",
+                            self.language.text("アクティブウィンドウ"),
                         );
                         ui.selectable_value(
                             &mut self.capture_target,
                             CaptureTarget::PrimaryDisplay,
-                            "デスクトップ（メイン画面）",
+                            self.language.text("デスクトップ（メイン画面）"),
                         );
                         ui.selectable_value(
                             &mut self.capture_target,
                             CaptureTarget::AllDisplays,
-                            "全画面（全ディスプレイ）",
+                            self.language.text("全画面（全ディスプレイ）"),
                         );
                         for (index, monitor) in self.monitors.iter().enumerate() {
                             let name = monitor
                                 .name()
-                                .unwrap_or_else(|_| format!("画面 {}", index + 1));
+                                .unwrap_or_else(|_| format!("{} {}", self.language.text("Display"), index + 1));
                             ui.selectable_value(
                                 &mut self.capture_target,
                                 CaptureTarget::Display(index),
-                                format!("画面全体 — {name}"),
+                                format!("{} — {name}", self.language.text("Full Display")),
                             );
                         }
                         for window in &self.windows {
                             ui.selectable_value(
                                 &mut self.capture_target,
                                 CaptureTarget::Window(window.id),
-                                format!("ウィンドウ — {}", window.title),
+                                format!("{} — {}", self.language.text("Window"), window.title),
                             );
                         }
                     });
                 ui.add_space(12.0);
                 ui.label(
-                    egui::RichText::new("ファイル名の先頭")
+                    egui::RichText::new(self.language.text("ファイル名の先頭"))
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
                 ui.add(egui::TextEdit::singleline(&mut self.filename_prefix).desired_width(240.0));
                 ui.add_space(8.0);
-                ui.checkbox(&mut self.timestamp_enabled, "画像に撮影日時を表示");
-                ui.checkbox(&mut self.show_capture_notice, "撮影後に完了小窓を表示");
+                ui.checkbox(&mut self.timestamp_enabled, self.language.text("画像に撮影日時を表示"));
+                ui.checkbox(&mut self.show_capture_notice, self.language.text("撮影後に完了小窓を表示"));
+                #[cfg(target_os = "macos")]
+                {
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        &mut self.auto_import_native_captures,
+                        self.language.text("macOS標準パネルの撮影結果を自動で取り込む"),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            self.language.text("オンにすると、MacShotから標準パネルを開いた後に保存された画像・録画を探し、保存先へコピーします。対象はデスクトップ、書類、ダウンロード、ピクチャ、ムービーです。"),
+                        )
+                        .size(10.0)
+                        .color(TEXT_MUTED),
+                    );
+                }
             });
             glass_frame().show(&mut columns[1], |ui| {
-                ui.label(egui::RichText::new("注釈").size(16.0).strong());
+                ui.label(egui::RichText::new(self.language.text("注釈")).size(16.0).strong());
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("色").size(11.0).color(TEXT_MUTED));
+                ui.label(egui::RichText::new(self.language.text("色")).size(11.0).color(TEXT_MUTED));
                 egui::ComboBox::from_id_salt("annotation_color_setting")
                     .selected_text(match self.annotation_color.as_str() {
-                        "yellow" => "黄色",
-                        "blue" => "青色",
-                        _ => "赤色",
+                        "yellow" => self.language.text("黄色"),
+                        "blue" => self.language.text("青色"),
+                        _ => self.language.text("赤色"),
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.annotation_color, "red".into(), "赤色");
-                        ui.selectable_value(&mut self.annotation_color, "yellow".into(), "黄色");
-                        ui.selectable_value(&mut self.annotation_color, "blue".into(), "青色");
+                        ui.selectable_value(&mut self.annotation_color, "red".into(), self.language.text("赤色"));
+                        ui.selectable_value(&mut self.annotation_color, "yellow".into(), self.language.text("黄色"));
+                        ui.selectable_value(&mut self.annotation_color, "blue".into(), self.language.text("青色"));
                     });
                 ui.add_space(10.0);
-                ui.add(egui::Slider::new(&mut self.annotation_width, 1.0..=8.0).text("線の太さ"));
+                ui.add(egui::Slider::new(&mut self.annotation_width, 1.0..=8.0).text(self.language.text("線の太さ")));
                 ui.add_space(18.0);
                 let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
-                ui.label(egui::RichText::new("保存先").size(11.0).color(TEXT_MUTED));
+                ui.label(egui::RichText::new(self.language.text("保存先")).size(11.0).color(TEXT_MUTED));
                 ui.label(
                     egui::RichText::new(folder.display().to_string())
                         .size(12.0)
                         .monospace(),
                 );
                 ui.add_space(6.0);
-                if ui.button("保存先を変更").clicked() {
+                if ui.button(self.language.text("保存先を変更")).clicked() {
                     self.choose_folder();
                 }
             });
         });
         ui.add_space(10.0);
-        if ui.add(primary_button("撮影設定を保存")).clicked() {
+        if ui
+            .add(primary_button(self.language.text("撮影設定を保存")))
+            .clicked()
+        {
             match self.save_preferences() {
                 Ok(()) => self.status = "撮影設定を保存しました。".into(),
                 Err(error) => self.settings_error = Some(format!("設定を保存できません: {error}")),
@@ -6728,13 +8934,14 @@ impl MacShot {
     }
 
     fn show_permission_panel(&mut self, ui: &mut egui::Ui, padding: SettingsCardPadding) {
+        let language = self.language;
         settings_card_frame(padding).show(ui, |ui| {
             if self.editing_settings_layout {
                 self.show_settings_card_controls(ui, SettingsCardId::Permissions);
             }
             ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new("権限とデバイス").size(18.0).strong());
-                if ui.button("↻  権限状態を更新").clicked() {
+                ui.label(egui::RichText::new(language.text("権限とデバイス")).size(18.0).strong());
+                if ui.button(language.text("↻  権限状態を更新")).clicked() {
                     self.refresh_permission_status();
                 }
             });
@@ -6743,7 +8950,8 @@ impl MacShot {
             #[cfg(target_os = "macos")]
             if let Some(app_path) = current_macos_app_bundle_path() {
                 let running_copy = format!(
-                    "起動中のMacShot: v{} · {}",
+                        "{}: v{} · {}",
+                        language.text("起動中のMacShot"),
                     env!("CARGO_PKG_VERSION"),
                     app_path.display()
                 );
@@ -6768,31 +8976,31 @@ impl MacShot {
             ui.columns(2, |columns| {
                 columns[0].vertical(|ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("画面収録・システム音声");
+                        ui.label(language.text("画面収録・システム音声"));
                         if screen_granted {
-                            ui.colored_label(egui::Color32::from_rgb(38, 132, 88), "許可済み");
+                            ui.colored_label(egui::Color32::from_rgb(38, 132, 88), language.text("許可済み"));
                         } else {
                             ui.colored_label(
                                 egui::Color32::from_rgb(190, 105, 32),
-                                "未許可、またはmacOSへの反映待ち",
+                                language.text("未許可、またはmacOSへの反映待ち"),
                             );
                         }
                     });
                     #[cfg(target_os = "macos")]
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("画面・音声の設定を開く").clicked() {
+                        if ui.button(language.text("画面・音声の設定を開く")).clicked() {
                             self.open_screen_recording_settings();
                         }
-                        if ui.button("FinderでMacShotを表示").clicked() {
+                        if ui.button(language.text("FinderでMacShotを表示")).clicked() {
                             self.reveal_macshot_app();
                         }
                     });
                     #[cfg(target_os = "windows")]
-                    ui.label(egui::RichText::new("Windowsでは個別の画面収録許可は不要です").color(TEXT_MUTED));
+                    ui.label(egui::RichText::new(language.text("Windowsでは個別の画面収録許可は不要です")).color(TEXT_MUTED));
                 });
                 columns[1].vertical(|ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("マイク");
+                        ui.label(language.text("マイク"));
                         #[cfg(target_os = "macos")]
                         {
                             let permitted = microphone_state == MicrophonePermission::Authorized;
@@ -6802,16 +9010,16 @@ impl MacShot {
                                 } else {
                                     egui::Color32::from_rgb(190, 105, 32)
                                 },
-                                microphone,
+                                language.text(&microphone),
                             );
                         }
                         #[cfg(target_os = "windows")]
-                        ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(language.text(&microphone)).color(TEXT_MUTED));
                         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                        ui.label(egui::RichText::new(microphone).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(language.text(&microphone)).color(TEXT_MUTED));
                         #[cfg(target_os = "macos")]
                         if let Some(label) = microphone_permission_action_label(microphone_state)
-                            && ui.button(label).clicked()
+                            && ui.button(language.text(label)).clicked()
                         {
                             if microphone_state == MicrophonePermission::Denied {
                                 self.open_microphone_settings();
@@ -6821,11 +9029,11 @@ impl MacShot {
                         }
                         #[cfg(target_os = "macos")]
                         if microphone_state == MicrophonePermission::Denied
-                            && ui.button("拒否記録を解除").clicked()
+                            && ui.button(language.text("拒否記録を解除")).clicked()
                         {
                             self.microphone_reset_confirmation = true;
                         }
-                        if ui.button("マイク設定を開く").clicked() {
+                        if ui.button(language.text("マイク設定を開く")).clicked() {
                             self.open_microphone_settings();
                         }
                     });
@@ -6836,7 +9044,7 @@ impl MacShot {
                         if ui
                             .add_enabled(
                                 microphone_state == MicrophonePermission::Authorized && !testing,
-                                egui::Button::new(if testing { "マイクテスト中…" } else { "マイク入力をテスト（5秒）" }),
+                                egui::Button::new(if testing { language.text("マイクテスト中…") } else { language.text("マイク入力をテスト（5秒）") }),
                             )
                             .clicked()
                         {
@@ -6847,7 +9055,7 @@ impl MacShot {
                                 .desired_width(160.0));
                         }
                         if let Some(message) = &self.microphone_test_message {
-                            ui.label(egui::RichText::new(message).color(TEXT_MUTED));
+                            ui.label(egui::RichText::new(language.message(message)).color(TEXT_MUTED));
                         }
                     });
                 });
@@ -6855,13 +9063,13 @@ impl MacShot {
 
             #[cfg(target_os = "macos")]
             ui.label(
-                egui::RichText::new("画面収録の一覧にMacShotがない場合は「＋」から追加できます。マイク一覧には追加ボタンがありません。MacShotから許可を要求すると一覧に表示されます。拒否済みで一覧にもない場合は「拒否記録を解除」を使ってください。")
+                egui::RichText::new(language.text("画面収録の一覧にMacShotがない場合は「＋」から追加できます。マイク一覧には追加ボタンがありません。MacShotから許可を要求すると一覧に表示されます。拒否済みで一覧にもない場合は「拒否記録を解除」を使ってください。"))
                     .size(11.0)
                     .color(TEXT_MUTED),
             );
             #[cfg(target_os = "windows")]
             ui.label(
-                egui::RichText::new("MP4は既定の再生デバイスとマイクを使います。Windowsのマイク設定でデスクトップアプリへのアクセスも確認してください。")
+                egui::RichText::new(language.text("MP4は既定の再生デバイスとマイクを使います。Windowsのマイク設定でデスクトップアプリへのアクセスも確認してください。"))
                     .size(11.0)
                     .color(TEXT_MUTED),
             );
@@ -6872,19 +9080,19 @@ impl MacShot {
             let mut open = true;
             let mut confirmed = false;
             let mut cancelled = false;
-            egui::Window::new("マイクの拒否記録を解除")
+            egui::Window::new(language.text("マイクの拒否記録を解除"))
                 .id(egui::Id::new("microphone_permission_reset_confirmation"))
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut open)
                 .show(ui.ctx(), |ui| {
-                    ui.label("MacShotだけのマイク拒否記録を解除して、macOSに許可を確認します。解除してもマイクは許可されません。確認画面が表示された場合は、そこで許可を選んでください。");
+                    ui.label(language.text("MacShotだけのマイク拒否記録を解除して、macOSに許可を確認します。解除してもマイクは許可されません。確認画面が表示された場合は、そこで許可を選んでください。"));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.add(primary_button("解除して許可を確認")).clicked() {
+                        if ui.add(primary_button(language.text("解除して許可を確認"))).clicked() {
                             confirmed = true;
                         }
-                        if ui.button("キャンセル").clicked() {
+                        if ui.button(language.text("キャンセル")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -6954,7 +9162,9 @@ impl eframe::App for MacShot {
         self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);
         #[cfg(target_os = "macos")]
-        set_standard_quit_items_enabled(!self.recording && !self.recording_starting);
+        self.poll_native_capture_imports(ctx);
+        #[cfg(target_os = "macos")]
+        set_standard_quit_items_enabled(!self.recording && !self.recording_starting, self.language);
         self.update_tray_recording_status();
         if self.recording || self.recording_starting {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -6966,6 +9176,7 @@ impl eframe::App for MacShot {
 
         self.show_header(ctx);
 
+        let status_message = self.language.message(&self.status);
         egui::TopBottomPanel::bottom("macshot_status")
             .frame(
                 egui::Frame::new()
@@ -6981,7 +9192,7 @@ impl eframe::App for MacShot {
                     ui.label(egui::RichText::new("●").color(ACCENT_BRIGHT));
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(&self.status)
+                            egui::RichText::new(&status_message)
                                 .size(11.0)
                                 .color(TEXT_MUTED),
                         )
@@ -7000,7 +9211,7 @@ impl eframe::App for MacShot {
                         );
                     } else if self.recording_starting {
                         ui.label(
-                            egui::RichText::new("● REC 準備中")
+                            egui::RichText::new(self.language.text("● REC 準備中"))
                                 .color(egui::Color32::from_rgb(198, 53, 78)),
                         );
                     }
@@ -7034,56 +9245,67 @@ impl eframe::App for MacShot {
                     });
             });
 
-        if let Some(notice) = &self.capture_notice {
-            let mut open = true;
-            egui::Window::new("撮影完了")
-                .id(egui::Id::new("capture_complete_notice"))
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 74.0))
-                .collapsible(false)
-                .resizable(false)
-                .open(&mut open)
-                .show(ctx, |ui| {
-                    ui.label(
-                        egui::RichText::new("●  撮影しました")
-                            .size(15.0)
-                            .strong()
-                            .color(ACCENT_BRIGHT),
-                    );
-                    ui.label(format!("{}枚目  ·  {}", notice.sequence, notice.timestamp));
-                    ui.label(capture_size_label(notice.width, notice.height));
-                    ui.label(notice.path.display().to_string());
-                    ui.label(format!(
-                        "{} で続けて撮影できます",
-                        hotkey_badge_text(&self.capture_hotkey_text)
-                    ));
-                });
-            if !open {
-                self.capture_notice = None;
+        if should_show_completion_notice(self.page) {
+            if let Some(notice) = &self.capture_notice {
+                let mut open = true;
+                egui::Window::new(self.language.text("撮影完了"))
+                    .id(egui::Id::new("capture_complete_notice"))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 74.0))
+                    .collapsible(false)
+                    .resizable(false)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(self.language.text("●  撮影しました"))
+                                .size(15.0)
+                                .strong()
+                                .color(ACCENT_BRIGHT),
+                        );
+                        ui.label(format!(
+                            "{} {}  ·  {}",
+                            self.language.text("撮影"),
+                            notice.sequence,
+                            notice.timestamp
+                        ));
+                        ui.label(
+                            self.language
+                                .message(&capture_size_label(notice.width, notice.height)),
+                        );
+                        ui.label(notice.path.display().to_string());
+                        ui.label(format!(
+                            "{} {}",
+                            hotkey_badge_text(&self.capture_hotkey_text),
+                            self.language.text("で続けて撮影できます")
+                        ));
+                    });
+                if !open {
+                    self.capture_notice = None;
+                }
             }
-        }
-        if let Some((path, timestamp, warning)) = &self.recording_notice {
-            let mut open = true;
-            egui::Window::new("録画を保存しました")
-                .id(egui::Id::new("recording_complete_notice"))
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 236.0))
-                .collapsible(false)
-                .resizable(false)
-                .open(&mut open)
-                .show(ctx, |ui| {
-                    ui.label(
-                        egui::RichText::new("●  録画を保存しました")
-                            .size(15.0)
-                            .strong()
-                            .color(ACCENT_BRIGHT),
-                    );
-                    ui.label(timestamp);
-                    ui.label(path.display().to_string());
-                    if let Some(warning) = warning {
-                        ui.label(warning);
-                    }
-                });
-            if !open {
-                self.recording_notice = None;
+            if let Some((path, timestamp, warning)) = &self.recording_notice {
+                let mut open = true;
+                egui::Window::new(self.language.text("録画を保存しました"))
+                    .id(egui::Id::new("recording_complete_notice"))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 236.0))
+                    .collapsible(false)
+                    .resizable(false)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        ui.label(
+                            egui::RichText::new(self.language.text("●  録画を保存しました"))
+                                .size(15.0)
+                                .strong()
+                                .color(ACCENT_BRIGHT),
+                        );
+                        ui.label(timestamp);
+                        ui.label(path.display().to_string());
+                        if let Some(warning) = warning {
+                            ui.label(self.language.message(warning));
+                        }
+                    });
+                if !open {
+                    self.recording_notice = None;
+                }
             }
         }
     }
@@ -7109,6 +9331,12 @@ fn main() -> eframe::Result<()> {
                     "../assets/NotoSansJP-Medium.ttf"
                 ))),
             );
+            fonts.font_data.insert(
+                "noto_sans_sc".into(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../assets/NotoSansSC.ttf"
+                ))),
+            );
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
@@ -7116,9 +9344,19 @@ fn main() -> eframe::Result<()> {
                 .insert(0, "noto_sans_jp".into());
             fonts
                 .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(1, "noto_sans_sc".into());
+            fonts
+                .families
                 .entry(egui::FontFamily::Monospace)
                 .or_default()
                 .insert(0, "noto_sans_jp".into());
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(1, "noto_sans_sc".into());
             creation.egui_ctx.set_fonts(fonts);
             configure_macshot_theme(&creation.egui_ctx);
             creation
@@ -7520,6 +9758,14 @@ mod tests {
     }
 
     #[test]
+    fn completion_notices_are_limited_to_the_capture_page() {
+        assert!(should_show_completion_notice(Page::Capture));
+        assert!(!should_show_completion_notice(Page::Evidence));
+        assert!(!should_show_completion_notice(Page::Compare));
+        assert!(!should_show_completion_notice(Page::Settings));
+    }
+
+    #[test]
     fn evidence_identity_accepts_hyphenated_prefixes_and_edit_suffixes() {
         let original = Path::new("evidence-final-20261025-123456-789-012.png");
         let marked = Path::new("evidence-final-20261025-123456-789-012-marked.png");
@@ -7654,6 +9900,7 @@ mod tests {
     fn preferences_round_trip_saved_values_and_keep_equals_in_paths() {
         let settings_layout = default_settings_layout();
         let preferences = Preferences {
+            language: AppLanguage::TraditionalChinese,
             capture_hotkey: "Alt+Shift+KeyS",
             recording_hotkey: "Control+Alt+KeyR",
             capture_target: "window:123",
@@ -7663,6 +9910,7 @@ mod tests {
             annotation_color: "blue",
             annotation_width: 3.5,
             save_folder: Path::new("/tmp/MacShot=Evidence"),
+            auto_import_native_captures: true,
             recording_format: RecordingFormat::Mp4,
             recording_quality: RecordingQuality {
                 mp4_bitrate_mbps: 18,
@@ -7708,6 +9956,11 @@ mod tests {
             parse_setting(&serialized, "save_folder", "/default"),
             "/tmp/MacShot=Evidence"
         );
+        assert_eq!(
+            parse_setting(&serialized, "auto_import_native_captures", "false"),
+            "true"
+        );
+        assert_eq!(parse_setting(&serialized, "language", "ja"), "zh-Hant");
         assert_eq!(parse_setting(&serialized, "recording_format", "gif"), "mp4");
         assert_eq!(parse_setting(&serialized, "mp4_bitrate_mbps", ""), "18");
         assert_eq!(parse_setting(&serialized, "mp4_frame_rate", ""), "48");
@@ -7739,6 +9992,104 @@ mod tests {
                 DEFAULT_CAPTURE_HOTKEY.into(),
                 DEFAULT_RECORDING_HOTKEY.into()
             )
+        );
+    }
+
+    #[test]
+    fn app_language_values_and_primary_navigation_cover_all_four_locales() {
+        for (language, setting) in [
+            (AppLanguage::Japanese, "ja"),
+            (AppLanguage::English, "en"),
+            (AppLanguage::SimplifiedChinese, "zh-Hans"),
+            (AppLanguage::TraditionalChinese, "zh-Hant"),
+        ] {
+            assert_eq!(AppLanguage::from_setting(setting), language);
+            assert_eq!(language.setting_value(), setting);
+            for page in [Page::Capture, Page::Evidence, Page::Compare, Page::Settings] {
+                assert!(!language.page_label(page).is_empty());
+            }
+        }
+        assert_eq!(AppLanguage::from_setting("unknown"), AppLanguage::Japanese);
+    }
+
+    #[test]
+    fn app_language_localizes_dynamic_status_and_empty_states() {
+        let empty_preview = "画面全体またはウィンドウを撮影すると、ここにプレビューが表示されます。\n画像をドラッグして必要な範囲を切り出せます。";
+        let failed_recording = "録画を再生できませんでした: decoder failed";
+        let continuous_status = continuous_capture_status_label(true, true, true, 2, 1);
+
+        assert_eq!(AppLanguage::Japanese.text(empty_preview), empty_preview);
+        assert_eq!(
+            AppLanguage::Japanese.message(failed_recording),
+            failed_recording
+        );
+        assert_eq!(
+            AppLanguage::English.text("元の画面サイズ"),
+            "Original Screen Size"
+        );
+        assert!(
+            !AppLanguage::English
+                .message("画面収録の許可を設定してください。撮影画面の案内から要求できます。")
+                .contains("撮影画面")
+        );
+        for (language, expected) in [
+            (
+                AppLanguage::English,
+                "Opened Microphone Settings. Refresh the permission status",
+            ),
+            (AppLanguage::SimplifiedChinese, "已打开麦克风设置。更改后"),
+            (AppLanguage::TraditionalChinese, "已開啟麥克風設定。變更後"),
+        ] {
+            assert!(
+                language
+                    .message("マイク設定を開きました。変更後に「権限状態を更新」を押してください。")
+                    .starts_with(expected)
+            );
+        }
+        assert!(
+            AppLanguage::English
+                .text(empty_preview)
+                .starts_with("Capture the full screen")
+        );
+        assert!(
+            AppLanguage::SimplifiedChinese
+                .text(empty_preview)
+                .starts_with("截取整个屏幕")
+        );
+        assert!(
+            AppLanguage::TraditionalChinese
+                .text(empty_preview)
+                .starts_with("擷取整個螢幕")
+        );
+        assert!(
+            AppLanguage::English
+                .message(failed_recording)
+                .starts_with("Unable to play recording:")
+        );
+        assert!(
+            AppLanguage::SimplifiedChinese
+                .message(failed_recording)
+                .starts_with("无法播放录屏：")
+        );
+        assert!(
+            AppLanguage::TraditionalChinese
+                .message(failed_recording)
+                .starts_with("無法播放錄影：")
+        );
+        assert!(
+            AppLanguage::English
+                .message(&continuous_status)
+                .starts_with("Continuous capture")
+        );
+        assert!(
+            AppLanguage::SimplifiedChinese
+                .message(&continuous_status)
+                .starts_with("连续截图")
+        );
+        assert!(
+            AppLanguage::TraditionalChinese
+                .message(&continuous_status)
+                .starts_with("連續截圖")
         );
     }
 
@@ -7800,15 +10151,86 @@ mod tests {
     }
 
     #[test]
-    fn recording_list_finds_gif_and_mp4_but_not_images() {
+    fn recording_list_finds_gif_mp4_and_mov_but_not_images() {
         let directory = TestDirectory::new("recording-list");
         for name in ["clip.gif", "movie.mp4", "still.png", "other.mov"] {
             std::fs::write(directory.path().join(name), b"test").unwrap();
         }
         let files = recording_files(directory.path());
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
         assert!(files.iter().any(|path| path.ends_with("clip.gif")));
         assert!(files.iter().any(|path| path.ends_with("movie.mp4")));
+        assert!(files.iter().any(|path| path.ends_with("other.mov")));
+    }
+
+    #[test]
+    fn native_capture_import_accepts_images_and_recordings_only() {
+        for name in [
+            "capture.png",
+            "capture.jpeg",
+            "recording.mov",
+            "recording.mp4",
+            "clip.gif",
+        ] {
+            assert!(is_native_capture_file(Path::new(name)));
+        }
+        for name in ["notes.txt", ".capture.mov", "folder"] {
+            assert!(!is_native_capture_file(Path::new(name)));
+        }
+    }
+
+    #[test]
+    fn native_capture_import_copies_without_overwriting_existing_files() {
+        let source_dir = TestDirectory::new("native-import-source");
+        let destination_dir = TestDirectory::new("native-import-destination");
+        let source = source_dir.path().join("Screen Recording.mov");
+        std::fs::write(&source, b"new native recording").unwrap();
+        let existing = destination_dir.path().join("Screen Recording.mov");
+        std::fs::write(&existing, b"older recording").unwrap();
+
+        let imported = copy_native_capture(&source, destination_dir.path()).unwrap();
+        assert_ne!(imported, existing);
+        assert_eq!(std::fs::read(&existing).unwrap(), b"older recording");
+        assert_eq!(std::fs::read(imported).unwrap(), b"new native recording");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_capture_scan_finds_images_and_video_in_monitored_folders() {
+        let directory = TestDirectory::new("native-import-scan");
+        for name in [
+            "Screenshot.png",
+            "Screen Recording.mov",
+            "notes.txt",
+            ".temporary.mp4",
+        ] {
+            std::fs::write(directory.path().join(name), b"test").unwrap();
+        }
+        let files = scan_native_capture_files(&[directory.path().to_path_buf()]);
+        assert_eq!(files.len(), 2);
+        assert!(files.contains_key(&directory.path().join("Screenshot.png")));
+        assert!(files.contains_key(&directory.path().join("Screen Recording.mov")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_capture_import_waits_for_a_stable_file_before_copying() {
+        let path = PathBuf::from("/tmp/Screen Recording.mov");
+        let mut watch = NativeCaptureWatch {
+            started_at: Instant::now(),
+            known_files: HashSet::new(),
+            pending_sizes: HashMap::new(),
+        };
+        let sizes = |size| HashMap::from([(path.clone(), size)]);
+        assert!(completed_native_capture_files(&mut watch, sizes(10)).is_empty());
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        let completed = completed_native_capture_files(&mut watch, sizes(20));
+        assert_eq!(completed.as_slice(), std::slice::from_ref(&path));
+        watch.known_files.insert(path.clone());
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        assert!(completed_native_capture_files(&mut watch, HashMap::new()).is_empty());
+        assert!(watch.pending_sizes.is_empty());
     }
 
     #[test]
@@ -7915,7 +10337,9 @@ mod tests {
             EncoderConfig::new()
                 .bitrate(BitRate::from_bps(200_000))
                 .max_frame_rate(FrameRate::from_hz(10.0))
-                .usage_type(UsageType::ScreenContentRealTime),
+                .usage_type(UsageType::ScreenContentRealTime)
+                .adaptive_quantization(false)
+                .background_detection(false),
         )
         .unwrap();
         let first_frame = image::RgbaImage::from_pixel(64, 48, Rgba([80, 140, 220, 255]));
@@ -7971,7 +10395,9 @@ mod tests {
             EncoderConfig::new()
                 .bitrate(BitRate::from_bps(250_000))
                 .max_frame_rate(FrameRate::from_hz(10.0))
-                .usage_type(UsageType::ScreenContentRealTime),
+                .usage_type(UsageType::ScreenContentRealTime)
+                .adaptive_quantization(false)
+                .background_detection(false),
         )
         .unwrap();
         let (sps, pps, initial_packets) = prime_h264_encoder(&mut video_encoder, &frame).unwrap();
