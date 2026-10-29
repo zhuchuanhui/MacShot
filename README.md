@@ -1,4 +1,4 @@
-# MacShot 1.0.0
+# MacShot 1.1.0
 
 [English](README.en.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShotは、スクリーンショットの撮影・編集・比較と、GIF／M
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v1.0.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.0.0/MacShot-v1.0.0-macos-arm64.zip)
-- Windows x64: [MacShot-v1.0.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.0.0/MacShot-v1.0.0-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.0.0)
+- macOS Apple Silicon (arm64): [MacShot-v1.1.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.1.0/MacShot-v1.1.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.1.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.1.0/MacShot-v1.1.0-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.1.0)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Ad Hoc署名のみで、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。macOS 14以降のApple Siliconに対応します。
@@ -35,7 +35,7 @@ Windows版はZIPを展開して `MacShot.exe` を起動してください。ZIP�
 
 1. 「設定」で保存形式をGIFまたはMP4（H.264）にします。録画解像度は元の画面サイズ、480p、720p、1080p、2K（1440p）、4K（2160p）から選べます。GIFは色の再現とフレームレート、MP4はビットレートとフレームレートを個別に調整できます。調整欄の下に1分録画あたりの予想サイズが表示されます。MP4は設定ビットレートと音声から計算し、GIFは画面の動きや色で変わるため幅を持たせた概算です。
 2. 「録画」を押すか、録画ショートカット（初期設定: `⌥`+`⇧`+`R`）を使います。録画中はメニューバー／通知領域に録画時間が表示されます。
-3. メニューバー／通知領域メニューの「録画開始／停止」または同じショートカットで停止します。録画一覧には録画時間が表示されます。行をクリックするか「再生」を押すと別ウィンドウでGIF／MP4を再生・一時停止できます。「編集」では録画名を変更できます。「外部で開く」ではMP4の音声も含めて再生できます。
+3. メニューバー／通知領域メニューの「録画開始／停止」または同じショートカットで停止します。録画一覧には録画時間が表示されます。行をクリックするか「再生」を押すと別ウィンドウでGIF／MP4と対応するMOVを再生・一時停止できます。進捗バーで再生位置を移動し、音量やミュートも調整できます。MP4と対応するMOVは音声レベルを表示します。MOVの音声準備には少し時間がかかる場合があります。「編集」では録画名を変更でき、「外部で開く」では標準の再生アプリでも再生できます。
 
 MP4はシステム音声を録音します。マイクが許可されている場合はマイク音声も含みます。マイクを許可していない場合、MacShotはマイクへのアクセスを求めず、システム音声のみで録画します。GIFは音声なしです。
 
@@ -61,7 +61,7 @@ macOSのマイク設定にはアプリを手動追加する「＋」ボタンが
 
 - MacShot独自の画面録画: GIF、MP4（H.264）
 - 撮影済み画像の読み込み・編集・比較: PNG、JPEG
-- 録画一覧: 録画時間、形式、ファイルサイズを表示します。新しい録画は日付・時刻・連番を含む名前で保存され、「編集」から名前を変更できます。GIF／MP4は別ウィンドウで映像を再生・一時停止できます。GIFはファイルの繰り返し設定に従います。MP4はAAC音声トラックの有無も表示します。アプリ内再生では音声を再生しません。MP4の音声を聴く場合は「外部で開く」で標準の再生アプリを開きます。
+- 録画一覧: 録画時間、形式、ファイルサイズを表示します。新しい録画は日付・時刻・連番を含む名前で保存され、「編集」から名前を変更できます。GIF／MP4と対応するMOVは別ウィンドウで再生でき、再生・一時停止、シーク、音量、ミュートを操作できます。MP4と対応MOVは音声レベルも表示します。MOVの音声準備には少し時間がかかる場合があります。GIFはファイルの繰り返し設定に従い、音声はありません。「外部で開く」から標準の再生アプリで開くこともできます。
 - macOS標準の撮影・録画パネル: macOS側の機能として開きます。MacShot独自の録画形式設定とは別です。
 
 macOSでは「macOS標準の撮影・録画」から標準スクリーンショットパネルを直接開けます。画面全体・ウィンドウ・範囲の撮影と録画、タイマー、マイク、ポインタ／クリック表示、保存先、フローティングサムネールはmacOSの標準パネルで設定できます。MacShot独自の録画ボタンでは設定画面のGIF／MP4形式を使います。

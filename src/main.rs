@@ -23,7 +23,13 @@ use mp4::{
 #[cfg(target_os = "macos")]
 use objc2_06::runtime::Bool as ObjcBool;
 #[cfg(target_os = "macos")]
+use objc2_av_foundation::AVAsset;
+#[cfg(target_os = "macos")]
 use objc2_avf_audio::{AVAudioApplication, AVAudioApplicationRecordPermission};
+#[cfg(target_os = "macos")]
+use objc2_core_media::CMTime;
+#[cfg(target_os = "macos")]
+use objc2_foundation_06::{NSString, NSURL};
 use openh264::decoder::Decoder as H264Decoder;
 use openh264::{
     OpenH264API,
@@ -38,7 +44,7 @@ use screencapturekit::{
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::OpenOptions,
@@ -49,7 +55,7 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
@@ -59,6 +65,8 @@ use xcap::Monitor;
 #[cfg(not(target_os = "macos"))]
 use xcap::Window;
 
+#[cfg(target_os = "macos")]
+mod macos_video;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod recording_audio;
 
@@ -219,36 +227,41 @@ struct MacShot {
     windows: Vec<WindowChoice>,
     capture_target: CaptureTarget,
     continuous_capture: bool,
+    keep_region_in_continuous: bool,
+    continuous_region: Option<[f32; 4]>,
     capture_queue: VecDeque<CaptureTarget>,
     region_selecting: bool,
     region_drag_start: Option<egui::Pos2>,
     region_drag_current: Option<egui::Pos2>,
     region_overlay_position: egui::Pos2,
     region_overlay_size: egui::Vec2,
-    #[cfg(target_os = "windows")]
     region_snapshot_tx: Sender<Result<image::RgbaImage, String>>,
-    #[cfg(target_os = "windows")]
     region_snapshot_rx: Receiver<Result<image::RgbaImage, String>>,
     #[cfg(target_os = "windows")]
     region_geometry_tx: Sender<Result<(f32, f32, f32, f32), String>>,
     #[cfg(target_os = "windows")]
     region_geometry_rx: Receiver<Result<(f32, f32, f32, f32), String>>,
-    #[cfg(target_os = "windows")]
     region_selection_deadline: Option<Instant>,
     #[cfg(target_os = "windows")]
     region_geometry_pending: bool,
-    #[cfg(target_os = "windows")]
     region_background_texture: Option<egui::TextureHandle>,
     save_folder: Option<PathBuf>,
     auto_import_native_captures: bool,
     #[cfg(target_os = "macos")]
     native_capture_watch: Option<NativeCaptureWatch>,
+    #[cfg(target_os = "macos")]
+    native_capture_import_tx: Sender<NativeCaptureImportResult>,
+    #[cfg(target_os = "macos")]
+    native_capture_import_rx: Receiver<NativeCaptureImportResult>,
     evidence_files: Vec<PathBuf>,
     recording_files: Vec<PathBuf>,
     recording_preview_path: Option<PathBuf>,
     recording_preview_image: Option<DynamicImage>,
     recording_preview_texture: Option<egui::TextureHandle>,
     recording_preview_details: Option<String>,
+    recording_player_controls_rect: Option<egui::Rect>,
+    recording_player_last_pointer_pos: Option<egui::Pos2>,
+    recording_player_last_pointer_activity: Option<Instant>,
     recording_playback: Option<RecordingPlayback>,
     recording_player_error: Option<String>,
     recording_rename_dialog: Option<RecordingRenameDialog>,
@@ -263,6 +276,8 @@ struct MacShot {
     annotation_width: f32,
     status: String,
     capture_in_progress: bool,
+    active_capture_is_region: bool,
+    region_annotation_pending: bool,
     active_capture_sequence: Option<u64>,
     capture_deadline: Option<Instant>,
     capture_cancel: Option<Arc<AtomicBool>>,
@@ -410,6 +425,15 @@ enum Page {
     Settings,
 }
 
+fn switch_page(current: &mut Page, next: Page, status: &mut String) -> bool {
+    if *current == next {
+        return false;
+    }
+    *current = next;
+    status.clear();
+    true
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum AppLanguage {
     #[default]
@@ -459,6 +483,22 @@ impl AppLanguage {
             "追加の操作" => ["More Actions", "更多操作", "更多操作"],
             "連続撮影を終了" => ["Stop Continuous Capture", "停止连续截图", "停止連續截圖"],
             "連続撮影を開始" => ["Start Continuous Capture", "开始连续截图", "開始連續截圖"],
+            "連続撮影で範囲を維持する" => [
+                "Keep selected area for continuous captures",
+                "连续截图时保留所选区域",
+                "連續截圖時保留所選範圍",
+            ],
+            "✓ 撮影完了" => ["✓ Finish capture", "✓ 完成截图", "✓ 完成截圖"],
+            "注釈を保存して撮影を完了します。" => [
+                "Save annotations and finish this capture.",
+                "保存标注并完成此次截图。",
+                "儲存註記並完成此次截圖。",
+            ],
+            "範囲撮影を完了しました。" => [
+                "Region capture completed.",
+                "区域截图已完成。",
+                "區域截圖已完成。",
+            ],
             "macOS標準の撮影・録画…" => [
                 "Open macOS Screenshot…",
                 "打开 macOS 截图…",
@@ -504,9 +544,13 @@ impl AppLanguage {
             "□  赤枠" => ["□  Red Box", "□  红框", "□  紅框"],
             "↗  矢印" => ["↗  Arrow", "↗  箭头", "↗  箭頭"],
             "注釈を消去" => ["Clear Annotations", "清除标注", "清除註記"],
-            "注釈画像を保存" => ["Save Annotated Image", "保存标注图片", "儲存註記圖片"],
+            "注釈画像を別名で保存" => {
+                ["Save Annotated Copy", "另存为标注图片", "另存為註記圖片"]
+            }
             "選択解除" => ["Clear Selection", "清除选区", "清除選取範圍"],
-            "範囲を保存" => ["Save Crop", "保存裁剪区域", "儲存裁切範圍"],
+            "切り出しを別名で保存" => {
+                ["Save Cropped Copy", "另存为裁剪图像", "另存為裁切影像"]
+            }
             "撮影した画面は、ここで切り出しや注釈を追加できます。" => [
                 "Crop captures and add annotations here.",
                 "在这里裁剪截图并添加标注。",
@@ -548,11 +592,11 @@ impl AppLanguage {
                     "在獨立視窗播放錄影、重新命名錄影，或編輯並儲存圖片。",
                 ]
             }
-            "一覧をクリックすると別ウィンドウで再生します。MOVは「外部で開く」から再生できます。編集では録画名を変更できます。" => {
+            "GIF・MP4・対応MOVを別ウィンドウで再生できます。対応外の形式は外部プレイヤーを使います。録画名も変更できます。" => {
                 [
-                    "Select a recording to play it in a separate window. Open MOV files externally. Edit changes the recording name.",
-                    "点选录屏可在独立窗口播放。MOV 文件可外部播放；编辑可更改录屏名称。",
-                    "點選錄影可在獨立視窗播放。MOV 檔案可外部播放；編輯可變更錄影名稱。",
+                    "Play supported GIF, MP4, and MOV recordings in a separate window. Use an external player for other formats. You can also rename recordings.",
+                    "GIF、MP4 和受支持的 MOV 录屏可在独立窗口播放。其他格式请使用外部播放器。也可重命名录屏。",
+                    "GIF、MP4 與支援的 MOV 錄影可在獨立視窗播放。其他格式請使用外部播放器。也可重新命名錄影。",
                 ]
             }
             "時間を確認中…" => ["Reading duration…", "正在读取时长…", "正在讀取長度…"],
@@ -592,18 +636,21 @@ impl AppLanguage {
                 "录屏名称已更改。",
                 "錄影名稱已變更。",
             ],
+            "録画名は変更されていません。" => [
+                "Recording name is unchanged.",
+                "录屏名称未更改。",
+                "錄影名稱未變更。",
+            ],
             "録画名を変更できません" => [
                 "Unable to change recording name",
                 "无法更改录屏名称",
                 "無法變更錄影名稱",
             ],
-            "GIF・MP4はアプリ内でプレビューできます。MOVは「外部で開く」から再生できます。" => {
-                [
-                    "Preview GIF and MP4 in the app. Open MOV files externally.",
-                    "可在应用内预览 GIF 和 MP4。MOV 文件可通过“外部打开”播放。",
-                    "可在 App 內預覽 GIF 和 MP4。MOV 檔案可透過「以外部程式開啟」播放。",
-                ]
-            }
+            "GIF・MP4・対応MOVはアプリ内でプレビューできます。" => [
+                "Preview supported GIF, MP4, and MOV files in the app.",
+                "可在应用内预览受支持的 GIF、MP4 和 MOV 文件。",
+                "可在 App 內預覽支援的 GIF、MP4 與 MOV 檔案。",
+            ],
             "録画が見つかりません。保存先を確認するか「更新」を押してください。" => {
                 [
                     "No recordings found. Check the save location or select Refresh.",
@@ -621,8 +668,42 @@ impl AppLanguage {
                 "无法读取录屏信息",
                 "無法讀取錄影資訊",
             ],
+            "証跡一覧を更新しました" => [
+                "Evidence list refreshed",
+                "已更新取证记录列表",
+                "已更新證據清單",
+            ],
             "外部で開く" => ["Open Externally", "外部打开", "以外部程式開啟"],
             "⏸ 一時停止" => ["⏸ Pause", "⏸ 暂停", "⏸ 暫停"],
+            "音量" => ["Volume", "音量", "音量"],
+            "音声レベル" => ["Audio level", "音频电平", "音訊音量"],
+            "音声の有無" => ["Audio by time", "音频时间分布", "音訊時間分布"],
+            "音声あり" => ["Audio", "有声", "有聲"],
+            "無音" => ["Silence", "静音", "靜音"],
+            "音声データを解析中…" => {
+                ["Analyzing audio…", "正在分析音频…", "正在分析音訊…"]
+            }
+            "音声データを表示できません" => [
+                "Audio data unavailable",
+                "无法显示音频数据",
+                "無法顯示音訊資料",
+            ],
+            "音声データなし" => ["No audio data", "无音频数据", "沒有音訊資料"],
+            "ミュート" => ["Mute", "静音", "靜音"],
+            "ミュート解除" => ["Unmute", "取消静音", "取消靜音"],
+            "MOV音声を準備しています…" => [
+                "Preparing MOV audio…",
+                "正在准备 MOV 音频…",
+                "正在準備 MOV 音訊…",
+            ],
+            "GIFには音声がありません" => {
+                ["GIF has no audio", "GIF 没有音频", "GIF 沒有音訊"]
+            }
+            "音声トラックなし、または音声出力を利用できません" => [
+                "No audio track or audio output is unavailable",
+                "没有音轨或音频输出不可用",
+                "沒有音軌或音訊輸出無法使用",
+            ],
             "▶ アプリ内再生" => ["▶ Play in App", "▶ 在应用内播放", "▶ 在 App 內播放"],
             "まだ画像がありません" => ["No images yet", "尚无图像", "尚無圖片"],
             "撮影した画像はここに並びます。保存先を変更した場合は設定を確認してください。" => {
@@ -968,10 +1049,10 @@ impl AppLanguage {
             "録画を保存しています…" => {
                 ["Saving recording…", "正在保存录屏…", "正在儲存錄影…"]
             }
-            "録画をアプリ内で再生しています（映像のみ）。" => [
-                "Playing recording in the app (video only).",
-                "正在应用内播放录屏（仅视频）。",
-                "正在 App 內播放錄影（僅視訊）。",
+            "録画をアプリ内で再生しています。" => [
+                "Playing recording in the app.",
+                "正在应用内播放录屏。",
+                "正在 App 內播放錄影。",
             ],
             "録画を一時停止しました。" => [
                 "Recording playback paused.",
@@ -2232,6 +2313,37 @@ impl AppLanguage {
             _ => "MacShot",
         }
     }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn macos_app_menu_label(self, key: &str) -> Option<&'static str> {
+        match (self, key) {
+            (Self::Japanese, "about") => Some("MacShotについて"),
+            (Self::Japanese, "hide") => Some("MacShotを隠す"),
+            (Self::Japanese, "hide_others") => Some("ほかを隠す"),
+            (Self::Japanese, "show_all") => Some("すべてを表示"),
+            (Self::Japanese, "services") => Some("サービス"),
+            (Self::Japanese, "quit") => Some("MacShotを終了"),
+            (Self::English, "about") => Some("About MacShot"),
+            (Self::English, "hide") => Some("Hide MacShot"),
+            (Self::English, "hide_others") => Some("Hide Others"),
+            (Self::English, "show_all") => Some("Show All"),
+            (Self::English, "services") => Some("Services"),
+            (Self::English, "quit") => Some("Quit MacShot"),
+            (Self::SimplifiedChinese, "about") => Some("关于 MacShot"),
+            (Self::SimplifiedChinese, "hide") => Some("隐藏 MacShot"),
+            (Self::SimplifiedChinese, "hide_others") => Some("隐藏其他"),
+            (Self::SimplifiedChinese, "show_all") => Some("显示全部"),
+            (Self::SimplifiedChinese, "services") => Some("服务"),
+            (Self::SimplifiedChinese, "quit") => Some("退出 MacShot"),
+            (Self::TraditionalChinese, "about") => Some("關於 MacShot"),
+            (Self::TraditionalChinese, "hide") => Some("隱藏 MacShot"),
+            (Self::TraditionalChinese, "hide_others") => Some("隱藏其他程式"),
+            (Self::TraditionalChinese, "show_all") => Some("顯示全部"),
+            (Self::TraditionalChinese, "services") => Some("服務"),
+            (Self::TraditionalChinese, "quit") => Some("結束 MacShot"),
+            _ => None,
+        }
+    }
 }
 
 fn should_show_completion_notice(page: Page) -> bool {
@@ -2273,17 +2385,43 @@ enum RecordingEvent {
 }
 
 enum RecordingPlaybackEvent {
-    Frame(DynamicImage, Duration),
+    Frame(DynamicImage, Duration, Duration, bool),
     End,
     Error(String),
 }
 
+enum RecordingPlaybackCommand {
+    NextFrame,
+    Seek(Duration),
+}
+
 struct RecordingPlayback {
-    request_tx: Sender<()>,
+    request_tx: Sender<RecordingPlaybackCommand>,
     frame_rx: Receiver<RecordingPlaybackEvent>,
     playing: bool,
+    ended: bool,
     frame_due: Instant,
     awaiting_frame: bool,
+    duration: Duration,
+    position: Duration,
+    _audio_stream: Option<rodio::MixerDeviceSink>,
+    audio_player: Option<rodio::Player>,
+    audio_level: Option<Arc<AtomicU32>>,
+    audio_setup_rx: Option<Receiver<Result<PathBuf, String>>>,
+    audio_waveform_rx: Option<Receiver<Result<Vec<f32>, String>>>,
+    audio_waveform: Option<Vec<f32>>,
+    audio_waveform_error: Option<String>,
+    audio_temp_path: Option<PathBuf>,
+    volume: f32,
+    muted: bool,
+}
+
+impl Drop for RecordingPlayback {
+    fn drop(&mut self) {
+        if let Some(path) = self.audio_temp_path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 struct RecordingMetadataResult {
@@ -2771,7 +2909,7 @@ fn recording_time_label(elapsed: Duration) -> String {
 #[cfg(test)]
 fn recording_playback_status(playing: bool) -> &'static str {
     if playing {
-        "録画をアプリ内で再生しています（映像のみ）。"
+        "録画をアプリ内で再生しています。"
     } else {
         "録画を一時停止しました。"
     }
@@ -2910,7 +3048,6 @@ impl Default for MacShot {
             status = "画面収録の許可を設定してください。撮影画面の案内から要求できます。".into();
         }
         let (capture_tx, capture_rx) = mpsc::channel();
-        #[cfg(target_os = "windows")]
         let (region_snapshot_tx, region_snapshot_rx) = mpsc::channel();
         #[cfg(target_os = "windows")]
         let (region_geometry_tx, region_geometry_rx) = mpsc::channel();
@@ -2918,6 +3055,8 @@ impl Default for MacShot {
         let (tray_action_tx, tray_action_rx) = mpsc::channel();
         let (recording_tx, recording_rx) = mpsc::channel();
         let (recording_metadata_tx, recording_metadata_rx) = mpsc::channel();
+        #[cfg(target_os = "macos")]
+        let (native_capture_import_tx, native_capture_import_rx) = mpsc::channel();
         let (capture_hotkey_text, recording_hotkey_text) = load_hotkey_settings();
         let capture_hotkey_text = canonical_hotkey_text(&capture_hotkey_text);
         let recording_hotkey_text = canonical_hotkey_text(&recording_hotkey_text);
@@ -2983,36 +3122,41 @@ impl Default for MacShot {
             windows,
             capture_target,
             continuous_capture: false,
+            keep_region_in_continuous: load_setting("keep_region_in_continuous", "true") != "false",
+            continuous_region: None,
             capture_queue: VecDeque::new(),
             region_selecting: false,
             region_drag_start: None,
             region_drag_current: None,
             region_overlay_position: egui::Pos2::ZERO,
             region_overlay_size: egui::Vec2::ZERO,
-            #[cfg(target_os = "windows")]
             region_snapshot_tx,
-            #[cfg(target_os = "windows")]
             region_snapshot_rx,
             #[cfg(target_os = "windows")]
             region_geometry_tx,
             #[cfg(target_os = "windows")]
             region_geometry_rx,
-            #[cfg(target_os = "windows")]
             region_selection_deadline: None,
             #[cfg(target_os = "windows")]
             region_geometry_pending: false,
-            #[cfg(target_os = "windows")]
             region_background_texture: None,
             save_folder,
             auto_import_native_captures,
             #[cfg(target_os = "macos")]
             native_capture_watch: None,
+            #[cfg(target_os = "macos")]
+            native_capture_import_tx,
+            #[cfg(target_os = "macos")]
+            native_capture_import_rx,
             evidence_files: Vec::new(),
             recording_files: Vec::new(),
             recording_preview_path: None,
             recording_preview_image: None,
             recording_preview_texture: None,
             recording_preview_details: None,
+            recording_player_controls_rect: None,
+            recording_player_last_pointer_pos: None,
+            recording_player_last_pointer_activity: None,
             recording_playback: None,
             recording_player_error: None,
             recording_rename_dialog: None,
@@ -3027,6 +3171,8 @@ impl Default for MacShot {
             annotation_width,
             status,
             capture_in_progress: false,
+            active_capture_is_region: false,
+            region_annotation_pending: false,
             active_capture_sequence: None,
             capture_deadline: None,
             capture_cancel: None,
@@ -3242,6 +3388,7 @@ struct Preferences<'a> {
     timestamp_enabled: bool,
     filename_prefix: &'a str,
     show_capture_notice: bool,
+    keep_region_in_continuous: bool,
     annotation_color: &'a str,
     annotation_width: f32,
     save_folder: &'a Path,
@@ -3276,6 +3423,12 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         file,
         "show_capture_notice={}",
         preferences.show_capture_notice
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "keep_region_in_continuous={}",
+        preferences.keep_region_in_continuous
     )
     .map_err(|error| error.to_string())?;
     writeln!(file, "annotation_color={}", preferences.annotation_color)
@@ -3424,13 +3577,52 @@ fn recording_duration(path: &Path) -> Option<Duration> {
         }
         return (frame_count > 0).then(|| Duration::from_millis(duration_ms));
     }
-    if matches!(extension.as_str(), "mp4" | "mov") {
+    if extension == "mov" {
+        #[cfg(target_os = "macos")]
+        return native_mov_duration(path);
+        #[cfg(not(target_os = "macos"))]
+        return None;
+    }
+    if extension == "mp4" {
         let file = std::fs::File::open(path).ok()?;
         let size = file.metadata().ok()?.len();
         let reader = mp4::Mp4Reader::read_header(file, size).ok()?;
         return Some(reader.duration());
     }
     None
+}
+
+#[cfg(target_os = "macos")]
+fn native_mov_duration(path: &Path) -> Option<Duration> {
+    let path = NSString::from_str(path.to_str()?);
+    let url = NSURL::fileURLWithPath(&path);
+    // SAFETY: AVFoundation creates a read-only asset for this local URL.
+    let asset = unsafe { AVAsset::assetWithURL(&url) };
+    // SAFETY: Reading the asset's duration does not mutate the media or user data.
+    let duration: CMTime = unsafe { asset.duration() };
+    // SAFETY: CMTimeGetSeconds accepts the value returned by AVAsset.duration.
+    let seconds = unsafe { duration.seconds() };
+    duration_from_seconds(seconds)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn duration_from_seconds(seconds: f64) -> Option<Duration> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    Duration::try_from_secs_f64(seconds).ok()
+}
+
+fn is_mp4_recording(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+}
+
+fn is_mov_recording(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mov"))
 }
 
 fn format_recording_duration(duration: Duration) -> String {
@@ -3553,7 +3745,12 @@ fn sanitize_recording_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-fn rename_recording_file(path: &Path, name: &str) -> Result<PathBuf, String> {
+enum RecordingRenameOutcome {
+    Unchanged,
+    Renamed(PathBuf),
+}
+
+fn rename_recording_file(path: &Path, name: &str) -> Result<RecordingRenameOutcome, String> {
     let name = sanitize_recording_name(name)?;
     let extension = path
         .extension()
@@ -3569,13 +3766,13 @@ fn rename_recording_file(path: &Path, name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "録画の保存先を確認できません。".to_string())?;
     let target = parent.join(file_name);
     if target == path {
-        return Ok(path.to_path_buf());
+        return Ok(RecordingRenameOutcome::Unchanged);
     }
     if target.exists() {
         return Err("同じ名前の録画がすでにあります。".into());
     }
     std::fs::rename(path, &target).map_err(|error| error.to_string())?;
-    Ok(target)
+    Ok(RecordingRenameOutcome::Renamed(target))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -3620,7 +3817,30 @@ fn copy_native_capture(source: &Path, folder: &Path) -> Result<PathBuf, String> 
 struct NativeCaptureWatch {
     started_at: Instant,
     known_files: HashSet<PathBuf>,
+    in_flight: HashSet<PathBuf>,
     pending_sizes: HashMap<PathBuf, (u64, u8)>,
+}
+
+#[cfg(target_os = "macos")]
+struct NativeCaptureImportResult {
+    source: PathBuf,
+    result: Result<PathBuf, String>,
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_native_capture_import(
+    source: PathBuf,
+    destination_folder: PathBuf,
+    import_tx: Sender<NativeCaptureImportResult>,
+) {
+    thread::spawn(move || {
+        let result = if source.parent() == Some(destination_folder.as_path()) {
+            Ok(source.clone())
+        } else {
+            copy_native_capture(&source, &destination_folder)
+        };
+        let _ = import_tx.send(NativeCaptureImportResult { source, result });
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -3670,7 +3890,7 @@ fn completed_native_capture_files(
 ) -> Vec<PathBuf> {
     let mut ready = Vec::new();
     for (path, size) in &current {
-        if watch.known_files.contains(path) {
+        if watch.known_files.contains(path) || watch.in_flight.contains(path) {
             continue;
         }
         let stable = match watch.pending_sizes.get_mut(path) {
@@ -3698,6 +3918,7 @@ fn completed_native_capture_files(
     ready
 }
 
+#[cfg(test)]
 fn recording_preview_display_size(
     image_width: u32,
     image_height: u32,
@@ -3716,6 +3937,128 @@ fn recording_preview_display_size(
     egui::vec2(image_width as f32 * scale, image_height as f32 * scale)
 }
 
+fn recording_player_controls_anchor(
+    video_rect: Option<egui::Rect>,
+    bounds: egui::Rect,
+    controls_width: f32,
+) -> egui::Pos2 {
+    let video = video_rect.unwrap_or(bounds);
+    let x = (video.center().x - controls_width * 0.5)
+        .clamp(bounds.left() + 16.0, bounds.right() - controls_width - 16.0);
+    egui::pos2(x, video.bottom() - 8.0)
+}
+
+fn recording_player_controls_width(video_rect: Option<egui::Rect>, bounds: egui::Rect) -> f32 {
+    let maximum = (bounds.width() - 32.0).max(1.0);
+    video_rect
+        .map(|video| video.width())
+        .unwrap_or(maximum)
+        .clamp(760.0_f32.min(maximum), maximum)
+}
+
+fn recording_player_controls_visible(
+    video_rect: Option<egui::Rect>,
+    controls_rect: Option<egui::Rect>,
+    bounds: egui::Rect,
+    pointer: Option<egui::Pos2>,
+    last_pointer_activity: Option<Instant>,
+    now: Instant,
+    interacting: bool,
+) -> bool {
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(1_200);
+    pointer.is_some_and(|position| {
+        let inside_player = video_rect.unwrap_or(bounds).contains(position)
+            || controls_rect.is_some_and(|rect| rect.contains(position));
+        inside_player
+            && (interacting
+                || last_pointer_activity.is_some_and(|at| now.duration_since(at) < IDLE_TIMEOUT))
+    })
+}
+
+#[derive(Default)]
+struct GifFrameCompositor {
+    canvas: Option<image::RgbaImage>,
+    previous_frame: Option<GifPreviousFrame>,
+}
+
+struct GifPreviousFrame {
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+    dispose: gif::DisposalMethod,
+    canvas_before_frame: Option<image::RgbaImage>,
+}
+
+impl GifFrameCompositor {
+    fn draw(
+        &mut self,
+        canvas_width: u32,
+        canvas_height: u32,
+        frame: &gif::Frame<'_>,
+    ) -> Result<image::RgbaImage, String> {
+        let canvas = self
+            .canvas
+            .get_or_insert_with(|| image::RgbaImage::new(canvas_width, canvas_height));
+        if canvas.dimensions() != (canvas_width, canvas_height) {
+            *canvas = image::RgbaImage::new(canvas_width, canvas_height);
+            self.previous_frame = None;
+        }
+
+        if let Some(previous) = self.previous_frame.take() {
+            match previous.dispose {
+                gif::DisposalMethod::Any | gif::DisposalMethod::Keep => {}
+                gif::DisposalMethod::Background => {
+                    let right = previous
+                        .left
+                        .saturating_add(previous.width)
+                        .min(canvas_width);
+                    let bottom = previous
+                        .top
+                        .saturating_add(previous.height)
+                        .min(canvas_height);
+                    for y in previous.top.min(canvas_height)..bottom {
+                        for x in previous.left.min(canvas_width)..right {
+                            canvas.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+                        }
+                    }
+                }
+                gif::DisposalMethod::Previous => {
+                    if let Some(before) = previous.canvas_before_frame {
+                        *canvas = before;
+                    }
+                }
+            }
+        }
+
+        let frame_width = u32::from(frame.width);
+        let frame_height = u32::from(frame.height);
+        let frame_image =
+            image::RgbaImage::from_raw(frame_width, frame_height, frame.buffer.to_vec())
+                .ok_or_else(|| "GIFフレームを画像に変換できません。".to_string())?;
+        let canvas_before_frame =
+            (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
+        let left = u32::from(frame.left);
+        let top = u32::from(frame.top);
+        for (x, y, pixel) in frame_image.enumerate_pixels() {
+            let canvas_x = left.saturating_add(x);
+            let canvas_y = top.saturating_add(y);
+            if canvas_x < canvas_width && canvas_y < canvas_height && pixel[3] != 0 {
+                canvas.put_pixel(canvas_x, canvas_y, *pixel);
+            }
+        }
+        self.previous_frame = Some(GifPreviousFrame {
+            left,
+            top,
+            width: frame_width,
+            height: frame_height,
+            dispose: frame.dispose,
+            canvas_before_frame,
+        });
+        Ok(canvas.clone())
+    }
+}
+
 fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
     let extension = path
         .extension()
@@ -3725,6 +4068,25 @@ fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
     let file_size = std::fs::metadata(path)
         .map(|meta| meta.len())
         .unwrap_or_default();
+    if extension == "mov" {
+        #[cfg(target_os = "macos")]
+        {
+            let mut reader = macos_video::MovFrameReader::open(path, Duration::ZERO)?;
+            let (frame, _, _) = reader
+                .next_frame()?
+                .ok_or_else(|| "MOVに表示できる映像フレームがありません。".to_string())?;
+            return Ok((
+                frame,
+                format!(
+                    "MOV・{:.2}秒・{}",
+                    reader.duration().as_secs_f64(),
+                    format_file_size(file_size)
+                ),
+            ));
+        }
+        #[cfg(not(target_os = "macos"))]
+        return Err("このMOVは外部プレイヤーで再生してください。".into());
+    }
     if extension == "gif" {
         let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
         let mut options = gif::DecodeOptions::new();
@@ -3749,10 +4111,9 @@ fn recording_preview(path: &Path) -> Result<(DynamicImage, String), String> {
         let first = decoder
             .read_next_frame()
             .map_err(|error| error.to_string())?
-            .map(|frame| frame.buffer.to_vec());
-        let pixels = first.ok_or_else(|| "GIFに表示できるフレームがありません。".to_string())?;
-        let image = image::RgbaImage::from_raw(u32::from(width), u32::from(height), pixels)
-            .ok_or_else(|| "GIFのプレビュー画像を読み込めません。".to_string())?;
+            .ok_or_else(|| "GIFに表示できるフレームがありません。".to_string())?;
+        let image =
+            GifFrameCompositor::default().draw(u32::from(width), u32::from(height), first)?;
         return Ok((
             DynamicImage::ImageRgba8(image),
             format!(
@@ -3854,9 +4215,11 @@ enum RecordingFrameReader {
     Gif {
         path: PathBuf,
         decoder: gif::Decoder<std::fs::File>,
+        compositor: GifFrameCompositor,
         repeat: gif::Repeat,
         completed_repetitions: u16,
         frames_in_current_loop: u32,
+        position: Duration,
     },
     Mp4 {
         reader: mp4::Mp4Reader<std::fs::File>,
@@ -3865,11 +4228,18 @@ enum RecordingFrameReader {
         sample_count: u32,
         timescale: u32,
         decoder: H264Decoder,
+        position: Duration,
     },
+    #[cfg(target_os = "macos")]
+    Mov(macos_video::MovFrameReader),
 }
 
 impl RecordingFrameReader {
     fn open(path: &Path) -> Result<Self, String> {
+        Self::open_at(path, Duration::ZERO)
+    }
+
+    fn open_at(path: &Path, _position: Duration) -> Result<Self, String> {
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
@@ -3881,10 +4251,20 @@ impl RecordingFrameReader {
             return Ok(Self::Gif {
                 path: path.to_path_buf(),
                 decoder,
+                compositor: GifFrameCompositor::default(),
                 repeat,
                 completed_repetitions: 0,
                 frames_in_current_loop: 0,
+                position: Duration::ZERO,
             });
+        }
+        if extension == "mov" {
+            #[cfg(target_os = "macos")]
+            return Ok(Self::Mov(macos_video::MovFrameReader::open(
+                path, _position,
+            )?));
+            #[cfg(not(target_os = "macos"))]
+            return Err("このMOVは外部プレイヤーで再生してください。".into());
         }
         if extension != "mp4" {
             return Err("この録画形式の再生には対応していません。".into());
@@ -3939,17 +4319,20 @@ impl RecordingFrameReader {
             sample_count,
             timescale,
             decoder,
+            position: Duration::ZERO,
         })
     }
 
-    fn next_frame(&mut self) -> Result<Option<(DynamicImage, Duration)>, String> {
+    fn next_frame(&mut self) -> Result<Option<(DynamicImage, Duration, Duration)>, String> {
         match self {
             Self::Gif {
                 path,
                 decoder,
+                compositor,
                 repeat,
                 completed_repetitions,
                 frames_in_current_loop,
+                position,
             } => loop {
                 let width = u32::from(decoder.width());
                 let height = u32::from(decoder.height());
@@ -3969,15 +4352,21 @@ impl RecordingFrameReader {
                     }
                     *completed_repetitions = completed_repetitions.saturating_add(1);
                     *frames_in_current_loop = 0;
+                    *position = Duration::ZERO;
                     *decoder = open_gif_playback_decoder(path)?;
+                    *compositor = GifFrameCompositor::default();
                     continue;
                 };
                 *frames_in_current_loop = frames_in_current_loop.saturating_add(1);
                 let delay = Duration::from_millis(u64::from(frame.delay.max(2)) * 10);
-                let pixels = frame.buffer.to_vec();
-                let image = image::RgbaImage::from_raw(width, height, pixels)
-                    .ok_or_else(|| "GIFフレームを画像に変換できません。".to_string())?;
-                return Ok(Some((DynamicImage::ImageRgba8(image), delay)));
+                let frame_position = *position;
+                *position = position.saturating_add(delay);
+                let image = compositor.draw(width, height, frame)?;
+                return Ok(Some((
+                    DynamicImage::ImageRgba8(image),
+                    delay,
+                    frame_position,
+                )));
             },
             Self::Mp4 {
                 reader,
@@ -3986,6 +4375,7 @@ impl RecordingFrameReader {
                 sample_count,
                 timescale,
                 decoder,
+                position,
             } => {
                 use openh264::formats::YUVSource;
                 while *sample_id <= *sample_count {
@@ -4000,6 +4390,8 @@ impl RecordingFrameReader {
                     let delay = Duration::from_secs_f64(
                         f64::from(sample.duration) / f64::from((*timescale).max(1)),
                     );
+                    let frame_position = *position;
+                    *position = position.saturating_add(delay);
                     let mut packet = Vec::with_capacity(sample.bytes.len());
                     let mut cursor = 0;
                     while cursor + 4 <= sample.bytes.len() {
@@ -4027,10 +4419,16 @@ impl RecordingFrameReader {
                     decoded.write_rgb8(&mut rgb);
                     let image = image::RgbImage::from_raw(width as u32, height as u32, rgb)
                         .ok_or_else(|| "MP4映像フレームを作成できません。".to_string())?;
-                    return Ok(Some((DynamicImage::ImageRgb8(image), delay)));
+                    return Ok(Some((
+                        DynamicImage::ImageRgb8(image),
+                        delay,
+                        frame_position,
+                    )));
                 }
                 Ok(None)
             }
+            #[cfg(target_os = "macos")]
+            Self::Mov(reader) => reader.next_frame(),
         }
     }
 }
@@ -4043,19 +4441,50 @@ fn open_gif_playback_decoder(path: &Path) -> Result<gif::Decoder<std::fs::File>,
 }
 
 fn start_recording_playback(path: PathBuf) -> RecordingPlayback {
-    let (request_tx, request_rx) = mpsc::channel::<()>();
+    let duration = recording_duration(&path).unwrap_or_default();
+    let worker_path = path.clone();
+    let (request_tx, request_rx) = mpsc::channel::<RecordingPlaybackCommand>();
     let (frame_tx, frame_rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut reader = match RecordingFrameReader::open(&path) {
+        let mut reader = match RecordingFrameReader::open(&worker_path) {
             Ok(reader) => reader,
             Err(error) => {
                 let _ = frame_tx.send(RecordingPlaybackEvent::Error(error));
                 return;
             }
         };
-        while request_rx.recv().is_ok() {
-            let event = match reader.next_frame() {
-                Ok(Some((frame, delay))) => RecordingPlaybackEvent::Frame(frame, delay),
+        while let Ok(command) = request_rx.recv() {
+            let (next, is_seek) = match command {
+                RecordingPlaybackCommand::NextFrame => (reader.next_frame(), false),
+                RecordingPlaybackCommand::Seek(target) => {
+                    reader = match RecordingFrameReader::open_at(&worker_path, target) {
+                        Ok(reader) => reader,
+                        Err(error) => {
+                            let _ = frame_tx.send(RecordingPlaybackEvent::Error(error));
+                            return;
+                        }
+                    };
+                    if is_mov_recording(&worker_path) {
+                        (reader.next_frame(), true)
+                    } else {
+                        (
+                            loop {
+                                match reader.next_frame() {
+                                    Ok(Some((_frame, _delay, position))) if position < target => {
+                                        continue;
+                                    }
+                                    other => break other,
+                                }
+                            },
+                            true,
+                        )
+                    }
+                }
+            };
+            let event = match next {
+                Ok(Some((frame, delay, position))) => {
+                    RecordingPlaybackEvent::Frame(frame, delay, position, is_seek)
+                }
                 Ok(None) => RecordingPlaybackEvent::End,
                 Err(error) => RecordingPlaybackEvent::Error(error),
             };
@@ -4068,12 +4497,491 @@ fn start_recording_playback(path: PathBuf) -> RecordingPlayback {
             }
         }
     });
+    let mut audio_stream = None;
+    let mut audio_player = None;
+    let mut audio_level = None;
+    #[cfg(target_os = "macos")]
+    let mut audio_setup_rx = None;
+    #[cfg(not(target_os = "macos"))]
+    let audio_setup_rx = None;
+    let mut audio_temp_path = None;
+    let mut audio_waveform_rx = None;
+    let audio_waveform = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+        .then(Vec::new);
+    let mut audio_waveform_error = None;
+    if is_mp4_recording(&path) {
+        match extract_mp4_audio_to_temp(&path) {
+            Ok(audio_path) => {
+                audio_waveform_rx =
+                    Some(start_audio_waveform_analysis(audio_path.clone(), duration));
+                audio_temp_path = Some(audio_path.clone());
+                if let Ok(stream) = rodio::DeviceSinkBuilder::open_default_sink() {
+                    let decoder = std::fs::File::open(&audio_path)
+                        .ok()
+                        .and_then(|file| rodio::Decoder::new_aac(file).ok());
+                    if let Some(decoder) = decoder {
+                        let player = rodio::Player::connect_new(stream.mixer());
+                        let level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+                        player.append(MeteredAudioSource {
+                            source: decoder,
+                            level: level.clone(),
+                            sum_squares: 0.0,
+                            samples: 0,
+                        });
+                        player.play();
+                        audio_player = Some(player);
+                        audio_level = Some(level);
+                        audio_stream = Some(stream);
+                    }
+                }
+            }
+            Err(error) => audio_waveform_error = Some(error),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if is_mov_recording(&path) {
+        let input_path = path.clone();
+        let (audio_ready_tx, audio_ready_rx) = mpsc::channel();
+        thread::spawn(
+            move || match extract_native_mov_audio_to_temp(&input_path) {
+                Ok(audio_path) => {
+                    if audio_ready_tx.send(Ok(audio_path.clone())).is_err() {
+                        let _ = std::fs::remove_file(audio_path);
+                    }
+                }
+                Err(error) => {
+                    let _ = audio_ready_tx.send(Err(error));
+                }
+            },
+        );
+        audio_setup_rx = Some(audio_ready_rx);
+    }
     RecordingPlayback {
         request_tx,
         frame_rx,
         playing: true,
+        ended: false,
         frame_due: Instant::now(),
         awaiting_frame: false,
+        duration,
+        position: Duration::ZERO,
+        _audio_stream: audio_stream,
+        audio_player,
+        audio_level,
+        audio_setup_rx,
+        audio_waveform_rx,
+        audio_waveform,
+        audio_waveform_error,
+        audio_temp_path,
+        volume: 1.0,
+        muted: false,
+    }
+}
+
+fn start_audio_waveform_analysis(
+    audio_path: PathBuf,
+    duration: Duration,
+) -> Receiver<Result<Vec<f32>, String>> {
+    let (result_tx, result_rx) = mpsc::channel();
+    let is_m4a = audio_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("m4a"));
+    match std::fs::File::open(audio_path) {
+        Ok(file) => {
+            thread::spawn(move || {
+                let result = audio_waveform_levels_from_file(file, is_m4a, duration);
+                let _ = result_tx.send(result);
+            });
+        }
+        Err(error) => {
+            let _ = result_tx.send(Err(error.to_string()));
+        }
+    }
+    result_rx
+}
+
+fn audio_waveform_levels_from_file(
+    file: std::fs::File,
+    is_m4a: bool,
+    duration: Duration,
+) -> Result<Vec<f32>, String> {
+    let decoder = if is_m4a {
+        rodio::Decoder::new_mp4(file).map_err(|error| error.to_string())?
+    } else {
+        rodio::Decoder::new_aac(file).map_err(|error| error.to_string())?
+    };
+    let channels = rodio::Source::channels(&decoder).get().max(1) as usize;
+    let sample_rate = rodio::Source::sample_rate(&decoder).get();
+    Ok(audio_waveform_levels(
+        decoder,
+        channels,
+        sample_rate,
+        duration,
+        2,
+    ))
+}
+
+fn audio_waveform_levels(
+    samples: impl Iterator<Item = f32>,
+    channels: usize,
+    sample_rate: u32,
+    duration: Duration,
+    bins_per_second: usize,
+) -> Vec<f32> {
+    const MAX_WAVEFORM_BINS: usize = 24_000;
+    let bin_count = (duration.as_secs_f64() * bins_per_second.max(1) as f64)
+        .ceil()
+        .clamp(1.0, MAX_WAVEFORM_BINS as f64) as usize;
+    let frames_per_bin = (duration.as_secs_f64() * sample_rate.max(1) as f64 / bin_count as f64)
+        .ceil()
+        .max(1.0) as usize;
+    let mut sums = vec![0.0_f64; bin_count];
+    let mut counts = vec![0_u64; bin_count];
+    for (sample_index, sample) in samples.enumerate() {
+        let frame = sample_index / channels.max(1);
+        if frame as f64 >= duration.as_secs_f64() * sample_rate.max(1) as f64 {
+            break;
+        }
+        let bin = (frame / frames_per_bin).min(bin_count - 1);
+        if sample.is_finite() {
+            sums[bin] += f64::from(sample) * f64::from(sample);
+        }
+        counts[bin] += 1;
+    }
+    sums.into_iter()
+        .zip(counts)
+        .map(|(sum, count)| {
+            if count == 0 {
+                0.0
+            } else {
+                (sum / count as f64).sqrt().min(1.0) as f32
+            }
+        })
+        .collect()
+}
+
+fn audio_waveform_has_sound(level: f32) -> bool {
+    level.is_finite() && level > 0.001
+}
+
+#[cfg(target_os = "macos")]
+fn extract_native_mov_audio_to_temp(path: &Path) -> Result<PathBuf, String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let output_path = std::env::temp_dir().join(format!(
+        "macshot-mov-audio-{}-{unique}.m4a",
+        std::process::id()
+    ));
+    let output = Command::new("/usr/bin/afconvert")
+        .args(["-f", "m4af", "-d", "aac"])
+        .arg(path)
+        .arg(&output_path)
+        .output()
+        .map_err(|error| format!("macOSの音声変換を開始できません: {error}"))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&output_path);
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if detail.is_empty() {
+            "MOVの音声をAACに変換できません。".to_string()
+        } else {
+            detail
+        });
+    }
+    Ok(output_path)
+}
+
+fn extract_mp4_audio_to_temp(path: &Path) -> Result<PathBuf, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let size = file.metadata().map_err(|error| error.to_string())?.len();
+    let mut reader = mp4::Mp4Reader::read_header(file, size).map_err(|error| error.to_string())?;
+    let (audio_track_id, profile, freq_index, chan_conf) = {
+        let (track_id, track) = reader
+            .tracks()
+            .iter()
+            .find(|(_, track)| {
+                track
+                    .media_type()
+                    .is_ok_and(|kind| kind == mp4::MediaType::AAC)
+            })
+            .ok_or_else(|| "MP4にAAC音声トラックがありません。".to_string())?;
+        (
+            *track_id,
+            track.audio_profile().map_err(|error| error.to_string())?,
+            track
+                .sample_freq_index()
+                .map_err(|error| error.to_string())?,
+            track.channel_config().map_err(|error| error.to_string())?,
+        )
+    };
+    let profile = profile as u8 - 1;
+    let freq_index = freq_index as u8;
+    let channel_config = chan_conf as u8;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let output_path = std::env::temp_dir().join(format!(
+        "macshot-playback-{}-{unique}.aac",
+        std::process::id()
+    ));
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .map_err(|error| error.to_string())?;
+    let write_result = (|| {
+        let sample_count = reader
+            .sample_count(audio_track_id)
+            .map_err(|error| error.to_string())?;
+        for sample_id in 1..=sample_count {
+            if let Some(sample) = reader
+                .read_sample(audio_track_id, sample_id)
+                .map_err(|error| error.to_string())?
+            {
+                let payload_len = sample.bytes.len();
+                let frame_len = payload_len + 7;
+                if frame_len > 0x1fff {
+                    return Err("AAC音声フレームが大きすぎます。".to_string());
+                }
+                let header = [
+                    0xff,
+                    0xf1,
+                    (profile << 6) | (freq_index << 2) | (channel_config >> 2),
+                    ((channel_config & 0x03) << 6) | ((frame_len >> 11) as u8 & 0x03),
+                    (frame_len >> 3) as u8,
+                    ((frame_len as u8 & 0x07) << 5) | 0x1f,
+                    0xfc,
+                ];
+                output
+                    .write_all(&header)
+                    .map_err(|error| error.to_string())?;
+                output
+                    .write_all(&sample.bytes)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        output.sync_all().map_err(|error| error.to_string())
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&output_path);
+        return Err(error);
+    }
+    Ok(output_path)
+}
+
+fn format_playback_time(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 60 * 60 {
+        format!(
+            "{:02}:{:02}:{:02}",
+            seconds / 3_600,
+            (seconds / 60) % 60,
+            seconds % 60
+        )
+    } else {
+        format!("{:02}:{:02}", seconds / 60, seconds % 60)
+    }
+}
+
+fn playback_position_for_display(
+    current: Duration,
+    playing: bool,
+    audio_position: Option<Duration>,
+    duration: Duration,
+) -> Duration {
+    if playing {
+        audio_position.unwrap_or(current).min(duration)
+    } else {
+        current.min(duration)
+    }
+}
+
+fn should_update_playback_position(playing: bool, is_seek_frame: bool) -> bool {
+    playing || is_seek_frame
+}
+
+fn playback_audio_requires_recreation(audio_finished: bool, audio_path: Option<&Path>) -> bool {
+    audio_finished || audio_path.is_some()
+}
+
+fn seek_recording_playback_audio(
+    playback: &mut RecordingPlayback,
+    target: Duration,
+) -> Result<(), String> {
+    let audio_finished = playback
+        .audio_player
+        .as_ref()
+        .is_some_and(rodio::Player::empty);
+    if !playback_audio_requires_recreation(audio_finished, playback.audio_temp_path.as_deref()) {
+        if let Some(player) = &playback.audio_player {
+            player
+                .try_seek(target)
+                .map_err(|error| format!("録画音声をシークできません: {error}"))?;
+        }
+        return Ok(());
+    }
+
+    let (Some(audio_path), Some(stream)) = (
+        playback.audio_temp_path.as_ref(),
+        playback._audio_stream.as_ref(),
+    ) else {
+        return Ok(());
+    };
+    let file = std::fs::File::open(audio_path).map_err(|error| error.to_string())?;
+    let decoder = if audio_path.extension().and_then(|value| value.to_str()) == Some("m4a") {
+        rodio::Decoder::new_mp4(file).map_err(|error| error.to_string())?
+    } else {
+        rodio::Decoder::new_aac(file).map_err(|error| error.to_string())?
+    };
+    let player = rodio::Player::connect_new(stream.mixer());
+    let level = playback
+        .audio_level
+        .clone()
+        .unwrap_or_else(|| Arc::new(AtomicU32::new(0.0_f32.to_bits())));
+    player.append(MeteredAudioSource {
+        source: decoder,
+        level: level.clone(),
+        sum_squares: 0.0,
+        samples: 0,
+    });
+    player.set_volume(if playback.muted { 0.0 } else { playback.volume });
+    player
+        .try_seek(target)
+        .map_err(|error| format!("録画音声をシークできません: {error}"))?;
+    if playback.playing {
+        player.play();
+    } else {
+        player.pause();
+    }
+    playback.audio_player = Some(player);
+    playback.audio_level = Some(level);
+    Ok(())
+}
+
+fn audio_meter_value(rms: f32) -> (f32, f32) {
+    let dbfs = if rms > 0.000_001 {
+        20.0 * rms.log10()
+    } else {
+        -60.0
+    }
+    .clamp(-60.0, 0.0);
+    ((dbfs + 60.0) / 60.0, dbfs)
+}
+
+fn show_audio_presence_timeline(
+    ui: &mut egui::Ui,
+    levels: &[f32],
+    duration: Duration,
+    position: Duration,
+) {
+    let width = ui.available_width().max(100.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(244, 244, 248));
+
+    let columns = ((rect.width() / 3.0).floor() as usize)
+        .clamp(1, 1_200)
+        .min(levels.len());
+    if columns > 0 {
+        let column_width = rect.width() / columns as f32;
+        let center_y = rect.center().y;
+        let max_half_height = rect.height() * 0.44;
+        let strongest_level = levels
+            .iter()
+            .copied()
+            .filter(|level| audio_waveform_has_sound(*level))
+            .fold(0.0_f32, f32::max);
+        for column in 0..columns {
+            let start = column * levels.len() / columns;
+            let end = ((column + 1) * levels.len() / columns).max(start + 1);
+            let rms = levels[start..end.min(levels.len())]
+                .iter()
+                .copied()
+                .filter(|level| level.is_finite())
+                .fold(0.0_f32, f32::max);
+            let has_sound = audio_waveform_has_sound(rms);
+            let height = if has_sound {
+                (0.25 + 0.75 * (rms / strongest_level.max(0.001)).sqrt()) * max_half_height
+            } else {
+                1.0
+            };
+            let x = rect.left() + column as f32 * column_width;
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(x + 0.6, center_y - height),
+                egui::pos2((x + column_width - 0.6).max(x + 1.0), center_y + height),
+            );
+            painter.rect_filled(
+                bar,
+                1.0,
+                if has_sound {
+                    egui::Color32::from_rgb(76, 163, 116)
+                } else {
+                    egui::Color32::from_rgb(195, 199, 207)
+                },
+            );
+        }
+    }
+
+    if !duration.is_zero() {
+        let fraction = (position.as_secs_f64() / duration.as_secs_f64()).clamp(0.0, 1.0) as f32;
+        let x = rect.left() + rect.width() * fraction;
+        painter.line_segment(
+            [
+                egui::pos2(x, rect.top() + 1.0),
+                egui::pos2(x, rect.bottom() - 1.0),
+            ],
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(130, 105, 230)),
+        );
+    }
+}
+
+struct MeteredAudioSource<S> {
+    source: S,
+    level: Arc<AtomicU32>,
+    sum_squares: f32,
+    samples: u32,
+}
+
+impl<S: Iterator<Item = f32>> Iterator for MeteredAudioSource<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.source.next()?;
+        self.sum_squares += sample * sample;
+        self.samples += 1;
+        if self.samples >= 2048 {
+            self.level.store(
+                (self.sum_squares / self.samples as f32).sqrt().to_bits(),
+                Ordering::Relaxed,
+            );
+            self.sum_squares = 0.0;
+            self.samples = 0;
+        }
+        Some(sample)
+    }
+}
+
+impl<S: rodio::Source<Item = f32>> rodio::Source for MeteredAudioSource<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.source.current_span_len()
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        self.source.channels()
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.source.sample_rate()
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        self.source.total_duration()
+    }
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.source.try_seek(pos)
     }
 }
 
@@ -4454,6 +5362,117 @@ impl DisplayCapture {
     }
 }
 
+fn recording_target_uses_window_capture(target: CaptureTarget) -> bool {
+    matches!(
+        target,
+        CaptureTarget::ActiveWindow | CaptureTarget::Window(_)
+    )
+}
+
+struct RecordingCapture {
+    display: Option<DisplayCapture>,
+    #[cfg(target_os = "macos")]
+    window: Option<WindowRecordingCapture>,
+    #[cfg(not(target_os = "macos"))]
+    window: Option<Window>,
+}
+
+#[cfg(target_os = "macos")]
+struct WindowRecordingCapture {
+    filter: SCContentFilter,
+    configuration: SCStreamConfiguration,
+}
+
+impl RecordingCapture {
+    fn new(target: CaptureTarget) -> Result<Self, String> {
+        if recording_target_uses_window_capture(target) {
+            #[cfg(target_os = "macos")]
+            {
+                let window_id = match target {
+                    CaptureTarget::ActiveWindow => find_active_screen_capture_window_id()?,
+                    CaptureTarget::Window(window_id) => window_id,
+                    _ => unreachable!("window capture target was checked above"),
+                };
+                let content = SCShareableContent::get().map_err(|error| {
+                    format!("ScreenCaptureKitで録画対象のウィンドウ一覧を取得できません: {error}")
+                })?;
+                let window = content
+                    .windows()
+                    .into_iter()
+                    .find(|window| window.window_id() == window_id)
+                    .ok_or_else(|| "録画するウィンドウが見つかりません。".to_string())?;
+                let filter = SCContentFilter::create()
+                    .with_window(&window)
+                    .build()
+                    .map_err(|error| format!("ウィンドウ録画の準備に失敗しました: {error}"))?;
+                let (width, height) = SCShareableContentInfo::for_filter(&filter)
+                    .map(|info| info.pixel_size())
+                    .filter(|(width, height)| *width > 0 && *height > 0)
+                    .ok_or_else(|| "録画するウィンドウのサイズを取得できません。".to_string())?;
+                let configuration = SCStreamConfiguration::new()
+                    .with_width(width)
+                    .with_height(height);
+                Ok(Self {
+                    display: None,
+                    window: Some(WindowRecordingCapture {
+                        filter,
+                        configuration,
+                    }),
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let window = match target {
+                    CaptureTarget::ActiveWindow => find_active_window()?,
+                    CaptureTarget::Window(window_id) => Window::all()
+                        .map_err(|error| error.to_string())?
+                        .into_iter()
+                        .find(|window| window.id().ok() == Some(window_id))
+                        .ok_or_else(|| "録画するウィンドウが見つかりません。".to_string())?,
+                    _ => unreachable!("window capture target was checked above"),
+                };
+                Ok(Self {
+                    display: None,
+                    window: Some(window),
+                })
+            }
+        } else {
+            let monitor = monitor_for_recording(target)?;
+            Ok(Self {
+                display: Some(DisplayCapture::new(&monitor)?),
+                window: None,
+            })
+        }
+    }
+
+    fn capture_image(&self) -> Result<image::RgbaImage, String> {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = &self.window {
+            let captured =
+                SCScreenshotManager::capture_image(&window.filter, &window.configuration).map_err(
+                    |error| format!("ScreenCaptureKitでウィンドウを録画できません: {error}"),
+                )?;
+            let width = u32::try_from(captured.width())
+                .map_err(|_| "録画画像の幅が上限を超えています。".to_string())?;
+            let height = u32::try_from(captured.height())
+                .map_err(|_| "録画画像の高さが上限を超えています。".to_string())?;
+            let pixels = captured
+                .rgba_data()
+                .map_err(|error| format!("録画画像を読み取れません: {error}"))?;
+            return image::RgbaImage::from_raw(width, height, pixels)
+                .ok_or_else(|| "録画画像のサイズとピクセルデータが一致しません。".to_string());
+        }
+        #[cfg(not(target_os = "macos"))]
+        if let Some(window) = &self.window {
+            return window.capture_image().map_err(|error| error.to_string());
+        }
+        self.display
+            .as_ref()
+            .ok_or_else(|| "録画する画面が見つかりません。".to_string())?
+            .capture_image()
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn capture_window_image(window_id: u32) -> Result<image::RgbaImage, String> {
     let content = SCShareableContent::get()
@@ -4514,21 +5533,72 @@ fn is_captureable_screen_capture_title(title: &str) -> bool {
     !title.is_empty() && !title.eq_ignore_ascii_case("Software Cursor")
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ActiveWindowCandidate {
+    window_id: u32,
+    owning_process_id: Option<i32>,
+    captureable: bool,
+    stage_manager_active: bool,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn select_active_window_candidate(
+    candidates: &[ActiveWindowCandidate],
+    frontmost_process_id: i32,
+) -> Option<u32> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.captureable && candidate.owning_process_id == Some(frontmost_process_id)
+        })
+        .find(|candidate| candidate.stage_manager_active)
+        .or_else(|| {
+            candidates.iter().find(|candidate| {
+                candidate.captureable && candidate.owning_process_id == Some(frontmost_process_id)
+            })
+        })
+        .map(|candidate| candidate.window_id)
+}
+
 #[cfg(target_os = "macos")]
 fn find_active_screen_capture_window_id() -> Result<u32, String> {
-    let content = SCShareableContent::get()
-        .map_err(|error| format!("ScreenCaptureKitでウィンドウ一覧を取得できません: {error}"))?;
-    let windows = content.windows();
-    windows
-        .iter()
-        .find(|window| is_captureable_screen_capture_window(window) && window.is_active())
-        .or_else(|| {
-            windows
+    use objc2_app_kit::NSWorkspace;
+
+    // Hiding the MacShot window is asynchronous. Wait briefly for macOS to
+    // return focus to the app the user was recording before enumerating it.
+    for _ in 0..50 {
+        let workspace = unsafe { NSWorkspace::sharedWorkspace() };
+        let frontmost_process_id = unsafe { workspace.frontmostApplication() }
+            .map(|application| unsafe { application.processIdentifier() });
+        if let Some(frontmost_process_id) = frontmost_process_id
+            && frontmost_process_id != std::process::id() as i32
+        {
+            let content = SCShareableContent::get().map_err(|error| {
+                format!("ScreenCaptureKitでウィンドウ一覧を取得できません: {error}")
+            })?;
+            let candidates = content
+                .windows()
                 .iter()
-                .find(|window| is_captureable_screen_capture_window(window))
-        })
-        .map(SCWindow::window_id)
-        .ok_or_else(|| "アクティブウィンドウが見つかりません。".to_string())
+                .map(|window| ActiveWindowCandidate {
+                    window_id: window.window_id(),
+                    owning_process_id: window
+                        .owning_application()
+                        .map(|application| application.process_id()),
+                    captureable: is_captureable_screen_capture_window(window),
+                    stage_manager_active: window.is_active(),
+                })
+                .collect::<Vec<_>>();
+            if let Some(window_id) =
+                select_active_window_candidate(&candidates, frontmost_process_id)
+            {
+                return Ok(window_id);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    Err("アクティブウィンドウを特定できません。録画したいウィンドウを前面にして再試行してください。".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -4736,7 +5806,7 @@ fn raise_window_above_system_bars(title: &str) {
 }
 
 #[cfg(target_os = "macos")]
-fn set_standard_quit_items_enabled(enabled: bool, _language: AppLanguage) {
+fn set_standard_quit_items_enabled(enabled: bool, language: AppLanguage) {
     use objc2::{runtime::Sel, sel};
     use objc2_app_kit::NSApplication;
     use objc2_foundation::{MainThreadMarker, NSString};
@@ -4760,12 +5830,22 @@ fn set_standard_quit_items_enabled(enabled: bool, _language: AppLanguage) {
             };
             for action_item in submenu.itemArray().iter() {
                 let localized_title = match action_item.action() {
-                    Some(action) if action == about_action => Some("MacShotについて"),
-                    Some(action) if action == hide_action => Some("MacShotを隠す"),
-                    Some(action) if action == hide_others_action => Some("ほかを隠す"),
-                    Some(action) if action == show_all_action => Some("すべてを表示"),
-                    _ if action_item.submenu().is_some() => Some("サービス"),
-                    Some(action) if action == terminate_action => Some("MacShotを終了"),
+                    Some(action) if action == about_action => {
+                        language.macos_app_menu_label("about")
+                    }
+                    Some(action) if action == hide_action => language.macos_app_menu_label("hide"),
+                    Some(action) if action == hide_others_action => {
+                        language.macos_app_menu_label("hide_others")
+                    }
+                    Some(action) if action == show_all_action => {
+                        language.macos_app_menu_label("show_all")
+                    }
+                    _ if action_item.submenu().is_some() => {
+                        language.macos_app_menu_label("services")
+                    }
+                    Some(action) if action == terminate_action => {
+                        language.macos_app_menu_label("quit")
+                    }
                     _ => None,
                 };
                 if let Some(title) = localized_title {
@@ -4849,6 +5929,24 @@ fn normalized_region_bounds(
     ])
 }
 
+fn update_region_drag_state(
+    start: &mut Option<egui::Pos2>,
+    current: &mut Option<egui::Pos2>,
+    pressed: bool,
+    down: bool,
+    released: bool,
+    pointer: Option<egui::Pos2>,
+    press_origin: Option<egui::Pos2>,
+) {
+    if pressed {
+        *start = press_origin.or(pointer);
+        *current = *start;
+    }
+    if (down || released) && pointer.is_some() {
+        *current = pointer;
+    }
+}
+
 fn capture_size_label(width: u32, height: u32) -> String {
     format!("画像サイズ: {width} × {height} px")
 }
@@ -4858,7 +5956,7 @@ fn capture_saved_status(sequence: u64, timestamp: &str, width: u32, height: u32)
 }
 
 fn stamp_timestamp(image: &mut image::RgbaImage, timestamp: &str) {
-    let font = FontRef::try_from_slice(include_bytes!("../assets/NotoSansJP-Medium.ttf"))
+    let font = FontRef::try_from_slice(include_bytes!("../assets/NotoSansJP-SemiBold.ttf"))
         .expect("bundled timestamp font must be valid");
     let scale = PxScale::from((image.width().min(image.height()) as f32 / 45.0).clamp(18.0, 34.0));
     let (text_width, text_height) = text_size(scale, &font, timestamp);
@@ -5248,11 +6346,10 @@ fn record_screen_to_gif(
     ctx: egui::Context,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let monitor = monitor_for_recording(target)?;
-    let display_capture = DisplayCapture::new(&monitor)?;
+    let recording_capture = RecordingCapture::new(target)?;
     let first = quality
         .resolution
-        .resize(display_capture.capture_image()?, false);
+        .resize(recording_capture.capture_image()?, false);
     if first.width() > u16::MAX as u32 || first.height() > u16::MAX as u32 {
         return Err("画面サイズがGIFの上限を超えています。".into());
     }
@@ -5303,7 +6400,7 @@ fn record_screen_to_gif(
         }
         let frame = quality
             .resolution
-            .resize(display_capture.capture_image()?, false);
+            .resize(recording_capture.capture_image()?, false);
         if frame.width() != width as u32
             || frame.height() != height as u32
             || last_written.elapsed() < frame_interval
@@ -5421,11 +6518,10 @@ fn record_screen_to_mp4(
     ctx: egui::Context,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let monitor = monitor_for_recording(target)?;
-    let display_capture = DisplayCapture::new(&monitor)?;
+    let recording_capture = RecordingCapture::new(target)?;
     let first = quality
         .resolution
-        .resize(display_capture.capture_image()?, true);
+        .resize(recording_capture.capture_image()?, true);
     let width = first.width() & !1;
     let height = first.height() & !1;
     if width < 2 || height < 2 || width > u16::MAX as u32 || height > u16::MAX as u32 {
@@ -5549,7 +6645,7 @@ fn record_screen_to_mp4(
         }
         let frame = quality
             .resolution
-            .resize(display_capture.capture_image()?, true);
+            .resize(recording_capture.capture_image()?, true);
         if frame.width() != width || frame.height() != height {
             continue;
         }
@@ -6067,6 +7163,7 @@ impl MacShot {
                         self.native_capture_watch = Some(NativeCaptureWatch {
                             started_at: Instant::now(),
                             known_files,
+                            in_flight: HashSet::new(),
                             pending_sizes: HashMap::new(),
                         });
                         self.status = "macOS標準パネルを開きました。撮影後の画像・録画を保存先へ自動で取り込みます。".into();
@@ -6090,43 +7187,51 @@ impl MacShot {
 
     #[cfg(target_os = "macos")]
     fn poll_native_capture_imports(&mut self, ctx: &egui::Context) {
-        if !self.auto_import_native_captures {
-            self.native_capture_watch = None;
-            return;
+        let mut imported = 0;
+        let mut failures = Vec::new();
+        while let Ok(event) = self.native_capture_import_rx.try_recv() {
+            if let Some(watch) = self.native_capture_watch.as_mut() {
+                watch.in_flight.remove(&event.source);
+                match event.result {
+                    Ok(_) => {
+                        watch.known_files.insert(event.source.clone());
+                        watch.pending_sizes.remove(&event.source);
+                        imported += 1;
+                    }
+                    Err(error) => {
+                        // Recheck a stable file after a short delay if a transient copy failure
+                        // occurred (for example, the OS still held the file open).
+                        watch.pending_sizes.remove(&event.source);
+                        failures.push(error);
+                    }
+                }
+            }
         }
-        let Some(watch) = self.native_capture_watch.as_mut() else {
-            return;
-        };
-        if watch.started_at.elapsed() > Duration::from_secs(12 * 60 * 60) {
+
+        if !self.auto_import_native_captures {
             self.native_capture_watch = None;
             return;
         }
 
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
-        let directories = native_capture_directories(&folder);
-        let current = scan_native_capture_files(&directories);
-        let ready = completed_native_capture_files(watch, current);
-
-        if ready.is_empty() {
-            ctx.request_repaint_after(Duration::from_secs(1));
-            return;
-        }
-        let mut imported = 0;
-        let mut failures = Vec::new();
-        for source in ready {
-            if source.parent() == Some(folder.as_path()) {
-                imported += 1;
+        if let Some(watch) = self.native_capture_watch.as_mut() {
+            if watch.started_at.elapsed() > Duration::from_secs(12 * 60 * 60)
+                && watch.in_flight.is_empty()
+            {
+                self.native_capture_watch = None;
             } else {
-                match copy_native_capture(&source, &folder) {
-                    Ok(_) => imported += 1,
-                    Err(error) => failures.push(error),
+                let directories = native_capture_directories(&folder);
+                let current = scan_native_capture_files(&directories);
+                let ready = completed_native_capture_files(watch, current);
+                for source in ready {
+                    watch.in_flight.insert(source.clone());
+                    let destination_folder = folder.clone();
+                    let import_tx = self.native_capture_import_tx.clone();
+                    spawn_native_capture_import(source, destination_folder, import_tx);
                 }
             }
-            if let Some(watch) = self.native_capture_watch.as_mut() {
-                watch.known_files.insert(source.clone());
-                watch.pending_sizes.remove(&source);
-            }
         }
+
         if imported > 0 {
             self.evidence_files = evidence_images(&folder);
             self.recording_files = recording_files(&folder);
@@ -6144,7 +7249,9 @@ impl MacShot {
                 failures.join("、")
             );
         }
-        ctx.request_repaint_after(Duration::from_secs(1));
+        if self.native_capture_watch.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
     }
 
     fn open_screen_recording_settings(&mut self) {
@@ -6548,6 +7655,7 @@ impl MacShot {
             timestamp_enabled: self.timestamp_enabled,
             filename_prefix: &self.filename_prefix,
             show_capture_notice: self.show_capture_notice,
+            keep_region_in_continuous: self.keep_region_in_continuous,
             annotation_color: &self.annotation_color,
             annotation_width: self.annotation_width,
             save_folder: &folder,
@@ -6610,7 +7718,7 @@ impl MacShot {
                 self.crop_drag_start = None;
                 self.annotations.clear();
                 self.live_annotation = None;
-                self.page = Page::Capture;
+                switch_page(&mut self.page, Page::Capture, &mut self.status);
                 self.status = format!("編集する画像を開きました: {}", path.display());
                 self.refresh_diff();
             }
@@ -6642,12 +7750,32 @@ impl MacShot {
         }
     }
 
+    fn finish_region_capture(&mut self, ctx: &egui::Context) {
+        let saved = if self.crop_selection.is_some() {
+            self.save_crop()
+        } else if !self.annotations.is_empty() {
+            self.save_annotated_image()
+        } else {
+            true
+        };
+        if saved {
+            self.region_annotation_pending = false;
+            self.status = "範囲撮影を完了しました。".into();
+            if self.continuous_capture {
+                minimize_main_window_for_capture(ctx);
+            }
+        }
+    }
+
     fn has_pending_edit(&self) -> bool {
         self.crop_selection.is_some() || !self.annotations.is_empty()
     }
 
     fn begin_capture(&mut self, ctx: &egui::Context) {
-        self.begin_capture_for(ctx, self.capture_target, None);
+        let region = (self.continuous_capture && self.keep_region_in_continuous)
+            .then_some(self.continuous_region)
+            .flatten();
+        self.begin_capture_for(ctx, self.capture_target, region);
     }
 
     fn report_capture_failure(&mut self, message: impl Into<String>) {
@@ -6666,7 +7794,9 @@ impl MacShot {
                 return;
             }
         }
-        if !self.continuous_capture {
+        if self.region_annotation_pending {
+            restore_main_window(ctx);
+        } else if !self.continuous_capture {
             self.continuous_capture_session_active = false;
             restore_main_window(ctx);
         }
@@ -6702,7 +7832,7 @@ impl MacShot {
         }
         #[cfg(target_os = "windows")]
         self.begin_region_selection_windows(ctx);
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
         {
             let monitors = match Monitor::all() {
                 Ok(monitors) => monitors,
@@ -6737,21 +7867,38 @@ impl MacShot {
             self.region_overlay_size = egui::vec2(overlay_width, overlay_height);
             self.region_drag_start = None;
             self.region_drag_current = None;
+            self.region_background_texture = None;
+            self.region_selection_deadline = Some(Instant::now() + Duration::from_secs(15));
+            self.region_selecting = false;
             self.status =
-                "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。".into();
-            self.region_selecting = true;
+                "範囲選択を準備しています…画面の確認に時間がかかる場合は自動で戻ります。".into();
             minimize_main_window_for_capture(ctx);
-            ctx.request_repaint();
+            let sender = self.region_snapshot_tx.clone();
+            let repaint = ctx.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(350));
+                let result = capture_target_image(CaptureTarget::PrimaryDisplay);
+                let _ = sender.send(result);
+                repaint.request_repaint();
+            });
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            self.status = "この環境では範囲撮影を利用できません。".into();
         }
     }
 
-    #[cfg(target_os = "windows")]
     fn handle_region_snapshot(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "windows")]
         while let Ok(result) = self.region_geometry_rx.try_recv() {
             if !self.region_geometry_pending {
                 continue;
             }
-            self.region_geometry_pending = false;
+            #[cfg(target_os = "windows")]
+            {
+                self.region_geometry_pending = false;
+            }
             match result {
                 Ok((x, y, width, height)) => {
                     self.region_overlay_position = egui::pos2(x, y);
@@ -6783,7 +7930,10 @@ impl MacShot {
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
             self.region_selection_deadline = None;
-            self.region_geometry_pending = false;
+            #[cfg(target_os = "windows")]
+            {
+                self.region_geometry_pending = false;
+            }
             self.status = "範囲選択の準備が時間切れになりました。画面収録の許可と他の撮影アプリを確認して、もう一度お試しください。".into();
             restore_main_window(ctx);
         }
@@ -6860,7 +8010,7 @@ impl MacShot {
             .with_min_inner_size(self.region_overlay_size)
             .with_max_inner_size(self.region_overlay_size)
             .with_decorations(false)
-            .with_transparent(cfg!(target_os = "macos"))
+            .with_transparent(false)
             .with_always_on_top()
             .with_mouse_passthrough(false)
             .with_resizable(false);
@@ -6881,22 +8031,26 @@ impl MacShot {
                 .show(viewport_ctx, |ui| {
                     let screen = ui.max_rect();
                     ui.allocate_rect(screen, egui::Sense::click_and_drag());
-                    let (pressed, down, released, pointer) = viewport_ctx.input(|input| {
-                        (
-                            input.pointer.button_pressed(egui::PointerButton::Primary),
-                            input.pointer.button_down(egui::PointerButton::Primary),
-                            input.pointer.button_released(egui::PointerButton::Primary),
-                            input.pointer.interact_pos(),
-                        )
-                    });
-                    if pressed {
-                        self.region_drag_start = pointer;
-                        self.region_drag_current = pointer;
-                    } else if down || released {
-                        self.region_drag_current = pointer.or(self.region_drag_current);
-                    }
+                    let (pressed, down, released, pointer, press_origin) =
+                        viewport_ctx.input(|input| {
+                            (
+                                input.pointer.button_pressed(egui::PointerButton::Primary),
+                                input.pointer.button_down(egui::PointerButton::Primary),
+                                input.pointer.button_released(egui::PointerButton::Primary),
+                                input.pointer.interact_pos(),
+                                input.pointer.press_origin(),
+                            )
+                        });
+                    update_region_drag_state(
+                        &mut self.region_drag_start,
+                        &mut self.region_drag_current,
+                        pressed,
+                        down,
+                        released,
+                        pointer,
+                        press_origin,
+                    );
                     let painter = ui.painter();
-                    #[cfg(target_os = "windows")]
                     if let Some(texture) = &self.region_background_texture {
                         painter.image(
                             texture.id(),
@@ -7005,12 +8159,14 @@ impl MacShot {
         });
         if let Some(selection) = action {
             self.region_selecting = false;
-            #[cfg(target_os = "windows")]
-            {
-                self.region_background_texture = None;
-            }
+            self.region_background_texture = None;
             restore_main_window(ctx);
             if let Some(bounds) = selection {
+                if self.keep_region_in_continuous {
+                    self.continuous_region = Some(bounds);
+                } else {
+                    self.continuous_region = None;
+                }
                 self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(bounds));
             } else {
                 self.status = "範囲撮影をキャンセルしました。".into();
@@ -7073,6 +8229,8 @@ impl MacShot {
             });
         }
         self.capture_in_progress = true;
+        self.active_capture_is_region = region.is_some();
+        self.region_annotation_pending = false;
         self.status = format!("撮影 {} 枚目を保存しています…", sequence);
         minimize_main_window_for_capture(&ctx);
         self.update_tray_recording_status();
@@ -7137,6 +8295,8 @@ impl MacShot {
             }
             match result {
                 Ok((path, image, timestamp, sequence)) => {
+                    self.region_annotation_pending = self.active_capture_is_region;
+                    self.active_capture_is_region = false;
                     let (width, height) = image.dimensions();
                     self.status = capture_saved_status(sequence, &timestamp, width, height);
                     if self.continuous_capture_session_active {
@@ -7168,6 +8328,8 @@ impl MacShot {
                     self.refresh_diff();
                 }
                 Err(error) => {
+                    self.active_capture_is_region = false;
+                    self.region_annotation_pending = false;
                     self.status = capture_failure_message(&error);
                     if self.continuous_capture_session_active {
                         self.continuous_capture_failed_count =
@@ -7189,6 +8351,8 @@ impl MacShot {
             }
             self.capture_deadline = None;
             self.capture_in_progress = false;
+            self.active_capture_is_region = false;
+            self.region_annotation_pending = false;
             self.active_capture_sequence = None;
             self.capture_queue.clear();
             if self.continuous_capture_session_active {
@@ -7241,7 +8405,7 @@ impl MacShot {
                         self.right_path = Some(path.clone());
                         self.right_image = Some(image);
                         self.right_texture = None;
-                        self.page = Page::Compare;
+                        switch_page(&mut self.page, Page::Compare, &mut self.status);
                     }
                     self.refresh_diff();
                     self.status = format!("読み込みました: {}", path.display());
@@ -7415,6 +8579,7 @@ impl MacShot {
         ));
     }
 
+    #[cfg(test)]
     fn show_recording_preview_image(
         ui: &mut egui::Ui,
         image: &DynamicImage,
@@ -7733,7 +8898,7 @@ impl MacShot {
                             )
                             .clicked()
                         {
-                            self.page = page;
+                            switch_page(&mut self.page, page, &mut self.status);
                             if page == Page::Evidence {
                                 let folder =
                                     self.save_folder.clone().unwrap_or_else(default_save_folder);
@@ -7933,10 +9098,24 @@ impl MacShot {
         glass_frame().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui.button(self.language.text("▦  撮影済みを開く")).clicked() {
-                    self.page = Page::Evidence;
+                    switch_page(&mut self.page, Page::Evidence, &mut self.status);
                     let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                     self.evidence_files = evidence_images(&folder);
                     self.recording_files = recording_files(&folder);
+                }
+                if self.region_annotation_pending {
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(self.language.text("注釈を保存して撮影を完了します。"))
+                            .size(11.0)
+                            .color(TEXT_MUTED),
+                    );
+                    if ui
+                        .add(primary_button(self.language.text("✓ 撮影完了")))
+                        .clicked()
+                    {
+                        self.finish_region_capture(ctx);
+                    }
                 }
                 if let Some(index) = self.editing_index {
                     ui.separator();
@@ -8009,7 +9188,10 @@ impl MacShot {
                             self.annotations.clear();
                             self.live_annotation = None;
                         }
-                        if ui.button(self.language.text("注釈画像を保存")).clicked() {
+                        if ui
+                            .button(self.language.text("注釈画像を別名で保存"))
+                            .clicked()
+                        {
                             self.save_annotated_image();
                         }
                     }
@@ -8019,7 +9201,7 @@ impl MacShot {
                             self.crop_drag_start = None;
                         }
                         if ui
-                            .add(primary_button(self.language.text("範囲を保存")))
+                            .add(primary_button(self.language.text("切り出しを別名で保存")))
                             .clicked()
                         {
                             self.save_crop();
@@ -8250,7 +9432,7 @@ impl MacShot {
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("mov"));
-        if is_native_mov {
+        if is_native_mov && !cfg!(target_os = "macos") {
             self.status = self
                 .language
                 .text("MOV形式は「外部で開く」から再生できます。");
@@ -8282,7 +9464,11 @@ impl MacShot {
         self.recording_preview_image = None;
         self.recording_preview_texture = None;
         self.recording_preview_details = None;
+        self.recording_player_controls_rect = None;
+        self.recording_player_last_pointer_pos = None;
+        self.recording_player_last_pointer_activity = None;
         self.recording_player_error = None;
+        self.status.clear();
     }
 
     fn show_recording_player_viewport(&mut self, ctx: &egui::Context) {
@@ -8294,8 +9480,8 @@ impl MacShot {
         let viewport_id = egui::ViewportId::from_hash_of("macshot-recording-player");
         let builder = egui::ViewportBuilder::default()
             .with_title(&title)
-            .with_inner_size([900.0, 680.0])
-            .with_min_inner_size([540.0, 420.0])
+            .with_inner_size([1120.0, 680.0])
+            .with_min_inner_size([720.0, 480.0])
             .with_resizable(true);
         let mut close = false;
         ctx.show_viewport_immediate(viewport_id, builder, |player_ctx, _class| {
@@ -8304,54 +9490,301 @@ impl MacShot {
                 player_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
-            egui::CentralPanel::default().show(player_ctx, |ui| {
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(&filename).size(18.0).strong());
-                    if let Some(details) = &self.recording_preview_details {
-                        ui.label(egui::RichText::new(details).size(12.0).color(TEXT_MUTED));
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(egui::Color32::BLACK).inner_margin(0.0))
+                .show(player_ctx, |ui| {
+                    let bounds = ui.max_rect();
+                    let _ = ui.allocate_rect(bounds, egui::Sense::hover());
+                    let available = bounds.size();
+                    let image_size = self.recording_preview_image.as_ref().map(|image| {
+                        let image_size = egui::vec2(image.width() as f32, image.height() as f32);
+                        let scale = (available.x / image_size.x)
+                            .min(available.y / image_size.y)
+                            .min(1.0);
+                        image_size * scale
+                    });
+                    let video_rect = image_size.map(|size| {
+                        egui::Rect::from_center_size(bounds.center(), size)
+                    });
+                    if let (Some(image), Some(rect)) =
+                        (&self.recording_preview_image, video_rect)
+                    {
+                        let size = [image.width() as usize, image.height() as usize];
+                        if self.recording_preview_texture.is_none() {
+                            let rgba = image.to_rgba8();
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                size,
+                                rgba.as_raw(),
+                            );
+                            self.recording_preview_texture = Some(ui.ctx().load_texture(
+                                "recording-player-frame",
+                                color,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                        if let Some(texture) = &self.recording_preview_texture {
+                            ui.painter().image(
+                                texture.id(),
+                                rect,
+                                egui::Rect::from_min_max(
+                                    egui::Pos2::ZERO,
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                egui::Color32::WHITE,
+                            );
+                        }
                     }
-                    ui.horizontal(|ui| {
-                        let playing = self
-                            .recording_playback
+
+                    let pointer = player_ctx.input(|input| input.pointer.hover_pos());
+                    let now = Instant::now();
+                    if let Some(position) = pointer {
+                        if self.recording_player_last_pointer_pos != Some(position) {
+                            self.recording_player_last_pointer_activity = Some(now);
+                        }
+                        self.recording_player_last_pointer_pos = Some(position);
+                    } else {
+                        self.recording_player_last_pointer_pos = None;
+                    }
+                    let pointer_down = player_ctx.input(|input| input.pointer.any_down());
+                    let controls_visible = recording_player_controls_visible(
+                        video_rect,
+                        self.recording_player_controls_rect,
+                        bounds,
+                        pointer,
+                        self.recording_player_last_pointer_activity,
+                        now,
+                        pointer_down,
+                    );
+                    if controls_visible {
+                        let control_width =
+                            recording_player_controls_width(video_rect, bounds);
+                        let anchor =
+                            recording_player_controls_anchor(video_rect, bounds, control_width);
+                        let controls_area = egui::Area::new(egui::Id::new("recording-player-controls"))
+                            .order(egui::Order::Foreground)
+                            .pivot(egui::Align2::LEFT_BOTTOM)
+                            .fixed_pos(anchor)
+                            .show(player_ctx, |ui| {
+                                egui::Frame::new()
+                                    .fill(egui::Color32::from_black_alpha(218))
+                                    .corner_radius(egui::CornerRadius::same(12))
+                                    .inner_margin(egui::Margin::symmetric(18, 12))
+                                    .show(ui, |ui| {
+                                        ui.set_width(control_width);
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(&filename)
+                                                    .size(15.0)
+                                                    .strong()
+                                                    .color(egui::Color32::WHITE),
+                                            );
+                                            if let Some(details) = &self.recording_preview_details {
+                                                ui.label(
+                                                    egui::RichText::new(details)
+                                                        .size(11.0)
+                                                        .color(egui::Color32::LIGHT_GRAY),
+                                                );
+                                            }
+                                        });
+                                        let mut restart_playback = false;
+                                        if let Some(playback) = &mut self.recording_playback {
+                        let is_gif = path
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .is_some_and(|value| value.eq_ignore_ascii_case("gif"));
+                        let audio_position = playback
+                            .audio_player
                             .as_ref()
-                            .is_some_and(|playback| playback.playing);
-                        let label = if playing {
-                            self.language.text("⏸ 一時停止")
-                        } else {
-                            self.language.text("▶ 再生")
-                        };
-                        if ui.button(label).clicked() {
-                            if let Some(playback) = &mut self.recording_playback {
-                                playback.playing = !playback.playing;
-                                if playback.playing {
+                            .map(|player| player.get_pos());
+                        playback.position = playback_position_for_display(
+                            playback.position,
+                            playback.playing,
+                            audio_position,
+                            playback.duration,
+                        );
+                        let total = playback.duration.as_secs_f64();
+                        let mut seconds = playback.position.as_secs_f64().min(total);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new(self.language.text("音声の有無")).color(egui::Color32::WHITE));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "● {}",
+                                    self.language.text("音声あり")
+                                ))
+                                .color(egui::Color32::from_rgb(76, 163, 116)),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("— {}", self.language.text("無音")))
+                                    .color(egui::Color32::from_rgb(155, 160, 170)),
+                            );
+                                            if let Some(levels) = playback.audio_waveform.as_deref() {
+                                                if levels.is_empty() {
+                                                    ui.label(egui::RichText::new(self.language.text(if is_gif {
+                                                        "GIFには音声がありません"
+                                                    } else {
+                                                        "音声データなし"
+                                                    })).color(egui::Color32::LIGHT_GRAY));
+                                                } else {
+                                                    show_audio_presence_timeline(
+                                                        ui,
+                                                        levels,
+                                                        playback.duration,
+                                                        playback.position,
+                                                    );
+                                                }
+                                            } else if playback.audio_waveform_rx.is_some()
+                                                || playback.audio_setup_rx.is_some()
+                                            {
+                                                ui.label(egui::RichText::new(self.language.text("音声データを解析中…")).color(egui::Color32::LIGHT_GRAY));
+                                            } else if playback.audio_waveform_error.is_some() {
+                                                ui.label(egui::RichText::new(self.language.text("音声データを表示できません")).color(egui::Color32::LIGHT_GRAY));
+                                            } else {
+                                                ui.label(egui::RichText::new(self.language.text("音声データなし")).color(egui::Color32::LIGHT_GRAY));
+                                            }
+                                        });
+                                        ui.horizontal_wrapped(|ui| {
+                            ui.label(egui::RichText::new(self.language.text("音量")).color(egui::Color32::WHITE));
+                            if ui
+                                .add_sized(
+                                    [150.0, 20.0],
+                                    egui::Slider::new(&mut playback.volume, 0.0..=1.0)
+                                        .step_by(0.01)
+                                        .show_value(false),
+                                )
+                                .changed()
+                                && let Some(player) = &playback.audio_player
+                            {
+                                player.set_volume(if playback.muted {
+                                    0.0
+                                } else {
+                                    playback.volume
+                                });
+                            }
+                            ui.label(egui::RichText::new(format!("{:.0}%", playback.volume * 100.0)).color(egui::Color32::WHITE));
+                            if ui
+                                .button(self.language.text(if playback.muted {
+                                    "ミュート解除"
+                                } else {
+                                    "ミュート"
+                                }))
+                                .clicked()
+                                && let Some(player) = &playback.audio_player
+                            {
+                                playback.muted = !playback.muted;
+                                player.set_volume(if playback.muted {
+                                    0.0
+                                } else {
+                                    playback.volume
+                                });
+                            }
+                            if let Some(level) = &playback.audio_level {
+                                let rms = f32::from_bits(level.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+                                let (meter, dbfs) = audio_meter_value(rms);
+                                ui.label(egui::RichText::new(self.language.text("音声レベル")).color(egui::Color32::WHITE));
+                                let meter_color = if dbfs >= -6.0 {
+                                    egui::Color32::from_rgb(220, 75, 75)
+                                } else if dbfs >= -18.0 {
+                                    egui::Color32::from_rgb(230, 170, 55)
+                                } else {
+                                    egui::Color32::from_rgb(88, 174, 125)
+                                };
+                                ui.add(egui::ProgressBar::new(meter).desired_width(120.0).fill(meter_color));
+                                ui.label(egui::RichText::new(if rms <= 0.000_001 { "−∞ dBFS".to_owned() } else { format!("{dbfs:.0} dBFS") }).color(egui::Color32::WHITE));
+                            } else {
+                                ui.label(egui::RichText::new(self.language.text(if is_gif {
+                                    "GIFには音声がありません"
+                                } else if playback.audio_setup_rx.is_some() {
+                                    "MOV音声を準備しています…"
+                                } else {
+                                    "音声トラックなし、または音声出力を利用できません"
+                                })).color(egui::Color32::LIGHT_GRAY));
+                            }
+                            let playing = playback.playing;
+                            let play_label = if playing {
+                                self.language.text("⏸ 一時停止")
+                            } else {
+                                self.language.text("▶ 再生")
+                            };
+                            if ui.button(play_label).clicked() {
+                                if playback.ended {
+                                    restart_playback = true;
+                                } else {
+                                    playback.playing = !playback.playing;
+                                    if playback.playing {
+                                        playback.frame_due = Instant::now();
+                                        if playback
+                                            .audio_player
+                                            .as_ref()
+                                            .is_some_and(rodio::Player::empty)
+                                            && let Err(error) = seek_recording_playback_audio(
+                                                playback,
+                                                playback.position,
+                                            )
+                                        {
+                                            self.status = format!("{} {error}", self.language.text("録画を再生できませんでした。"));
+                                        }
+                                        if let Some(player) = &playback.audio_player { player.play(); }
+                                    } else {
+                                        let target = playback.position;
+                                        if let Some(player) = &playback.audio_player { player.pause(); }
+                                        if let Err(error) = seek_recording_playback_audio(playback, target) {
+                                            self.status = format!("{} {error}", self.language.text("録画を再生できませんでした。"));
+                                        }
+                                        if playback.request_tx.send(RecordingPlaybackCommand::Seek(target)).is_ok() {
+                                            playback.awaiting_frame = true;
+                                            playback.frame_due = Instant::now();
+                                        }
+                                    }
+                                }
+                            }
+                            if ui.button(self.language.text("外部で開く")).clicked() {
+                                #[cfg(target_os = "macos")]
+                                let command = "open";
+                                #[cfg(target_os = "windows")]
+                                let command = "explorer";
+                                let _ = Command::new(command).arg(&path).spawn();
+                            }
+                                        });
+                        // Keep seeking at the bottom edge of the video so it remains the primary control.
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(format_playback_time(playback.position)).color(egui::Color32::WHITE));
+                            ui.spacing_mut().slider_width = (control_width - 250.0).max(120.0);
+                            let response = ui.add(
+                                egui::Slider::new(&mut seconds, 0.0..=total.max(0.01))
+                                    .show_value(false)
+                                    .trailing_fill(true),
+                            );
+                            ui.label(egui::RichText::new(format_playback_time(playback.duration)).color(egui::Color32::WHITE));
+                            if response.changed() { playback.position = Duration::from_secs_f64(seconds.min(total)); }
+                            if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                                let target = playback.position;
+                                if playback.request_tx.send(RecordingPlaybackCommand::Seek(target)).is_ok() {
+                                    playback.awaiting_frame = true;
                                     playback.frame_due = Instant::now();
                                 }
-                            } else {
-                                self.recording_playback =
-                                    Some(start_recording_playback(path.clone()));
+                                if let Err(error) = seek_recording_playback_audio(playback, target) {
+                                    self.status = format!("{} {error}", self.language.text("録画を再生できませんでした。"));
+                                }
+                                if playback.playing && let Some(player) = &playback.audio_player { player.play(); }
                             }
-                            player_ctx.request_repaint_after(Duration::from_millis(10));
+                        });
                         }
-                        if ui.button(self.language.text("外部で開く")).clicked() {
-                            #[cfg(target_os = "macos")]
-                            let command = "open";
-                            #[cfg(target_os = "windows")]
-                            let command = "explorer";
-                            let _ = Command::new(command).arg(&path).spawn();
+                                        if restart_playback {
+                                            self.recording_playback =
+                                                Some(start_recording_playback(path.clone()));
+                                        }
+                                        if let Some(error) = &self.recording_player_error {
+                                            ui.label(egui::RichText::new(error).color(egui::Color32::LIGHT_RED));
+                                        }
+                                    });
+                            });
+                        self.recording_player_controls_rect = Some(controls_area.response.rect);
+                        if !pointer_down {
+                            player_ctx.request_repaint_after(Duration::from_millis(100));
                         }
-                    });
-                    if let Some(error) = &self.recording_player_error {
-                        ui.label(egui::RichText::new(error).color(egui::Color32::RED));
+                    } else {
+                        self.recording_player_controls_rect = None;
                     }
-                    ui.separator();
-                    if let Some(image) = &self.recording_preview_image {
-                        Self::show_recording_preview_image(
-                            ui,
-                            image,
-                            &mut self.recording_preview_texture,
-                        );
-                    }
-                });
             });
             if player_ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
                 close = true;
@@ -8402,11 +9835,14 @@ impl MacShot {
             self.recording_rename_dialog = None;
         } else if save {
             let dialog = self.recording_rename_dialog.take().unwrap();
-            if self.recording_preview_path.as_ref() == Some(&dialog.path) {
-                self.close_recording_player();
-            }
             match rename_recording_file(&dialog.path, &dialog.name) {
-                Ok(path) => {
+                Ok(RecordingRenameOutcome::Unchanged) => {
+                    self.status = self.language.text("録画名は変更されていません。");
+                }
+                Ok(RecordingRenameOutcome::Renamed(path)) => {
+                    if self.recording_preview_path.as_ref() == Some(&dialog.path) {
+                        self.close_recording_player();
+                    }
                     let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
                     self.recording_files = recording_files(&folder);
                     self.recording_duration_cache.remove(&dialog.path);
@@ -8425,19 +9861,136 @@ impl MacShot {
         let now = Instant::now();
         let mut event = None;
         let mut request_failed = false;
+        let mut audio_setup = None;
         if let Some(playback) = &mut self.recording_playback {
+            let waveform_result = playback.audio_waveform_rx.as_ref().and_then(|receiver| {
+                match receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        Some(Err("音声データを解析できません。".into()))
+                    }
+                    Err(mpsc::TryRecvError::Empty) => None,
+                }
+            });
+            if let Some(result) = waveform_result {
+                playback.audio_waveform_rx = None;
+                match result {
+                    Ok(levels) => playback.audio_waveform = Some(levels),
+                    Err(error) => playback.audio_waveform_error = Some(error),
+                }
+            }
+            if let Some(receiver) = &playback.audio_setup_rx {
+                match receiver.try_recv() {
+                    Ok(result) => audio_setup = Some(result),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        audio_setup = Some(Err("MOVの音声準備が中断されました。".into()));
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+            }
+            if audio_setup.is_some() {
+                playback.audio_setup_rx = None;
+            }
             while let Ok(next) = playback.frame_rx.try_recv() {
                 event = Some(next);
             }
             if playback.playing && !playback.awaiting_frame && now >= playback.frame_due {
-                if playback.request_tx.send(()).is_ok() {
+                if playback
+                    .request_tx
+                    .send(RecordingPlaybackCommand::NextFrame)
+                    .is_ok()
+                {
                     playback.awaiting_frame = true;
                 } else {
                     request_failed = true;
                 }
             }
-            if playback.playing {
+            if playback.playing
+                || playback.awaiting_frame
+                || playback.audio_setup_rx.is_some()
+                || playback.audio_waveform_rx.is_some()
+            {
                 ctx.request_repaint_after(Duration::from_millis(10));
+            }
+        }
+
+        if let Some(result) = audio_setup {
+            match result {
+                Ok(audio_path) => {
+                    if let Some(playback) = &mut self.recording_playback {
+                        playback.audio_waveform_rx = Some(start_audio_waveform_analysis(
+                            audio_path.clone(),
+                            playback.duration,
+                        ));
+                        playback.audio_temp_path = Some(audio_path.clone());
+                    }
+                    let audio_stream = rodio::DeviceSinkBuilder::open_default_sink();
+                    let decoder = std::fs::File::open(&audio_path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|file| {
+                            rodio::Decoder::new_mp4(file).map_err(|error| error.to_string())
+                        });
+                    match (audio_stream, decoder) {
+                        (Ok(stream), Ok(decoder)) => {
+                            if let Some(playback) = &mut self.recording_playback {
+                                let player = rodio::Player::connect_new(stream.mixer());
+                                let level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+                                player.append(MeteredAudioSource {
+                                    source: decoder,
+                                    level: level.clone(),
+                                    sum_squares: 0.0,
+                                    samples: 0,
+                                });
+                                player.set_volume(if playback.muted {
+                                    0.0
+                                } else {
+                                    playback.volume
+                                });
+                                let _ = player.try_seek(playback.position);
+                                if playback.playing {
+                                    player.play();
+                                }
+                                playback._audio_stream = Some(stream);
+                                playback.audio_player = Some(player);
+                                playback.audio_level = Some(level);
+                            } else {
+                                let _ = std::fs::remove_file(audio_path);
+                            }
+                        }
+                        (Err(error), _) => {
+                            let error = error.to_string();
+                            if let Some(playback) = &mut self.recording_playback {
+                                playback.audio_waveform_error = Some(error.clone());
+                            } else {
+                                let _ = std::fs::remove_file(audio_path);
+                            }
+                            self.status = format!(
+                                "{} {error}",
+                                self.language.text("録画を再生できませんでした。")
+                            );
+                        }
+                        (_, Err(error)) => {
+                            if let Some(playback) = &mut self.recording_playback {
+                                playback.audio_waveform_error = Some(error.clone());
+                            } else {
+                                let _ = std::fs::remove_file(audio_path);
+                            }
+                            self.status = format!(
+                                "{} {error}",
+                                self.language.text("録画を再生できませんでした。")
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(playback) = &mut self.recording_playback {
+                        playback.audio_waveform_error = Some(error.clone());
+                    }
+                    self.status = format!(
+                        "{} {error}",
+                        self.language.text("録画を再生できませんでした。")
+                    );
+                }
             }
         }
 
@@ -8447,16 +10000,28 @@ impl MacShot {
                 playback.awaiting_frame = false;
             }
             match event {
-                RecordingPlaybackEvent::Frame(image, delay) => {
+                RecordingPlaybackEvent::Frame(image, delay, position, is_seek) => {
                     self.recording_preview_image = Some(image);
                     self.recording_preview_texture = None;
                     if let Some(playback) = &mut self.recording_playback {
+                        if should_update_playback_position(playback.playing, is_seek) {
+                            playback.position = position;
+                        }
                         playback.frame_due = Instant::now() + delay.max(Duration::from_millis(10));
                     }
                 }
                 RecordingPlaybackEvent::End => {
-                    self.status = "録画の再生が終わりました。もう一度再生できます。".into();
-                    finish = true;
+                    self.status = self
+                        .language
+                        .text("録画の再生が終わりました。もう一度再生できます。");
+                    if let Some(playback) = &mut self.recording_playback {
+                        playback.playing = false;
+                        playback.ended = true;
+                        playback.position = playback.duration;
+                        if let Some(player) = &playback.audio_player {
+                            player.pause();
+                        }
+                    }
                 }
                 RecordingPlaybackEvent::Error(error) => {
                     self.status = format!("録画を再生できませんでした: {error}");
@@ -8504,6 +10069,7 @@ impl MacShot {
                 if ui.button(language.text("↻  更新")).clicked() {
                     self.evidence_files = evidence_images(&folder);
                     self.recording_files = recording_files(&folder);
+                    self.status = language.text("証跡一覧を更新しました");
                 }
             });
         });
@@ -8515,66 +10081,84 @@ impl MacShot {
                 ui.label(egui::RichText::new(language.text("録画一覧")).size(19.0).strong());
                 ui.label(egui::RichText::new(format!("{} {}", self.recording_files.len(), language.text("録画件数（GIF / MP4 / MOV）"))).color(TEXT_MUTED));
             });
-            ui.label(egui::RichText::new(language.text("一覧をクリックすると別ウィンドウで再生します。MOVは「外部で開く」から再生できます。編集では録画名を変更できます。")).size(11.0).color(TEXT_MUTED));
+            ui.label(egui::RichText::new(language.text("GIF・MP4・対応MOVを別ウィンドウで再生できます。対応外の形式は外部プレイヤーを使います。録画名も変更できます。")).size(11.0).color(TEXT_MUTED));
             ui.add_space(8.0);
             if self.recording_files.is_empty() {
                 ui.label(egui::RichText::new(language.text("録画が見つかりません。保存先を確認するか「更新」を押してください。")).color(TEXT_MUTED));
             } else {
-                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("evidence_recording_list")
+                    .max_height(220.0)
+                    .show(ui, |ui| {
                     let files = self.recording_files.clone();
                     for path in files {
                         let selected = self.recording_preview_path.as_ref() == Some(&path);
                         let name = recording_display_name(&path);
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.selectable_label(selected, format!("▧  {name}")).clicked() {
-                                self.open_recording_player(&path);
-                            }
-                            let recording_summary = std::fs::metadata(&path)
-                                .map(|metadata| {
-                                    let format = path
-                                        .extension()
-                                        .and_then(|extension| extension.to_str())
-                                        .unwrap_or_default()
-                                        .to_ascii_uppercase();
-                                    let duration = if self.recording_metadata_pending.contains(&path) {
-                                        language.text("時間を確認中…")
-                                    } else {
-                                        self.recording_duration_cache
-                                            .get(&path)
-                                            .copied()
-                                            .flatten()
-                                            .map(format_recording_duration)
-                                            .unwrap_or_else(|| language.text("時間不明"))
-                                    };
-                                    format!("{format} · {duration} · {}", format_file_size(metadata.len()))
-                                })
-                                .unwrap_or_else(|_| language.text("録画情報を読み込めません"));
-                            ui.label(
-                                egui::RichText::new(recording_summary)
-                                    .size(11.0)
-                                    .color(TEXT_MUTED),
-                            );
-                            if ui.small_button(language.text("外部で開く")).clicked() {
-                                #[cfg(target_os = "macos")]
-                                let command = "open";
-                                #[cfg(target_os = "windows")]
-                                let command = "explorer";
-                                let _ = std::process::Command::new(command).arg(&path).spawn();
-                            }
-                            let is_native_mov = path
-                                .extension()
-                                .and_then(|extension| extension.to_str())
-                                .is_some_and(|extension| extension.eq_ignore_ascii_case("mov"));
-                            if ui
-                                .add_enabled(!is_native_mov, egui::Button::new(language.text("再生")))
-                                .clicked()
-                            {
-                                self.open_recording_player(&path);
-                            }
-                            if ui.small_button(language.text("編集")).clicked() {
-                                self.begin_recording_rename(path.clone());
-                            }
-                        });
+                        let recording_summary = std::fs::metadata(&path)
+                            .map(|metadata| {
+                                let format = path
+                                    .extension()
+                                    .and_then(|extension| extension.to_str())
+                                    .unwrap_or_default()
+                                    .to_ascii_uppercase();
+                                let duration = if self.recording_metadata_pending.contains(&path) {
+                                    language.text("時間を確認中…")
+                                } else {
+                                    self.recording_duration_cache
+                                        .get(&path)
+                                        .copied()
+                                        .flatten()
+                                        .map(format_recording_duration)
+                                        .unwrap_or_else(|| language.text("時間不明"))
+                                };
+                                format!("{format} · {duration} · {}", format_file_size(metadata.len()))
+                            })
+                            .unwrap_or_else(|_| language.text("録画情報を読み込めません"));
+                        let is_native_mov = path
+                            .extension()
+                            .and_then(|extension| extension.to_str())
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("mov"));
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 135))
+                            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(18)))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .inner_margin(egui::Margin::symmetric(12, 8))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        if ui.selectable_label(selected, format!("▧  {name}")).clicked() {
+                                            self.open_recording_player(&path);
+                                        }
+                                        ui.label(
+                                            egui::RichText::new(recording_summary)
+                                                .size(10.0)
+                                                .color(TEXT_MUTED),
+                                        );
+                                    });
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button(language.text("編集")).clicked() {
+                                            self.begin_recording_rename(path.clone());
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                !is_native_mov || cfg!(target_os = "macos"),
+                                                egui::Button::new(language.text("再生")),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.open_recording_player(&path);
+                                        }
+                                        if ui.small_button(language.text("外部で開く")).clicked() {
+                                            #[cfg(target_os = "macos")]
+                                            let command = "open";
+                                            #[cfg(target_os = "windows")]
+                                            let command = "explorer";
+                                            let _ = std::process::Command::new(command).arg(&path).spawn();
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(5.0);
                     }
                 });
             }
@@ -8591,7 +10175,10 @@ impl MacShot {
             } else {
                 ui.label(language.message(&format!("{} 枚の画像", self.evidence_files.len())));
                 ui.add_space(8.0);
-                egui::ScrollArea::vertical().max_height(570.0).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("evidence_image_list")
+                    .max_height(570.0)
+                    .show(ui, |ui| {
                     let files = self.evidence_files.clone();
                     for (index, path) in files.into_iter().enumerate() {
                         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -8685,6 +10272,9 @@ impl MacShot {
                 self.tray_recording_seconds = None;
                 self.tray_capture_status_state = None;
             }
+        }
+        if self.language != previous_language {
+            ui.ctx().set_fonts(app_font_definitions(self.language));
         }
         ui.horizontal(|ui| {
             ui.label(
@@ -9308,6 +10898,19 @@ impl MacShot {
                 ui.add_space(8.0);
                 ui.checkbox(&mut self.timestamp_enabled, self.language.text("画像に撮影日時を表示"));
                 ui.checkbox(&mut self.show_capture_notice, self.language.text("撮影後に完了小窓を表示"));
+                let keep_region_changed = ui.checkbox(
+                    &mut self.keep_region_in_continuous,
+                    self.language.text("連続撮影で範囲を維持する"),
+                );
+                if keep_region_changed.changed() {
+                    if !self.keep_region_in_continuous {
+                        self.continuous_region = None;
+                    }
+                    match self.save_preferences() {
+                        Ok(()) => self.status = "撮影設定を保存しました。".into(),
+                        Err(error) => self.settings_error = Some(format!("撮影設定を保存できません: {error}")),
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 {
                     ui.add_space(8.0);
@@ -9589,7 +11192,6 @@ impl eframe::App for MacShot {
         self.handle_hotkey_requests(ctx);
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
-        #[cfg(target_os = "windows")]
         self.handle_region_snapshot(ctx);
         self.handle_recording_events(ctx);
         self.handle_recording_metadata();
@@ -9617,15 +11219,17 @@ impl eframe::App for MacShot {
             )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("●").color(ACCENT_BRIGHT));
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&status_message)
-                                .size(11.0)
-                                .color(TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
+                    if !status_message.is_empty() {
+                        ui.label(egui::RichText::new("●").color(ACCENT_BRIGHT));
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&status_message)
+                                    .size(11.0)
+                                    .color(TEXT_MUTED),
+                            )
+                            .wrap(),
+                        );
+                    }
                     if let Some(started_at) = self.recording_started_at {
                         let elapsed = started_at.elapsed().as_secs();
                         ui.label(
@@ -9742,7 +11346,48 @@ impl eframe::App for MacShot {
     }
 }
 
+fn app_font_definitions(language: AppLanguage) -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "noto_sans_jp".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/NotoSansJP-SemiBold.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "noto_sans_sc".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/NotoSansSC.ttf"
+        ))),
+    );
+
+    let (primary, fallback) = if language == AppLanguage::SimplifiedChinese {
+        ("noto_sans_sc", "noto_sans_jp")
+    } else {
+        ("noto_sans_jp", "noto_sans_sc")
+    };
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        let family_fonts = fonts.families.entry(family).or_default();
+        family_fonts.insert(0, primary.into());
+        family_fonts.insert(1, fallback.into());
+    }
+    fonts
+}
+
+#[cfg(target_os = "macos")]
+fn disable_automatic_window_tabbing() {
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if let Some(main_thread) = MainThreadMarker::new() {
+        NSWindow::setAllowsAutomaticWindowTabbing(false, main_thread);
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    #[cfg(target_os = "macos")]
+    disable_automatic_window_tabbing();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
@@ -9755,40 +11400,8 @@ fn main() -> eframe::Result<()> {
         "MacShot",
         options,
         Box::new(|creation| {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "noto_sans_jp".into(),
-                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-                    "../assets/NotoSansJP-Medium.ttf"
-                ))),
-            );
-            fonts.font_data.insert(
-                "noto_sans_sc".into(),
-                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-                    "../assets/NotoSansSC.ttf"
-                ))),
-            );
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "noto_sans_jp".into());
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(1, "noto_sans_sc".into());
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .insert(0, "noto_sans_jp".into());
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .insert(1, "noto_sans_sc".into());
-            creation.egui_ctx.set_fonts(fonts);
+            let language = AppLanguage::from_setting(&load_setting("language", "ja"));
+            creation.egui_ctx.set_fonts(app_font_definitions(language));
             configure_macshot_theme(&creation.egui_ctx);
             creation
                 .egui_ctx
@@ -9817,6 +11430,37 @@ mod tests {
     }
 
     #[test]
+    fn recording_rename_distinguishes_unchanged_names_from_file_moves() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "macshot-rename-test-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let original = directory.join("original.mp4");
+        std::fs::write(&original, b"test recording").unwrap();
+
+        assert!(matches!(
+            rename_recording_file(&original, "original").unwrap(),
+            RecordingRenameOutcome::Unchanged
+        ));
+        assert!(original.exists());
+
+        let renamed = directory.join("renamed.mp4");
+        assert!(matches!(
+            rename_recording_file(&original, "renamed").unwrap(),
+            RecordingRenameOutcome::Renamed(path) if path == renamed
+        ));
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"test recording");
+
+        std::fs::remove_file(renamed).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
     fn recording_preview_display_size_stays_useful_at_the_bottom_of_the_page() {
         assert_eq!(
             recording_preview_display_size(320, 180, 2_000.0),
@@ -9833,6 +11477,91 @@ mod tests {
             recording_preview_display_size(0, 180, 640.0),
             egui::Vec2::ZERO
         );
+    }
+
+    #[test]
+    fn recording_player_controls_anchor_stays_inside_window_at_video_bottom() {
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1120.0, 680.0));
+        let video = egui::Rect::from_center_size(bounds.center(), egui::vec2(1046.0, 680.0));
+
+        let width = recording_player_controls_width(Some(video), bounds);
+        let anchor = recording_player_controls_anchor(Some(video), bounds, width);
+        assert_eq!(anchor.x, video.left());
+        assert_eq!(anchor.y, 672.0);
+        assert!(bounds.contains(anchor));
+        let portrait = egui::Rect::from_center_size(bounds.center(), egui::vec2(260.0, 520.0));
+        let portrait_width = recording_player_controls_width(Some(portrait), bounds);
+        let portrait_anchor =
+            recording_player_controls_anchor(Some(portrait), bounds, portrait_width);
+        assert_eq!(portrait_width, 760.0);
+        assert_eq!(portrait_anchor.x, 180.0);
+        assert_eq!(portrait_anchor.y, 592.0);
+        assert_eq!(
+            recording_player_controls_anchor(None, bounds, 1088.0),
+            egui::pos2(16.0, 672.0)
+        );
+    }
+
+    #[test]
+    fn recording_player_controls_hide_when_pointer_leaves_video_and_controls() {
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1120.0, 680.0));
+        let video = egui::Rect::from_min_max(egui::pos2(40.0, 50.0), egui::pos2(1080.0, 630.0));
+        let controls = egui::Rect::from_min_max(egui::pos2(40.0, 470.0), egui::pos2(1080.0, 670.0));
+        let now = Instant::now();
+        assert!(recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            Some(egui::pos2(560.0, 340.0)),
+            Some(now),
+            now,
+            false,
+        ));
+        assert!(recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            Some(egui::pos2(560.0, 600.0)),
+            Some(now),
+            now,
+            false,
+        ));
+        assert!(!recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            Some(egui::pos2(1100.0, 30.0)),
+            Some(now),
+            now,
+            false,
+        ));
+        assert!(!recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            Some(egui::pos2(560.0, 340.0)),
+            Some(now),
+            now + Duration::from_secs(3),
+            false,
+        ));
+        assert!(recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            Some(egui::pos2(560.0, 600.0)),
+            Some(now),
+            now + Duration::from_secs(3),
+            true,
+        ));
+        assert!(!recording_player_controls_visible(
+            Some(video),
+            Some(controls),
+            bounds,
+            None,
+            Some(now),
+            now,
+            false,
+        ));
     }
 
     #[test]
@@ -9904,10 +11633,134 @@ mod tests {
     }
 
     #[test]
+    fn duration_from_seconds_rejects_invalid_asset_metadata() {
+        assert_eq!(
+            duration_from_seconds(12.5),
+            Some(Duration::from_millis(12_500))
+        );
+        assert_eq!(duration_from_seconds(0.0), None);
+        assert_eq!(duration_from_seconds(-1.0), None);
+        assert_eq!(duration_from_seconds(f64::NAN), None);
+        assert_eq!(duration_from_seconds(f64::INFINITY), None);
+    }
+
+    #[test]
+    fn playback_time_formats_minute_and_hour_boundaries() {
+        assert_eq!(format_playback_time(Duration::from_secs(9)), "00:09");
+        assert_eq!(format_playback_time(Duration::from_secs(61)), "01:01");
+        assert_eq!(format_playback_time(Duration::from_secs(3_600)), "01:00:00");
+        assert_eq!(format_playback_time(Duration::from_secs(3_661)), "01:01:01");
+    }
+
+    #[test]
+    fn paused_playback_keeps_the_selected_seek_position() {
+        let selected = Duration::from_secs(4);
+        assert_eq!(
+            playback_position_for_display(
+                selected,
+                false,
+                Some(Duration::from_secs(12)),
+                Duration::from_secs(14),
+            ),
+            selected
+        );
+    }
+
+    #[test]
+    fn paused_playback_ignores_stale_frames_but_accepts_seek_frames() {
+        assert!(!should_update_playback_position(false, false));
+        assert!(should_update_playback_position(false, true));
+        assert!(should_update_playback_position(true, false));
+    }
+
+    #[test]
+    fn playback_audio_recreation_handles_file_backed_and_finished_tracks() {
+        assert!(playback_audio_requires_recreation(
+            false,
+            Some(Path::new("/tmp/macshot.mov-audio.m4a"))
+        ));
+        assert!(playback_audio_requires_recreation(
+            false,
+            Some(Path::new("/tmp/macshot-playback.aac"))
+        ));
+        assert!(playback_audio_requires_recreation(
+            true,
+            Some(Path::new("/tmp/macshot-playback.aac"))
+        ));
+        assert!(!playback_audio_requires_recreation(false, None));
+    }
+
+    #[test]
+    fn playing_playback_tracks_audio_and_clamps_to_video_duration() {
+        assert_eq!(
+            playback_position_for_display(
+                Duration::from_secs(4),
+                true,
+                Some(Duration::from_secs(12)),
+                Duration::from_secs(10),
+            ),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn playback_audio_meter_scales_rms_to_decibels() {
+        let (silence, silence_dbfs) = audio_meter_value(0.0);
+        assert_eq!(silence, 0.0);
+        assert_eq!(silence_dbfs, -60.0);
+
+        let (half_scale, half_scale_dbfs) = audio_meter_value(0.5);
+        assert!((half_scale_dbfs - -6.0206).abs() < 0.01);
+        assert!((half_scale - 0.8997).abs() < 0.001);
+
+        let (clipped, clipped_dbfs) = audio_meter_value(1.5);
+        assert_eq!(clipped, 1.0);
+        assert_eq!(clipped_dbfs, 0.0);
+    }
+
+    #[test]
+    fn audio_waveform_marks_silent_and_audible_time_bins() {
+        let samples = [0.0, 0.0, 0.0, 0.0, 0.5, -0.5, 0.5, -0.5];
+        let levels = audio_waveform_levels(samples.into_iter(), 2, 4, Duration::from_secs(1), 2);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0], 0.0);
+        assert!((levels[1] - 0.5).abs() < 0.001);
+        assert!(!audio_waveform_has_sound(levels[0]));
+        assert!(audio_waveform_has_sound(levels[1]));
+        assert!(!audio_waveform_has_sound(f32::NAN));
+    }
+
+    #[test]
+    fn audio_waveform_has_a_bounded_fallback_for_unknown_duration() {
+        assert_eq!(
+            audio_waveform_levels([0.25].into_iter(), 1, 1, Duration::ZERO, 4),
+            vec![0.0]
+        );
+    }
+
+    #[test]
+    fn playback_audio_meter_reports_rms_level() {
+        let level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        let source = rodio::buffer::SamplesBuffer::new(
+            1_u16.try_into().unwrap(),
+            48_000_u32.try_into().unwrap(),
+            vec![0.5; 2_048],
+        );
+        let mut metered = MeteredAudioSource {
+            source,
+            level: level.clone(),
+            sum_squares: 0.0,
+            samples: 0,
+        };
+        assert_eq!(metered.by_ref().count(), 2_048);
+        assert!((f32::from_bits(level.load(Ordering::Relaxed)) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
     fn recording_playback_status_tracks_play_and_pause() {
         assert_eq!(
             recording_playback_status(true),
-            "録画をアプリ内で再生しています（映像のみ）。"
+            "録画をアプリ内で再生しています。"
         );
         assert_eq!(recording_playback_status(false), "録画を一時停止しました。");
     }
@@ -10338,6 +12191,7 @@ mod tests {
             timestamp_enabled: false,
             filename_prefix: "案件_β",
             show_capture_notice: false,
+            keep_region_in_continuous: true,
             annotation_color: "blue",
             annotation_width: 3.5,
             save_folder: Path::new("/tmp/MacShot=Evidence"),
@@ -10444,6 +12298,66 @@ mod tests {
     }
 
     #[test]
+    fn changing_pages_clears_context_specific_status_but_same_page_keeps_it() {
+        let mut page = Page::Capture;
+        let mut status =
+            "始点を指定しました。終点をクリックするかドラッグしてください。".to_string();
+
+        assert!(switch_page(&mut page, Page::Evidence, &mut status));
+        assert!(page == Page::Evidence);
+        assert!(status.is_empty());
+
+        status = "証跡一覧を更新しました".into();
+        assert!(!switch_page(&mut page, Page::Evidence, &mut status));
+        assert_eq!(status, "証跡一覧を更新しました");
+    }
+
+    #[test]
+    fn macos_application_menu_uses_the_selected_app_language() {
+        for (language, expected) in [
+            (
+                AppLanguage::Japanese,
+                ["MacShotについて", "MacShotを隠す", "MacShotを終了"],
+            ),
+            (
+                AppLanguage::English,
+                ["About MacShot", "Hide MacShot", "Quit MacShot"],
+            ),
+            (
+                AppLanguage::SimplifiedChinese,
+                ["关于 MacShot", "隐藏 MacShot", "退出 MacShot"],
+            ),
+            (
+                AppLanguage::TraditionalChinese,
+                ["關於 MacShot", "隱藏 MacShot", "結束 MacShot"],
+            ),
+        ] {
+            assert_eq!(language.macos_app_menu_label("about"), Some(expected[0]));
+            assert_eq!(language.macos_app_menu_label("hide"), Some(expected[1]));
+            assert_eq!(language.macos_app_menu_label("quit"), Some(expected[2]));
+            assert!(language.macos_app_menu_label("unknown").is_none());
+        }
+    }
+
+    #[test]
+    fn simplified_chinese_prioritizes_its_matching_cjk_font() {
+        let simplified = app_font_definitions(AppLanguage::SimplifiedChinese);
+        let japanese = app_font_definitions(AppLanguage::Japanese);
+        assert_eq!(
+            simplified.families[&egui::FontFamily::Proportional][0],
+            "noto_sans_sc"
+        );
+        assert_eq!(
+            simplified.families[&egui::FontFamily::Monospace][0],
+            "noto_sans_sc"
+        );
+        assert_eq!(
+            japanese.families[&egui::FontFamily::Proportional][0],
+            "noto_sans_jp"
+        );
+    }
+
+    #[test]
     fn app_language_localizes_dynamic_status_and_empty_states() {
         let empty_preview = "画面全体またはウィンドウを撮影すると、ここにプレビューが表示されます。\n画像をドラッグして必要な範囲を切り出せます。";
         let failed_recording = "録画を再生できませんでした: decoder failed";
@@ -10458,6 +12372,38 @@ mod tests {
             AppLanguage::English.text("元の画面サイズ"),
             "Original Screen Size"
         );
+        assert_eq!(
+            AppLanguage::English.text("証跡一覧を更新しました"),
+            "Evidence list refreshed"
+        );
+        assert_eq!(
+            AppLanguage::SimplifiedChinese.text("証跡一覧を更新しました"),
+            "已更新取证记录列表"
+        );
+        assert_eq!(
+            AppLanguage::TraditionalChinese.text("証跡一覧を更新しました"),
+            "已更新證據清單"
+        );
+        for (language, annotated_copy, cropped_copy) in [
+            (
+                AppLanguage::English,
+                "Save Annotated Copy",
+                "Save Cropped Copy",
+            ),
+            (
+                AppLanguage::SimplifiedChinese,
+                "另存为标注图片",
+                "另存为裁剪图像",
+            ),
+            (
+                AppLanguage::TraditionalChinese,
+                "另存為註記圖片",
+                "另存為裁切影像",
+            ),
+        ] {
+            assert_eq!(language.text("注釈画像を別名で保存"), annotated_copy);
+            assert_eq!(language.text("切り出しを別名で保存"), cropped_copy);
+        }
         assert!(
             !AppLanguage::English
                 .message("画面収録の許可を設定してください。撮影画面の案内から要求できます。")
@@ -10582,16 +12528,88 @@ mod tests {
     }
 
     #[test]
+    fn window_and_active_recordings_use_window_frames() {
+        assert!(recording_target_uses_window_capture(
+            CaptureTarget::ActiveWindow
+        ));
+        assert!(recording_target_uses_window_capture(CaptureTarget::Window(
+            42
+        )));
+        assert!(!recording_target_uses_window_capture(
+            CaptureTarget::PrimaryDisplay
+        ));
+        assert!(!recording_target_uses_window_capture(
+            CaptureTarget::AllDisplays
+        ));
+        assert!(!recording_target_uses_window_capture(
+            CaptureTarget::Display(0)
+        ));
+    }
+
+    #[test]
+    fn active_window_selection_stays_with_the_frontmost_application() {
+        let candidates = [
+            ActiveWindowCandidate {
+                window_id: 1,
+                owning_process_id: Some(200),
+                captureable: true,
+                stage_manager_active: true,
+            },
+            ActiveWindowCandidate {
+                window_id: 2,
+                owning_process_id: Some(100),
+                captureable: true,
+                stage_manager_active: false,
+            },
+            ActiveWindowCandidate {
+                window_id: 3,
+                owning_process_id: Some(100),
+                captureable: true,
+                stage_manager_active: true,
+            },
+            ActiveWindowCandidate {
+                window_id: 4,
+                owning_process_id: Some(100),
+                captureable: false,
+                stage_manager_active: true,
+            },
+        ];
+
+        assert_eq!(select_active_window_candidate(&candidates, 100), Some(3));
+        assert_eq!(select_active_window_candidate(&candidates, 200), Some(1));
+        assert_eq!(select_active_window_candidate(&candidates, 300), None);
+    }
+
+    #[test]
     fn recording_list_finds_gif_mp4_and_mov_but_not_images() {
         let directory = TestDirectory::new("recording-list");
-        for name in ["clip.gif", "movie.mp4", "still.png", "other.mov"] {
+        for name in [
+            "clip.gif",
+            "movie.mp4",
+            "movie-uppercase.MP4",
+            "still.png",
+            "other.mov",
+        ] {
             std::fs::write(directory.path().join(name), b"test").unwrap();
         }
         let files = recording_files(directory.path());
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 4);
         assert!(files.iter().any(|path| path.ends_with("clip.gif")));
         assert!(files.iter().any(|path| path.ends_with("movie.mp4")));
+        assert!(
+            files
+                .iter()
+                .any(|path| path.ends_with("movie-uppercase.MP4"))
+        );
         assert!(files.iter().any(|path| path.ends_with("other.mov")));
+    }
+
+    #[test]
+    fn mp4_audio_playback_recognizes_case_insensitive_extensions() {
+        assert!(is_mp4_recording(Path::new("clip.mp4")));
+        assert!(is_mp4_recording(Path::new("clip.MP4")));
+        assert!(!is_mp4_recording(Path::new("clip.mov")));
+        assert!(!is_mp4_recording(Path::new("clip.gif")));
     }
 
     #[test]
@@ -10627,6 +12645,28 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn native_capture_import_worker_returns_the_copied_file() {
+        let source_dir = TestDirectory::new("native-import-worker-source");
+        let destination_dir = TestDirectory::new("native-import-worker-destination");
+        let source = source_dir.path().join("Screen Recording.mov");
+        std::fs::write(&source, b"native video fixture").unwrap();
+        let (import_tx, import_rx) = mpsc::channel();
+
+        spawn_native_capture_import(
+            source.clone(),
+            destination_dir.path().to_path_buf(),
+            import_tx,
+        );
+
+        let event = import_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(event.source, source);
+        let imported = event.result.unwrap();
+        assert_eq!(imported.file_name(), source.file_name());
+        assert_eq!(std::fs::read(imported).unwrap(), b"native video fixture");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn native_capture_scan_finds_images_and_video_in_monitored_folders() {
         let directory = TestDirectory::new("native-import-scan");
         for name in [
@@ -10650,6 +12690,7 @@ mod tests {
         let mut watch = NativeCaptureWatch {
             started_at: Instant::now(),
             known_files: HashSet::new(),
+            in_flight: HashSet::new(),
             pending_sizes: HashMap::new(),
         };
         let sizes = |size| HashMap::from([(path.clone(), size)]);
@@ -10658,6 +12699,17 @@ mod tests {
         assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
         let completed = completed_native_capture_files(&mut watch, sizes(20));
         assert_eq!(completed.as_slice(), std::slice::from_ref(&path));
+        watch.in_flight.insert(path.clone());
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        watch.in_flight.remove(&path);
+        watch.pending_sizes.remove(&path);
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
+        assert_eq!(
+            completed_native_capture_files(&mut watch, sizes(20)).as_slice(),
+            std::slice::from_ref(&path),
+            "a failed copy should become eligible again after the file is stable"
+        );
         watch.known_files.insert(path.clone());
         assert!(completed_native_capture_files(&mut watch, sizes(20)).is_empty());
         assert!(completed_native_capture_files(&mut watch, HashMap::new()).is_empty());
@@ -10692,14 +12744,43 @@ mod tests {
         assert_eq!(image.dimensions(), (2, 1));
         assert!(details.contains("GIF・2フレーム・0.35秒"));
         let mut playback = RecordingFrameReader::open(&path).unwrap();
-        let (first, first_delay) = playback.next_frame().unwrap().unwrap();
-        let (second, second_delay) = playback.next_frame().unwrap().unwrap();
+        let (first, first_delay, _) = playback.next_frame().unwrap().unwrap();
+        let (second, second_delay, _) = playback.next_frame().unwrap().unwrap();
         assert_eq!(first.dimensions(), (2, 1));
         assert_eq!(second.dimensions(), (2, 1));
         assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
         assert_eq!(first_delay, Duration::from_millis(150));
         assert_eq!(second_delay, Duration::from_millis(200));
         assert!(playback.next_frame().unwrap().is_none());
+    }
+
+    #[test]
+    fn gif_playback_composites_cropped_frames_onto_the_canvas() {
+        let directory = TestDirectory::new("gif-cropped-frames");
+        let path = directory.path().join("cropped.gif");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = gif::Encoder::new(file, 4, 2, &[]).unwrap();
+        let mut base = [220, 20, 30, 255].repeat(8);
+        write_gif_frame(&mut encoder, 4, 2, &mut base, 10).unwrap();
+
+        let mut patch = vec![30, 210, 90, 255];
+        let mut frame = gif::Frame::from_rgba(1, 1, &mut patch);
+        frame.left = 2;
+        frame.top = 0;
+        frame.delay = 10;
+        encoder.write_frame(&frame).unwrap();
+        drop(encoder);
+
+        let (preview, _) = recording_preview(&path).unwrap();
+        assert_eq!(preview.dimensions(), (4, 2));
+        let mut playback = RecordingFrameReader::open(&path).unwrap();
+        let first = playback.next_frame().unwrap().unwrap().0;
+        let second = playback.next_frame().unwrap().unwrap().0;
+        assert_eq!(first.dimensions(), (4, 2));
+        assert_eq!(second.dimensions(), (4, 2));
+        assert_eq!(second.get_pixel(0, 0), image::Rgba([220, 20, 30, 255]));
+        assert_eq!(second.get_pixel(2, 0), image::Rgba([30, 210, 90, 255]));
+        assert_eq!(second.get_pixel(3, 1), image::Rgba([220, 20, 30, 255]));
     }
 
     #[test]
@@ -10715,24 +12796,24 @@ mod tests {
         drop(encoder);
 
         let playback = start_recording_playback(path);
-        playback.request_tx.send(()).unwrap();
-        let RecordingPlaybackEvent::Frame(first, _) = playback
+        playback
+            .request_tx
+            .send(RecordingPlaybackCommand::Seek(Duration::from_millis(100)))
+            .unwrap();
+        let RecordingPlaybackEvent::Frame(seeked, _, position, is_seek) = playback
             .frame_rx
             .recv_timeout(Duration::from_secs(1))
             .unwrap()
         else {
             panic!("playback worker should deliver its first frame");
         };
-        playback.request_tx.send(()).unwrap();
-        let RecordingPlaybackEvent::Frame(second, _) = playback
-            .frame_rx
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-        else {
-            panic!("playback worker should deliver its second frame");
-        };
-        assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
-        playback.request_tx.send(()).unwrap();
+        assert_eq!(position, Duration::from_millis(100));
+        assert!(is_seek);
+        assert_eq!(seeked.get_pixel(0, 0), image::Rgba([20, 180, 70, 255]));
+        playback
+            .request_tx
+            .send(RecordingPlaybackCommand::NextFrame)
+            .unwrap();
         assert!(matches!(
             playback.frame_rx.recv_timeout(Duration::from_secs(1)),
             Ok(RecordingPlaybackEvent::End)
@@ -10753,9 +12834,9 @@ mod tests {
         drop(encoder);
 
         let mut playback = RecordingFrameReader::open(&path).unwrap();
-        let (first_loop, _) = playback.next_frame().unwrap().unwrap();
-        let (_, _) = playback.next_frame().unwrap().unwrap();
-        let (second_loop, _) = playback.next_frame().unwrap().unwrap();
+        let (first_loop, _, _) = playback.next_frame().unwrap().unwrap();
+        let (_, _, _) = playback.next_frame().unwrap().unwrap();
+        let (second_loop, _, _) = playback.next_frame().unwrap().unwrap();
         assert_eq!(first_loop.get_pixel(0, 0), second_loop.get_pixel(0, 0));
     }
 
@@ -10806,8 +12887,8 @@ mod tests {
         assert_eq!(image.dimensions(), (64, 48));
         assert!(details.contains("MP4・H.264・音声トラックなし・0.20秒"));
         let mut playback = RecordingFrameReader::open(&path).unwrap();
-        let (first, first_delay) = playback.next_frame().unwrap().unwrap();
-        let (second, second_delay) = playback.next_frame().unwrap().unwrap();
+        let (first, first_delay, _) = playback.next_frame().unwrap().unwrap();
+        let (second, second_delay, _) = playback.next_frame().unwrap().unwrap();
         assert_eq!(first.dimensions(), (64, 48));
         assert_eq!(second.dimensions(), (64, 48));
         assert_ne!(first.get_pixel(0, 0), second.get_pixel(0, 0));
@@ -10919,6 +13000,23 @@ mod tests {
         assert!(reader.duration().as_millis() >= 200);
         let (_, preview_details) = recording_preview(&path).unwrap();
         assert!(preview_details.contains("AAC音声トラックあり"));
+        let audio_path = extract_mp4_audio_to_temp(&path).unwrap();
+        let decoder = rodio::Decoder::new_aac(std::fs::File::open(&audio_path).unwrap()).unwrap();
+        let mut seek_decoder =
+            rodio::Decoder::new_aac(std::fs::File::open(&audio_path).unwrap()).unwrap();
+        rodio::Source::try_seek(&mut seek_decoder, Duration::from_millis(100)).unwrap();
+        let meter = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        let mut metered = MeteredAudioSource {
+            source: decoder,
+            level: meter.clone(),
+            sum_squares: 0.0,
+            samples: 0,
+        };
+        let decoded: Vec<_> = metered.by_ref().collect();
+        assert!(decoded.len() > 2_048);
+        assert!(decoded.iter().any(|sample| sample.abs() > 0.001));
+        assert!(f32::from_bits(meter.load(Ordering::Relaxed)) > 0.001);
+        std::fs::remove_file(audio_path).unwrap();
     }
 
     #[test]
@@ -11310,6 +13408,68 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn region_drag_keeps_press_origin_when_press_and_release_arrive_together() {
+        let mut start = None;
+        let mut current = None;
+        let press_origin = egui::pos2(20.0, 25.0);
+        let release_position = egui::pos2(80.0, 65.0);
+
+        update_region_drag_state(
+            &mut start,
+            &mut current,
+            true,
+            false,
+            true,
+            Some(release_position),
+            Some(press_origin),
+        );
+
+        assert_eq!(start, Some(press_origin));
+        assert_eq!(current, Some(release_position));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        assert!(normalized_region_bounds(screen, start.unwrap(), current.unwrap()).is_some());
+    }
+
+    #[test]
+    fn region_drag_updates_end_position_across_pointer_frames() {
+        let mut start = None;
+        let mut current = None;
+        let press_origin = egui::pos2(15.0, 18.0);
+        let drag_position = egui::pos2(48.0, 52.0);
+
+        update_region_drag_state(
+            &mut start,
+            &mut current,
+            true,
+            true,
+            false,
+            Some(press_origin),
+            Some(press_origin),
+        );
+        update_region_drag_state(
+            &mut start,
+            &mut current,
+            false,
+            true,
+            false,
+            Some(drag_position),
+            Some(press_origin),
+        );
+        update_region_drag_state(
+            &mut start,
+            &mut current,
+            false,
+            false,
+            true,
+            Some(drag_position),
+            Some(press_origin),
+        );
+
+        assert_eq!(start, Some(press_origin));
+        assert_eq!(current, Some(drag_position));
     }
 
     #[test]

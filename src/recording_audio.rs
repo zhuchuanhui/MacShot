@@ -29,6 +29,8 @@ const MIX_LOOKAHEAD_NS: i64 = 120_000_000;
 const CHANNEL_CAPACITY: usize = 128;
 const MICROPHONE_SIGNAL_THRESHOLD: f32 = 0.002;
 const MICROPHONE_SILENCE_WARNING_AFTER: Duration = Duration::from_secs(3);
+#[cfg(any(target_os = "macos", test))]
+const TRANSIENT_MICROPHONE_ERROR: &str = "A buffer underrun or overrun occurred";
 #[cfg(target_os = "macos")]
 const MICROPHONE_TEST_BASELINE_WINDOW: Duration = Duration::from_secs(1);
 #[cfg(any(target_os = "macos", test))]
@@ -252,6 +254,11 @@ fn microphone_chunk_has_signal(samples: &[f32]) -> bool {
         .any(|sample| sample.is_finite() && sample.abs() >= MICROPHONE_SIGNAL_THRESHOLD)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn is_transient_microphone_error(error: &str) -> bool {
+    error.contains(TRANSIENT_MICROPHONE_ERROR)
+}
+
 #[cfg(target_os = "macos")]
 pub fn start_microphone_level_test() -> Receiver<MicrophoneTestEvent> {
     let (event_tx, event_rx) = mpsc::channel();
@@ -294,7 +301,10 @@ pub fn start_microphone_level_test() -> Receiver<MicrophoneTestEvent> {
                     }
                 }
             }
-            if let Ok(error) = error_receiver.try_recv() {
+            while let Ok(error) = error_receiver.try_recv() {
+                if is_transient_microphone_error(&error) {
+                    continue;
+                }
                 stream.pause();
                 let _ = event_tx.send(MicrophoneTestEvent::Failed(error));
                 return;
@@ -937,6 +947,16 @@ mod tests {
         assert!(!microphone_test_signal_detected(0.05, 0.03));
         assert!(microphone_test_signal_detected(0.08, 0.03));
         assert!(!microphone_test_signal_detected(f32::NAN, 0.03));
+    }
+
+    #[test]
+    fn microphone_test_treats_coreaudio_buffer_underrun_as_transient() {
+        assert!(is_transient_microphone_error(
+            "マイク収録が停止しました: A buffer underrun or overrun occurred"
+        ));
+        assert!(!is_transient_microphone_error(
+            "マイクデバイスが接続されていません"
+        ));
     }
 
     #[test]

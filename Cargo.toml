@@ -1,6 +1,6 @@
 [package]
 name = "macshot"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 build = "build.rs"
 description = "Screenshot evidence capture and comparison tool"
@@ -17,14 +17,20 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 rfd = "0.15"
 xcap = "0.9.8"
 mp4 = "0.14.0"
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "mp4"] }
 openh264 = "0.9.9"
 bytes = "1.10.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5.3"
-objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSWindow", "NSResponder", "NSScreen"] }
-objc2-foundation = { version = "0.2.2", features = ["NSString", "NSBundle", "NSProcessInfo"] }
+objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSWindow", "NSResponder", "NSScreen", "NSWorkspace", "NSRunningApplication", "libc"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString", "NSURL", "NSBundle", "NSProcessInfo"] }
 objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["AVAudioApplication", "block2"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetImageGenerator", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-core-foundation = { version = "0.3.2", features = ["objc2"] }
+objc2-core-graphics = { version = "0.3.2", features = ["CGDataProvider", "CGImage"] }
+objc2-core-media = "0.3.2"
+objc2-foundation-06 = { package = "objc2-foundation", version = "0.3.2", features = ["NSString", "NSURL"] }
 objc2_06 = { package = "objc2", version = "0.6.5" }
 block2 = "0.6.2"
 screencapturekit = { version = "11.1.0", features = ["macos_15_0"] }
