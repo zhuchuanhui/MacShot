@@ -59,7 +59,7 @@ use std::{
 };
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
-    menu::{Menu, MenuEvent, MenuItem, Submenu},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
 };
 use xcap::Monitor;
 #[cfg(not(target_os = "macos"))]
@@ -225,6 +225,7 @@ struct MacShot {
     language: AppLanguage,
     monitors: Vec<Monitor>,
     windows: Vec<WindowChoice>,
+    window_search_query: String,
     capture_target: CaptureTarget,
     continuous_capture: bool,
     keep_region_in_continuous: bool,
@@ -293,8 +294,17 @@ struct MacShot {
     hotkey_tx: Sender<GlobalHotKeyEvent>,
     hotkey_initialized: bool,
     _tray_icon: Option<TrayIcon>,
+    tray_capture_target_item: Option<MenuItem>,
+    tray_capture_target_text: Option<String>,
+    tray_target_selection_items: Vec<(MenuItem, CaptureTarget)>,
+    tray_capture_active_item: Option<MenuItem>,
+    tray_capture_primary_item: Option<MenuItem>,
+    tray_capture_all_item: Option<MenuItem>,
     tray_capture_status_item: Option<MenuItem>,
+    tray_selected_capture_item: Option<MenuItem>,
+    tray_continuous_capture_item: Option<MenuItem>,
     tray_recording_status_item: Option<MenuItem>,
+    tray_recording_action_item: Option<MenuItem>,
     tray_recording_state: Option<bool>,
     tray_recording_seconds: Option<u64>,
     tray_capture_status_state: Option<(bool, bool, bool, u64, u64)>,
@@ -412,9 +422,13 @@ struct CaptureNotice {
     height: u32,
 }
 
+#[derive(Clone)]
 struct WindowChoice {
     id: u32,
+    app_name: String,
     title: String,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -467,6 +481,19 @@ impl AppLanguage {
             "Display" => ["Display", "显示器", "顯示器"],
             "Full Display" => ["Full Display", "整个显示器", "整個顯示器"],
             "Window" => ["Window", "窗口", "視窗"],
+            "アプリ名・ウィンドウ名を検索" => [
+                "Search app or window name",
+                "搜索应用或窗口名称",
+                "搜尋應用程式或視窗名稱",
+            ],
+            "一致するウィンドウがありません" => {
+                ["No matching windows", "没有匹配的窗口", "沒有符合的視窗"]
+            }
+            "ウィンドウ候補がありません。一覧を更新してください。" => [
+                "No windows found. Refresh the list.",
+                "没有找到窗口，请刷新列表。",
+                "找不到視窗，請重新整理清單。",
+            ],
             "ウィンドウを選択" => ["Select a Window", "选择窗口", "選取視窗"],
             "デスクトップ（メイン画面）" => [
                 "Desktop (Main Display)",
@@ -2262,53 +2289,73 @@ impl AppLanguage {
             (Self::Japanese, "capture") => "スクリーンショット",
             (Self::Japanese, "area") => "範囲を選択して撮影…",
             (Self::Japanese, "active") => "アクティブウィンドウを撮影",
-            (Self::Japanese, "all") => "全画面を撮影",
+            (Self::Japanese, "primary") => "デスクトップ（メイン画面）を撮影",
+            (Self::Japanese, "all") => "すべてのディスプレイを撮影",
             (Self::Japanese, "selected") => "選択中の撮影対象で撮影",
-            (Self::Japanese, "continuous") => "連続撮影モードを開始／終了",
+            (Self::Japanese, "current_target") => "現在の撮影方法",
+            (Self::Japanese, "target_menu") => "撮影対象を選択",
+            (Self::Japanese, "continuous_start") => "連続撮影を開始",
+            (Self::Japanese, "continuous_stop") => "連続撮影を終了",
             (Self::Japanese, "native") => "macOS標準の撮影・録画を開く…",
             (Self::Japanese, "capture_stopped") => "連続撮影 — 停止中",
             (Self::Japanese, "record_time") => "録画時間 00:00",
             (Self::Japanese, "recording") => "録画中",
-            (Self::Japanese, "record_toggle") => "録画開始／停止",
+            (Self::Japanese, "record_start") => "録画を開始",
+            (Self::Japanese, "record_stop") => "録画を停止",
             (Self::Japanese, "quit") => "終了",
             (Self::English, "show") => "Open MacShot",
             (Self::English, "capture") => "Screenshot",
             (Self::English, "area") => "Select Region…",
             (Self::English, "active") => "Capture Active Window",
+            (Self::English, "primary") => "Capture Desktop (Main Display)",
             (Self::English, "all") => "Capture All Displays",
             (Self::English, "selected") => "Capture Selected Target",
-            (Self::English, "continuous") => "Start / Stop Continuous Capture",
+            (Self::English, "current_target") => "Current Capture Method",
+            (Self::English, "target_menu") => "Select Capture Target",
+            (Self::English, "continuous_start") => "Start Continuous Capture",
+            (Self::English, "continuous_stop") => "Stop Continuous Capture",
             (Self::English, "native") => "Open macOS Screenshot…",
             (Self::English, "capture_stopped") => "Continuous Capture — Stopped",
             (Self::English, "record_time") => "Recording Time 00:00",
             (Self::English, "recording") => "Recording",
-            (Self::English, "record_toggle") => "Start / Stop Recording",
+            (Self::English, "record_start") => "Start Recording",
+            (Self::English, "record_stop") => "Stop Recording",
             (Self::English, "quit") => "Quit",
             (Self::SimplifiedChinese, "show") => "打开 MacShot",
             (Self::SimplifiedChinese, "capture") => "屏幕截图",
             (Self::SimplifiedChinese, "area") => "选择区域并截图…",
             (Self::SimplifiedChinese, "active") => "截取活动窗口",
+            (Self::SimplifiedChinese, "primary") => "截取桌面（主显示器）",
             (Self::SimplifiedChinese, "all") => "截取所有显示器",
             (Self::SimplifiedChinese, "selected") => "截取所选目标",
-            (Self::SimplifiedChinese, "continuous") => "开始／停止连续截图",
+            (Self::SimplifiedChinese, "current_target") => "当前截图方式",
+            (Self::SimplifiedChinese, "target_menu") => "选择截图目标",
+            (Self::SimplifiedChinese, "continuous_start") => "开始连续截图",
+            (Self::SimplifiedChinese, "continuous_stop") => "停止连续截图",
             (Self::SimplifiedChinese, "native") => "打开 macOS 标准截图…",
             (Self::SimplifiedChinese, "capture_stopped") => "连续截图 — 已停止",
             (Self::SimplifiedChinese, "record_time") => "录制时间 00:00",
             (Self::SimplifiedChinese, "recording") => "正在录制",
-            (Self::SimplifiedChinese, "record_toggle") => "开始／停止录制",
+            (Self::SimplifiedChinese, "record_start") => "开始录制",
+            (Self::SimplifiedChinese, "record_stop") => "停止录制",
             (Self::SimplifiedChinese, "quit") => "退出",
             (Self::TraditionalChinese, "show") => "開啟 MacShot",
             (Self::TraditionalChinese, "capture") => "螢幕截圖",
             (Self::TraditionalChinese, "area") => "選取區域並截圖…",
             (Self::TraditionalChinese, "active") => "擷取作用中視窗",
+            (Self::TraditionalChinese, "primary") => "擷取桌面（主要顯示器）",
             (Self::TraditionalChinese, "all") => "擷取所有顯示器",
             (Self::TraditionalChinese, "selected") => "擷取所選目標",
-            (Self::TraditionalChinese, "continuous") => "開始／停止連續截圖",
+            (Self::TraditionalChinese, "current_target") => "目前截圖方式",
+            (Self::TraditionalChinese, "target_menu") => "選擇截圖目標",
+            (Self::TraditionalChinese, "continuous_start") => "開始連續截圖",
+            (Self::TraditionalChinese, "continuous_stop") => "停止連續截圖",
             (Self::TraditionalChinese, "native") => "開啟 macOS 標準截圖…",
             (Self::TraditionalChinese, "capture_stopped") => "連續截圖 — 已停止",
             (Self::TraditionalChinese, "record_time") => "錄製時間 00:00",
             (Self::TraditionalChinese, "recording") => "正在錄製",
-            (Self::TraditionalChinese, "record_toggle") => "開始／停止錄製",
+            (Self::TraditionalChinese, "record_start") => "開始錄製",
+            (Self::TraditionalChinese, "record_stop") => "停止錄製",
             (Self::TraditionalChinese, "quit") => "結束",
             _ => "MacShot",
         }
@@ -2367,7 +2414,9 @@ enum TrayAction {
     ShowWindow,
     Capture,
     CaptureActiveWindow,
+    CapturePrimaryDisplay,
     CaptureAllDisplays,
+    SelectCaptureTarget(CaptureTarget),
     CaptureRegion,
     OpenNativeScreenshot,
     ToggleContinuousCapture,
@@ -3120,6 +3169,7 @@ impl Default for MacShot {
             language,
             monitors,
             windows,
+            window_search_query: String::new(),
             capture_target,
             continuous_capture: false,
             keep_region_in_continuous: load_setting("keep_region_in_continuous", "true") != "false",
@@ -3188,8 +3238,17 @@ impl Default for MacShot {
             hotkey_tx,
             hotkey_initialized: false,
             _tray_icon: None,
+            tray_capture_target_item: None,
+            tray_capture_target_text: None,
+            tray_target_selection_items: Vec::new(),
+            tray_capture_active_item: None,
+            tray_capture_primary_item: None,
+            tray_capture_all_item: None,
             tray_capture_status_item: None,
+            tray_selected_capture_item: None,
+            tray_continuous_capture_item: None,
             tray_recording_status_item: None,
+            tray_recording_action_item: None,
             tray_recording_state: None,
             tray_recording_seconds: None,
             tray_capture_status_state: None,
@@ -3267,9 +3326,19 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
             .into_iter()
             .filter(is_captureable_screen_capture_window)
             .filter_map(|window| {
+                let application = window.owning_application();
+                let app_name = application
+                    .as_ref()
+                    .map(|application| application.application_name())
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "Window".to_owned());
+                let frame = window.frame();
                 Some(WindowChoice {
                     id: window.window_id(),
+                    app_name,
                     title: window.title()?,
+                    width: frame.size.width.max(0.0) as u32,
+                    height: frame.size.height.max(0.0) as u32,
                 })
             })
             .collect())
@@ -3282,12 +3351,52 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
             .filter_map(|window| {
                 let id = window.id().ok()?;
                 let title = window.title().ok()?;
+                let app_name = window.app_name().unwrap_or_else(|_| "Window".to_owned());
+                let width = window.width().unwrap_or_default();
+                let height = window.height().unwrap_or_default();
                 if title.trim().is_empty() || !is_captureable_window(&window) {
                     return None;
                 }
-                Some(WindowChoice { id, title })
+                Some(WindowChoice {
+                    id,
+                    app_name,
+                    title,
+                    width,
+                    height,
+                })
             })
             .collect())
+    }
+}
+
+fn window_choice_label(window: &WindowChoice) -> String {
+    format!("{} — {}", window.app_name, window.title)
+}
+
+fn show_window_choice(ui: &mut egui::Ui, target: &mut CaptureTarget, window: &WindowChoice) {
+    let selected = *target == CaptureTarget::Window(window.id);
+    let description = format!(
+        "{} — {}\n{} × {} px",
+        window.app_name, window.title, window.width, window.height
+    );
+    if ui
+        .selectable_label(selected, egui::RichText::new(description).size(13.0))
+        .clicked()
+    {
+        *target = CaptureTarget::Window(window.id);
+        egui::Popup::close_all(ui.ctx());
+    }
+}
+
+fn selectable_capture_target(
+    ui: &mut egui::Ui,
+    target: &mut CaptureTarget,
+    value: CaptureTarget,
+    label: impl Into<egui::WidgetText>,
+) {
+    if ui.selectable_label(*target == value, label).clicked() {
+        *target = value;
+        egui::Popup::close_all(ui.ctx());
     }
 }
 
@@ -6194,6 +6303,145 @@ fn hotkey_badge_text(value: &str) -> String {
         .join("  ")
 }
 
+fn tray_capture_method_label(
+    language: AppLanguage,
+    label_key: &str,
+    selected: bool,
+    hotkey: &str,
+) -> String {
+    let marker = if selected { "✓ " } else { "" };
+    let shortcut = if selected {
+        format!("  ({})", hotkey_badge_text(hotkey))
+    } else {
+        String::new()
+    };
+    format!("{marker}{}{shortcut}", language.tray_label(label_key))
+}
+
+fn tray_target_choice_label(
+    language: AppLanguage,
+    target: CaptureTarget,
+    selected: bool,
+    monitors: &[Monitor],
+    windows: &[WindowChoice],
+) -> String {
+    let label = match target {
+        CaptureTarget::ActiveWindow => language.text("アクティブウィンドウ"),
+        CaptureTarget::PrimaryDisplay => language.text("デスクトップ（メイン画面）"),
+        CaptureTarget::AllDisplays => language.text("全画面（全ディスプレイ）"),
+        CaptureTarget::Display(index) => {
+            let name = monitors
+                .get(index)
+                .and_then(|monitor| monitor.name().ok())
+                .unwrap_or_else(|| format!("{} {}", language.text("Display"), index + 1));
+            format!("{} — {name}", language.text("Full Display"))
+        }
+        CaptureTarget::Window(id) => windows
+            .iter()
+            .find(|window| window.id == id)
+            .map(|window| {
+                format!(
+                    "{} — {} ({} × {} px)",
+                    window.app_name, window.title, window.width, window.height
+                )
+            })
+            .unwrap_or_else(|| language.text("Window")),
+    };
+    if selected {
+        format!("✓ {label}")
+    } else {
+        label
+    }
+}
+
+fn append_tray_target_item(
+    submenu: &Submenu,
+    items: &mut Vec<(MenuItem, CaptureTarget)>,
+    id: String,
+    target: CaptureTarget,
+    selected: CaptureTarget,
+    language: AppLanguage,
+    monitors: &[Monitor],
+    windows: &[WindowChoice],
+) -> Result<(), String> {
+    let item = MenuItem::with_id(
+        id,
+        tray_target_choice_label(language, target, selected == target, monitors, windows),
+        true,
+        None,
+    );
+    submenu.append(&item).map_err(|error| error.to_string())?;
+    items.push((item, target));
+    Ok(())
+}
+
+fn build_tray_target_submenu(
+    language: AppLanguage,
+    selected: CaptureTarget,
+    monitors: &[Monitor],
+    windows: &[WindowChoice],
+) -> Result<(Submenu, Vec<(MenuItem, CaptureTarget)>), String> {
+    let submenu = Submenu::with_id(
+        "macshot.capture.targets",
+        language.tray_label("target_menu"),
+        true,
+    );
+    let mut items = Vec::new();
+    for (id, target) in [
+        (
+            "macshot.target.active".to_owned(),
+            CaptureTarget::ActiveWindow,
+        ),
+        (
+            "macshot.target.primary".to_owned(),
+            CaptureTarget::PrimaryDisplay,
+        ),
+        ("macshot.target.all".to_owned(), CaptureTarget::AllDisplays),
+    ] {
+        append_tray_target_item(
+            &submenu, &mut items, id, target, selected, language, monitors, windows,
+        )?;
+    }
+
+    if !monitors.is_empty() {
+        submenu
+            .append(&PredefinedMenuItem::separator())
+            .map_err(|error| error.to_string())?;
+        for index in 0..monitors.len() {
+            append_tray_target_item(
+                &submenu,
+                &mut items,
+                format!("macshot.target.display.{index}"),
+                CaptureTarget::Display(index),
+                selected,
+                language,
+                monitors,
+                windows,
+            )?;
+        }
+    }
+
+    if !windows.is_empty() {
+        submenu
+            .append(&PredefinedMenuItem::separator())
+            .map_err(|error| error.to_string())?;
+        for window in windows {
+            append_tray_target_item(
+                &submenu,
+                &mut items,
+                format!("macshot.target.window.{}", window.id),
+                CaptureTarget::Window(window.id),
+                selected,
+                language,
+                monitors,
+                windows,
+            )?;
+        }
+    }
+
+    Ok((submenu, items))
+}
+
 fn canonical_hotkey_text(value: &str) -> String {
     let Ok(hotkey) = value.parse::<HotKey>() else {
         return value.to_string();
@@ -6879,6 +7127,25 @@ impl MacShot {
         }
     }
 
+    fn reset_tray_menu(&mut self) {
+        self._tray_icon = None;
+        self.tray_initialized = false;
+        self.tray_capture_target_item = None;
+        self.tray_capture_target_text = None;
+        self.tray_target_selection_items.clear();
+        self.tray_capture_active_item = None;
+        self.tray_capture_primary_item = None;
+        self.tray_capture_all_item = None;
+        self.tray_capture_status_item = None;
+        self.tray_selected_capture_item = None;
+        self.tray_continuous_capture_item = None;
+        self.tray_recording_status_item = None;
+        self.tray_recording_action_item = None;
+        self.tray_recording_state = None;
+        self.tray_recording_seconds = None;
+        self.tray_capture_status_state = None;
+    }
+
     fn initialize_tray(&mut self, ctx: &egui::Context) {
         if self.tray_initialized {
             return;
@@ -6890,33 +7157,88 @@ impl MacShot {
             true,
             None,
         );
+        let capture_target_item = MenuItem::with_id(
+            "macshot.capture.target",
+            format!(
+                "{}: {}",
+                self.language.tray_label("current_target"),
+                self.target_caption()
+            ),
+            false,
+            None,
+        );
+        let (target_selection_submenu, target_selection_items) = match build_tray_target_submenu(
+            self.language,
+            self.capture_target,
+            &self.monitors,
+            &self.windows,
+        ) {
+            Ok(menu) => menu,
+            Err(error) => {
+                self.status = format!("撮影対象メニューを作成できません: {error}");
+                return;
+            }
+        };
         let capture_area_item = MenuItem::with_id(
             "macshot.capture.area",
             self.language.tray_label("area"),
             true,
             None,
         );
+        let capture_active_selected = matches!(self.capture_target, CaptureTarget::ActiveWindow);
         let capture_active_item = MenuItem::with_id(
             "macshot.capture.active",
-            self.language.tray_label("active"),
+            tray_capture_method_label(
+                self.language,
+                "active",
+                capture_active_selected,
+                &self.capture_hotkey_text,
+            ),
             true,
             None,
         );
+        let capture_primary_selected = matches!(self.capture_target, CaptureTarget::PrimaryDisplay);
+        let capture_primary_item = MenuItem::with_id(
+            "macshot.capture.primary",
+            tray_capture_method_label(
+                self.language,
+                "primary",
+                capture_primary_selected,
+                &self.capture_hotkey_text,
+            ),
+            true,
+            None,
+        );
+        let capture_all_selected = matches!(self.capture_target, CaptureTarget::AllDisplays);
         let capture_all_item = MenuItem::with_id(
             "macshot.capture.all",
-            self.language.tray_label("all"),
+            tray_capture_method_label(
+                self.language,
+                "all",
+                capture_all_selected,
+                &self.capture_hotkey_text,
+            ),
             true,
             None,
         );
         let capture_selected_item = MenuItem::with_id(
             "macshot.capture.selected",
-            self.language.tray_label("selected"),
+            tray_capture_method_label(
+                self.language,
+                "selected",
+                !capture_active_selected && !capture_primary_selected && !capture_all_selected,
+                &self.capture_hotkey_text,
+            ),
             true,
             None,
         );
         let continuous_capture_item = MenuItem::with_id(
             "macshot.capture.continuous",
-            self.language.tray_label("continuous"),
+            self.language.tray_label(if self.continuous_capture {
+                "continuous_stop"
+            } else {
+                "continuous_start"
+            }),
             true,
             None,
         );
@@ -6926,7 +7248,6 @@ impl MacShot {
             cfg!(target_os = "macos"),
             None,
         );
-        let capture_submenu = Submenu::new(self.language.tray_label("capture"), true);
         let capture_status_item = MenuItem::with_id(
             "macshot.capture.status",
             self.language.tray_label("capture_stopped"),
@@ -6941,29 +7262,42 @@ impl MacShot {
         );
         let recording_item = MenuItem::with_id(
             "macshot.record",
-            self.language.tray_label("record_toggle"),
+            format!(
+                "{}  ({})",
+                self.language
+                    .tray_label(if self.recording || self.recording_starting {
+                        "record_stop"
+                    } else {
+                        "record_start"
+                    }),
+                hotkey_badge_text(&self.recording_hotkey_text)
+            ),
             true,
             None,
         );
         let quit_item =
             MenuItem::with_id("macshot.quit", self.language.tray_label("quit"), true, None);
-        if let Err(error) = capture_submenu.append_items(&[
-            &capture_area_item,
-            &capture_active_item,
-            &capture_all_item,
-            &capture_selected_item,
-            &continuous_capture_item,
-            &native_screenshot_item,
-        ]) {
-            self.status = format!("撮影メニューを作成できません: {error}");
-            return;
-        }
+        let capture_separator = PredefinedMenuItem::separator();
+        let recording_separator = PredefinedMenuItem::separator();
+        let quit_separator = PredefinedMenuItem::separator();
         let menu = match Menu::with_items(&[
             &show_window_item,
-            &capture_submenu,
+            &capture_target_item,
+            &target_selection_submenu,
+            &capture_separator,
+            &capture_area_item,
+            &capture_active_item,
+            &capture_primary_item,
+            &capture_all_item,
+            &capture_selected_item,
+            &native_screenshot_item,
+            &recording_separator,
+            &continuous_capture_item,
             &capture_status_item,
-            &recording_status_item,
+            &quit_separator,
             &recording_item,
+            &recording_status_item,
+            &PredefinedMenuItem::separator(),
             &quit_item,
         ]) {
             Ok(menu) => menu,
@@ -6979,12 +7313,17 @@ impl MacShot {
         let show_window_id = show_window_item.id().0.clone();
         let capture_area_id = capture_area_item.id().0.clone();
         let capture_active_id = capture_active_item.id().0.clone();
+        let capture_primary_id = capture_primary_item.id().0.clone();
         let capture_all_id = capture_all_item.id().0.clone();
         let capture_selected_id = capture_selected_item.id().0.clone();
         let native_screenshot_id = native_screenshot_item.id().0.clone();
         let continuous_capture_id = continuous_capture_item.id().0.clone();
         let record_id = recording_item.id().0.clone();
         let quit_id = quit_item.id().0.clone();
+        let target_actions: HashMap<_, _> = target_selection_items
+            .iter()
+            .map(|(item, target)| (item.id().0.clone(), *target))
+            .collect();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id.0 == record_id {
                 dispatch_recording_menu_action(&recording_stop_tx, &sender);
@@ -6995,13 +7334,17 @@ impl MacShot {
                 id if id == show_window_id => Some(TrayAction::ShowWindow),
                 id if id == capture_area_id => Some(TrayAction::CaptureRegion),
                 id if id == capture_active_id => Some(TrayAction::CaptureActiveWindow),
+                id if id == capture_primary_id => Some(TrayAction::CapturePrimaryDisplay),
                 id if id == capture_all_id => Some(TrayAction::CaptureAllDisplays),
                 id if id == capture_selected_id => Some(TrayAction::Capture),
                 id if id == native_screenshot_id => Some(TrayAction::OpenNativeScreenshot),
                 id if id == continuous_capture_id => Some(TrayAction::ToggleContinuousCapture),
                 id if id == record_id => Some(TrayAction::ToggleRecording),
                 id if id == quit_id => Some(TrayAction::Quit),
-                _ => None,
+                id => target_actions
+                    .get(id)
+                    .copied()
+                    .map(TrayAction::SelectCaptureTarget),
             };
             if let Some(action) = action {
                 let _ = sender.send(action);
@@ -7017,8 +7360,16 @@ impl MacShot {
         let builder = builder.with_icon(icon);
         match builder.build() {
             Ok(tray) => {
+                self.tray_capture_target_item = Some(capture_target_item);
+                self.tray_target_selection_items = target_selection_items;
                 self.tray_capture_status_item = Some(capture_status_item);
+                self.tray_capture_active_item = Some(capture_active_item);
+                self.tray_capture_primary_item = Some(capture_primary_item);
+                self.tray_capture_all_item = Some(capture_all_item);
+                self.tray_selected_capture_item = Some(capture_selected_item);
+                self.tray_continuous_capture_item = Some(continuous_capture_item);
                 self.tray_recording_status_item = Some(recording_status_item);
+                self.tray_recording_action_item = Some(recording_item);
                 self._tray_icon = Some(tray);
                 self.update_tray_recording_status();
             }
@@ -7051,6 +7402,24 @@ impl MacShot {
         self.tray_recording_state = Some(active);
         self.tray_recording_seconds = Some(seconds);
         self.tray_capture_status_state = Some(capture_status_state);
+        if let Some(item) = &self.tray_continuous_capture_item {
+            item.set_text(self.language.tray_label(if self.continuous_capture {
+                "continuous_stop"
+            } else {
+                "continuous_start"
+            }));
+        }
+        if let Some(item) = &self.tray_recording_action_item {
+            item.set_text(format!(
+                "{}  ({})",
+                self.language.tray_label(if active {
+                    "record_stop"
+                } else {
+                    "record_start"
+                }),
+                hotkey_badge_text(&self.recording_hotkey_text)
+            ));
+        }
         let label = if active {
             format!(
                 "{} {}",
@@ -7061,7 +7430,12 @@ impl MacShot {
             self.language.text("録画時間 00:00")
         };
         if let Some(item) = &self.tray_recording_status_item {
-            item.set_text(label);
+            // Keep elapsed time visible while recording; otherwise show a direct start action.
+            item.set_text(if active {
+                label
+            } else {
+                self.language.tray_label("record_time").to_owned()
+            });
         }
         if let Some(item) = &self.tray_capture_status_item {
             item.set_text(self.language.message(&continuous_capture_status_label(
@@ -7102,6 +7476,67 @@ impl MacShot {
         }
     }
 
+    fn update_tray_capture_target(&mut self) {
+        let selected_target = self.target_caption();
+        let status_label = format!(
+            "{}: {}",
+            self.language.tray_label("current_target"),
+            selected_target
+        );
+        let target_state = format!("{status_label}\n{}", self.capture_hotkey_text);
+        if self.tray_capture_target_text.as_deref() != Some(target_state.as_str()) {
+            if let Some(item) = &self.tray_capture_target_item {
+                item.set_text(status_label);
+            }
+            self.tray_capture_target_text = Some(target_state);
+
+            let is_active = matches!(self.capture_target, CaptureTarget::ActiveWindow);
+            let is_primary = matches!(self.capture_target, CaptureTarget::PrimaryDisplay);
+            let is_all = matches!(self.capture_target, CaptureTarget::AllDisplays);
+            if let Some(item) = &self.tray_capture_active_item {
+                item.set_text(tray_capture_method_label(
+                    self.language,
+                    "active",
+                    is_active,
+                    &self.capture_hotkey_text,
+                ));
+            }
+            if let Some(item) = &self.tray_capture_primary_item {
+                item.set_text(tray_capture_method_label(
+                    self.language,
+                    "primary",
+                    is_primary,
+                    &self.capture_hotkey_text,
+                ));
+            }
+            if let Some(item) = &self.tray_capture_all_item {
+                item.set_text(tray_capture_method_label(
+                    self.language,
+                    "all",
+                    is_all,
+                    &self.capture_hotkey_text,
+                ));
+            }
+            if let Some(item) = &self.tray_selected_capture_item {
+                item.set_text(tray_capture_method_label(
+                    self.language,
+                    "selected",
+                    !is_active && !is_primary && !is_all,
+                    &self.capture_hotkey_text,
+                ));
+            }
+            for (item, target) in &self.tray_target_selection_items {
+                item.set_text(tray_target_choice_label(
+                    self.language,
+                    *target,
+                    self.capture_target == *target,
+                    &self.monitors,
+                    &self.windows,
+                ));
+            }
+        }
+    }
+
     fn handle_tray_actions(&mut self, ctx: &egui::Context) {
         while let Ok(action) = self.tray_action_rx.try_recv() {
             match action {
@@ -7121,8 +7556,29 @@ impl MacShot {
                 TrayAction::CaptureActiveWindow => {
                     self.begin_capture_for(ctx, CaptureTarget::ActiveWindow, None);
                 }
+                TrayAction::CapturePrimaryDisplay => {
+                    self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, None);
+                }
                 TrayAction::CaptureAllDisplays => {
                     self.begin_capture_for(ctx, CaptureTarget::AllDisplays, None);
+                }
+                TrayAction::SelectCaptureTarget(target) => {
+                    let previous_target = self.capture_target;
+                    self.capture_target = target;
+                    match self.save_preferences() {
+                        Ok(()) => {
+                            self.status =
+                                format!("撮影対象を「{}」に変更しました。", self.target_caption());
+                            self.tray_capture_target_text = None;
+                            self.update_tray_capture_target();
+                        }
+                        Err(error) => {
+                            self.capture_target = previous_target;
+                            self.tray_capture_target_text = None;
+                            self.settings_error =
+                                Some(format!("撮影対象を保存できません: {error}"));
+                        }
+                    }
                 }
                 TrayAction::CaptureRegion => self.begin_region_selection(ctx),
                 TrayAction::OpenNativeScreenshot => self.open_native_screenshot(),
@@ -7618,6 +8074,8 @@ impl MacShot {
         let recording_text = canonical_hotkey_text(&recording.to_string());
         self.capture_hotkey_text = capture_text.clone();
         self.recording_hotkey_text = recording_text.clone();
+        self.tray_recording_state = None;
+        self.update_tray_recording_status();
         match self.save_preferences() {
             Ok(()) if registration_errors.is_empty() => {
                 self.settings_error = None;
@@ -8839,7 +9297,7 @@ impl MacShot {
                 .windows
                 .iter()
                 .find(|window| window.id == id)
-                .map(|window| window.title.clone())
+                .map(window_choice_label)
                 .unwrap_or_else(|| self.language.text("ウィンドウを選択")),
         }
     }
@@ -8954,21 +9412,33 @@ impl MacShot {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(self.language.text("撮影対象")).size(11.0).color(TEXT_MUTED));
                         ui.add_space(4.0);
+                        let target_popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
                         egui::ComboBox::from_id_salt("capture_target")
                             .selected_text(self.target_caption())
                             .width(250.0)
+                            .height(target_popup_height)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.window_search_query)
+                                        .desired_width(360.0)
+                                        .hint_text(self.language.text("アプリ名・ウィンドウ名を検索")),
+                                );
+                                ui.separator();
+                                selectable_capture_target(
+                                    ui,
                                     &mut self.capture_target,
                                     CaptureTarget::ActiveWindow,
                                     self.language.text("アクティブウィンドウ"),
                                 );
-                                ui.selectable_value(
+                                selectable_capture_target(
+                                    ui,
                                     &mut self.capture_target,
                                     CaptureTarget::PrimaryDisplay,
                                     self.language.text("デスクトップ（メイン画面）"),
                                 );
-                                ui.selectable_value(
+                                selectable_capture_target(
+                                    ui,
                                     &mut self.capture_target,
                                     CaptureTarget::AllDisplays,
                                     self.language.text("全画面（全ディスプレイ）"),
@@ -8978,7 +9448,8 @@ impl MacShot {
                                     let name = monitor
                                         .name()
                                         .unwrap_or_else(|_| format!("{} {}", self.language.text("Display"), index + 1));
-                                    ui.selectable_value(
+                                    selectable_capture_target(
+                                        ui,
                                         &mut self.capture_target,
                                         CaptureTarget::Display(index),
                                         format!("{} — {name}", self.language.text("Full Display")),
@@ -8986,13 +9457,29 @@ impl MacShot {
                                 }
                                 if !self.windows.is_empty() {
                                     ui.separator();
-                                    for window in &self.windows {
-                                        ui.selectable_value(
+                                    let query = self.window_search_query.trim().to_lowercase();
+                                    let windows: Vec<_> = self
+                                        .windows
+                                        .iter()
+                                        .filter(|window| {
+                                            query.is_empty()
+                                                || window.app_name.to_lowercase().contains(&query)
+                                                || window.title.to_lowercase().contains(&query)
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    if windows.is_empty() {
+                                        ui.label(self.language.text("一致するウィンドウがありません"));
+                                    }
+                                    for window in &windows {
+                                        show_window_choice(
+                                            ui,
                                             &mut self.capture_target,
-                                            CaptureTarget::Window(window.id),
-                                            format!("{} — {}", self.language.text("Window"), window.title),
+                                            window,
                                         );
                                     }
+                                } else {
+                                    ui.label(self.language.text("ウィンドウ候補がありません。一覧を更新してください。"));
                                 }
                             });
                     });
@@ -9003,6 +9490,7 @@ impl MacShot {
                         match discover_windows() {
                             Ok(windows) => {
                                 self.windows = windows;
+                                self.reset_tray_menu();
                                 self.status =
                                     format!("{}個のウィンドウを確認しました。", self.windows.len());
                                 if matches!(self.capture_target, CaptureTarget::Window(id) if !self.windows.iter().any(|window| window.id == id)) {
@@ -10251,8 +10739,17 @@ impl MacShot {
             self.status = "言語表示を再読み込みしました。".into();
             self._tray_icon = None;
             self.tray_initialized = false;
+            self.tray_capture_target_item = None;
+            self.tray_capture_target_text = None;
+            self.tray_target_selection_items.clear();
+            self.tray_capture_active_item = None;
+            self.tray_capture_primary_item = None;
+            self.tray_capture_all_item = None;
             self.tray_capture_status_item = None;
+            self.tray_selected_capture_item = None;
+            self.tray_continuous_capture_item = None;
             self.tray_recording_status_item = None;
+            self.tray_recording_action_item = None;
             self.tray_recording_state = None;
             self.tray_recording_seconds = None;
             self.tray_capture_status_state = None;
@@ -10266,8 +10763,17 @@ impl MacShot {
                 self.status = "言語設定を保存しました。".into();
                 self._tray_icon = None;
                 self.tray_initialized = false;
+                self.tray_capture_target_item = None;
+                self.tray_capture_target_text = None;
+                self.tray_target_selection_items.clear();
+                self.tray_capture_active_item = None;
+                self.tray_capture_primary_item = None;
+                self.tray_capture_all_item = None;
                 self.tray_capture_status_item = None;
+                self.tray_selected_capture_item = None;
+                self.tray_continuous_capture_item = None;
                 self.tray_recording_status_item = None;
+                self.tray_recording_action_item = None;
                 self.tray_recording_state = None;
                 self.tray_recording_seconds = None;
                 self.tray_capture_status_state = None;
@@ -10851,21 +11357,33 @@ impl MacShot {
                         .size(11.0)
                         .color(TEXT_MUTED),
                 );
+                let target_popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
                 egui::ComboBox::from_id_salt("settings_capture_target")
                     .selected_text(self.target_caption())
                     .width(260.0)
+                    .height(target_popup_height)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.window_search_query)
+                                .desired_width(360.0)
+                                .hint_text(self.language.text("アプリ名・ウィンドウ名を検索")),
+                        );
+                        ui.separator();
+                        selectable_capture_target(
+                            ui,
                             &mut self.capture_target,
                             CaptureTarget::ActiveWindow,
                             self.language.text("アクティブウィンドウ"),
                         );
-                        ui.selectable_value(
+                        selectable_capture_target(
+                            ui,
                             &mut self.capture_target,
                             CaptureTarget::PrimaryDisplay,
                             self.language.text("デスクトップ（メイン画面）"),
                         );
-                        ui.selectable_value(
+                        selectable_capture_target(
+                            ui,
                             &mut self.capture_target,
                             CaptureTarget::AllDisplays,
                             self.language.text("全画面（全ディスプレイ）"),
@@ -10874,17 +11392,37 @@ impl MacShot {
                             let name = monitor
                                 .name()
                                 .unwrap_or_else(|_| format!("{} {}", self.language.text("Display"), index + 1));
-                            ui.selectable_value(
+                            selectable_capture_target(
+                                ui,
                                 &mut self.capture_target,
                                 CaptureTarget::Display(index),
                                 format!("{} — {name}", self.language.text("Full Display")),
                             );
                         }
-                        for window in &self.windows {
-                            ui.selectable_value(
+                        let query = self.window_search_query.trim().to_lowercase();
+                        let windows: Vec<_> = self
+                            .windows
+                            .iter()
+                            .filter(|window| {
+                                query.is_empty()
+                                    || window.app_name.to_lowercase().contains(&query)
+                                    || window.title.to_lowercase().contains(&query)
+                            })
+                            .cloned()
+                            .collect();
+                        if windows.is_empty() {
+                            let empty_message = if query.is_empty() {
+                                "ウィンドウ候補がありません。一覧を更新してください。"
+                            } else {
+                                "一致するウィンドウがありません"
+                            };
+                            ui.label(self.language.text(empty_message));
+                        }
+                        for window in &windows {
+                            show_window_choice(
+                                ui,
                                 &mut self.capture_target,
-                                CaptureTarget::Window(window.id),
-                                format!("{} — {}", self.language.text("Window"), window.title),
+                                window,
                             );
                         }
                     });
@@ -11189,6 +11727,7 @@ impl eframe::App for MacShot {
         }
         self.initialize_hotkey(ctx);
         self.initialize_tray(ctx);
+        self.update_tray_capture_target();
         self.handle_hotkey_requests(ctx);
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
@@ -13121,7 +13660,10 @@ mod tests {
     fn continuous_capture_preflight_rejects_stale_targets_and_recording() {
         let windows = [WindowChoice {
             id: 9,
+            app_name: "Calculator".into(),
             title: "Calculator".into(),
+            width: 640,
+            height: 480,
         }];
         assert_eq!(
             capture_target_preflight_error(CaptureTarget::Display(2), false, false, 2, &windows),

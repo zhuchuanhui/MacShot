@@ -1,5 +1,14 @@
 # Project Status
 
+## v1.2.0 Release candidate — 2026-10-30
+
+- The next release after v1.1.0 is v1.2.0. It adds a menu-bar capture-target submenu for active window, main display, all displays, individual displays, and discovered windows, plus searchable app/window choices with window dimensions in Settings and the target popup.
+- Built macOS arm64 with `cargo build --release` and Windows x64 GNU with Rustup stable. The Windows executable is PE32+ GUI x86-64 and its package includes the required MinGW runtime DLLs and license files.
+- Prepared `output/release/MacShot-v1.2.0-macos-arm64.zip` (SHA-256 `e675c7367fee67f9aed4174cf3927b1333524839b1405939933bb2e1b7411449`) and `output/release/MacShot-v1.2.0-windows-x64.zip` (SHA-256 `e7cd440c24cebe4ceea847730f5ee3fa95fb3d4668ef23583252d4eeff8e9069`). Both archives pass integrity and local checksum checks; the macOS archive has no Finder metadata.
+- The app at `output/release/MacShot-v1.2.0-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version `1.2.0`, arm64. Its executable UUID matches `target/release/macshot`; privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It is ad hoc signed and not notarized.
+- `git diff --check` passed. The latest 82-test, formatting, Clippy, and Windows check/build results for this code are recorded under the 2026-10-30 menu-bar/capture-target work below; tests were not rerun during release packaging. Native menu selection and populated window-search UI were not visually rechecked in the current runtime; Windows physical runtime remains unverified.
+- GitHub publication status: pending.
+
 ## v1.1.0 Release candidate — 2026-10-30
 
 - The next release is v1.1.0 after the published v1.0.0. This release includes the verified MOV playback and audio improvements, recording-list and annotation usability refinements, and current-source fixes recorded below.
@@ -253,6 +262,29 @@ The active app for this snapshot is the installed `/Applications/MacShot.app` v1
 - Added the saved Settings option `連続撮影で範囲を維持する` (on by default). When enabled, selecting a region establishes the area reused by subsequent capture hotkeys during continuous capture. The app shows the region image for annotation after each such capture; completing it hides the app again while continuous capture remains active. Turning the option off clears the remembered area.
 - Updated `/Applications/MacShot.app`; the previous installed executable is backed up at `output/rollback/MacShot-1.0.0-before-region-annotation-20261029`. Deep/strict signing and `scripts/verify_macos_bundle.sh` passed. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, and Windows x64 GNU `cargo check --all-targets` passed.
 - Live screenshot and annotation interaction remain unverified because macOS previously required Touch ID or a password to re-register Screen Recording permission after the app executable was replaced. No credential was entered. No commit, remote repository change, release, or deployment was made.
+
+## Menu bar capture menu — 2026-10-30
+
+- Flattened the screenshot submenu so region, active-window, all-display, selected-target, and macOS-native capture actions are directly visible. Added separators between capture, continuous capture, recording, and quit groups.
+- Continuous-capture and recording menu actions now switch between explicit start/stop labels as their state changes. The capture status and recording elapsed-time rows remain visible as non-action status items.
+- Updated `/Applications/MacShot.app`; the previous installed executable is backed up at `output/rollback/MacShot-1.1.0-before-tray-menu-20261030`. `cargo fmt --check`, `git diff --check`, macOS `cargo check --all-targets` / `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, and deep/strict bundle signature verification passed. Live menu interaction was not rechecked; restart MacShot to load the new menu. No commit, remote change, release, or deployment was made.
+- Shortcut labels now appear beside the selected-target capture and recording actions in the menu, using the current saved hotkeys. Changed the labels in all four app languages, rebuilt/re-signed `/Applications/MacShot.app`, and relaunched it.
+- The menu now shows a disabled `Current Capture Method: …` row and marks the matching Active Window, All Displays, or Selected Target command with `✓`. The row and check move when the capture target changes in the app. Rebuilt, cross-checked Windows x64 GNU, signed, and relaunched `/Applications/MacShot.app` again. Menu interaction was not visually checked.
+- The capture shortcut now moves with that same checkmark: it appears beside Active Window, All Displays, or Selected Target according to the current capture target. Built and cross-checked macOS and Windows, verified the installed bundle signature, and relaunched the installed app.
+- Added a direct `Desktop (Main Display)` capture action. It receives the checkmark and capture shortcut when `PrimaryDisplay` is the configured target; the other method labels update accordingly. Built and checked macOS/Windows, signed, installed, and relaunched `/Applications/MacShot.app`.
+- Renamed the Japanese all-display tray action from `全画面を撮影` to `すべてのディスプレイを撮影` so it cannot be mistaken for a single display. Rebuilt, verified the installed bundle signature, and relaunched MacShot.
+
+## Capture target list details — 2026-10-30
+
+- Window choices show the owning app name, window title, and window dimensions. Icons are intentionally omitted after the user confirmed they remain invisible and asked to remove them.
+- `cargo fmt --check`, macOS `cargo check --all-targets`, macOS `cargo build --release`, Windows x64 GNU `cargo check --all-targets`, `git diff --check`, privacy/bundle verification, and deep/strict signature verification passed. Replaced `/Applications/MacShot.app`, backed up the prior bundle at `output/backups/MacShot-installed-before-window-picker-details-20261030.app`, relaunched it, and confirmed its executable UUID matches the release build. The live dropdown contents and Windows runtime were not visually verified. No commit, remote change, release, or deployment was made.
+- Expanded the capture-target popup to use up to 84% of the screen height and added a search field that filters app and window titles. Typing keeps the popup open; selecting a target closes it. Added matching search to the settings target picker and localized its empty/search prompts. Rebuilt and relaunched `/Applications/MacShot.app`; backed up the previous bundle at `output/backups/MacShot-installed-before-searchable-window-picker-20261030.app`. macOS/Windows checks, release build, bundle/privacy verification, signature verification, and executable UUID match passed. The app currently reports Screen Recording permission is required, so the populated window list/search results could not be visually exercised; Windows runtime remains unverified.
+- Follow-up: the user confirmed icons still did not display and requested no icons. Removed icon extraction, texture state, and reserved row spacing; retained app/window names and dimensions. Rebuilt, verified bundle privacy/signature, and relaunched `/Applications/MacShot.app` with a matching executable UUID. The actual populated dropdown remains unverified while MacShot reports Screen Recording permission is required.
+
+## Menu bar capture target picker — 2026-10-30
+
+- Added a `Select Capture Target` submenu with active window, main desktop, all displays, individual displays, and discovered windows. The selected entry is marked, target changes are saved, and refreshing the window list rebuilds the menu so new windows appear.
+- `cargo fmt --check`, macOS `cargo check --all-targets`, Windows x64 GNU `cargo check --all-targets`, macOS release build, `git diff --check`, bundle privacy/signature verification, and executable UUID match passed. Updated and relaunched `/Applications/MacShot.app`; saved the previous bundle at `output/backups/MacShot-installed-before-tray-target-picker-20261030.app`. Native menu selection was not visually exercised. No commit, remote change, release, or deployment was made.
 
 ## macOS range-selector background fix — 2026-10-29
 

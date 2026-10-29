@@ -1,4 +1,4 @@
-# MacShot 1.1.0
+# MacShot 1.2.0
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.1.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.1.0/MacShot-v1.1.0-macos-arm64.zip)
-- Windows x64: [MacShot-v1.1.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.1.0/MacShot-v1.1.0-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.1.0)
+- macOS Apple Silicon (arm64): [MacShot-v1.2.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.2.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.0)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app is ad hoc signed and not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. macOS 14 or later on Apple Silicon is supported.
 
