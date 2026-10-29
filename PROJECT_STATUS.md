@@ -7,7 +7,7 @@
 - Prepared `output/release/MacShot-v1.2.0-macos-arm64.zip` (SHA-256 `e675c7367fee67f9aed4174cf3927b1333524839b1405939933bb2e1b7411449`) and `output/release/MacShot-v1.2.0-windows-x64.zip` (SHA-256 `e7cd440c24cebe4ceea847730f5ee3fa95fb3d4668ef23583252d4eeff8e9069`). Both archives pass integrity and local checksum checks; the macOS archive has no Finder metadata.
 - The app at `output/release/MacShot-v1.2.0-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version `1.2.0`, arm64. Its executable UUID matches `target/release/macshot`; privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It is ad hoc signed and not notarized.
 - `git diff --check` passed. The latest 82-test, formatting, Clippy, and Windows check/build results for this code are recorded under the 2026-10-30 menu-bar/capture-target work below; tests were not rerun during release packaging. Native menu selection and populated window-search UI were not visually rechecked in the current runtime; Windows physical runtime remains unverified.
-- GitHub publication status: pending.
+- Published as [GitHub Release v1.2.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.0), tagged at source commit `af29382de2a6100f2fd6df03fac80f794ad842d4` (`feat(capture): add target picker and search`). GitHub reports a non-draft, non-prerelease release with all four assets uploaded. Downloaded all four assets again; Mac and Windows ZIP hashes matched their sidecars and both downloaded archives passed integrity checks. No production deployment was made.
 
 ## v1.1.0 Release candidate — 2026-10-30
 
