@@ -7,7 +7,7 @@
 - Prepared `output/release/MacShot-v1.1.0-macos-arm64.zip` (SHA-256 `d25d04755734c41b47c65bac701458158f26d2bffc623a817938f47f73d0cf5e`) and `output/release/MacShot-v1.1.0-windows-x64.zip` (SHA-256 `18bb0f5e6e971181d251547eceebb11120992a4dfb4a0be19b8e8e0814510433`). Both ZIP integrity and checksum checks pass; the macOS archive contains no Finder metadata.
 - The app at `output/release/MacShot-v1.1.0-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version `1.1.0`, arm64, with privacy descriptions and audio-input entitlement. Deep/strict signature verification passed. It is ad hoc signed and not notarized. Windows physical runtime remains unverified.
 - `git diff --check` passed. The current-source 106-test, format, Clippy, and Windows build validations are recorded in the full-function audit below; tests were not rerun for this packaging pass.
-- GitHub publication status: pending.
+- Published as [GitHub Release v1.1.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.1.0), tagged at source commit `305a050565d3f37b6a32986bb34ce030606c7f51` (`feat(player): add MOV playback and audio controls`). GitHub reports a non-draft, non-prerelease release with all four assets uploaded. Downloaded all four assets again; Mac and Windows ZIP checksums matched their sidecars and both downloaded archives passed integrity checks. No production deployment was made.
 
 ## 全機能監査の再確認 — 2026-10-30
 
