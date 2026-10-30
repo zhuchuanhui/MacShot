@@ -6,7 +6,7 @@
 - Rebuilt macOS arm64 and Windows x64 GNU as version 1.2.2. Prepared `output/release/MacShot-v1.2.2-macos-arm64.zip` (SHA-256 `d587564bdf0e7da8fea24b12c4d5f492d0ba875f94c5b66d1568f2b6cd0ea893`) and `output/release/MacShot-v1.2.2-windows-x64.zip` (SHA-256 `604b00755ecd6713b463172509f70f51621e301a0141d3b5bbc95939ccbd5a1f`). Both ZIP integrity and local checksum checks pass; the Mac archive contains no Finder metadata.
 - The app at `output/release/MacShot-v1.2.2-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version 1.2.2, arm64. Its executable UUID matches `target/release/macshot`, and privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It uses the same Apple Development signing identity as `/Applications/MacShot.app`; it is not notarized.
 - `cargo fmt --all -- --check` and `git diff --check` passed. Tests were not rerun because the app source is unchanged from v1.2.1. Windows physical runtime remains unverified.
-- GitHub publication status: pending.
+- Published as [GitHub Release v1.2.2](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.2), tagged at source commit `501f8aaf3414e1c475c3c07558c33975ded8f8a0` (`chore(release): set version 1.2.2`). GitHub reports a non-draft, non-prerelease release with all four assets uploaded. Downloaded all assets again; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.2.1 Release candidate — 2026-10-30
 
