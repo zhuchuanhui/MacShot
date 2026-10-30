@@ -6,7 +6,7 @@
 - The changed macOS source passed formatting, macOS checks and release build, bundle privacy/entitlement and deep/strict signature verification. `/Applications/MacShot.app` was relaunched, and its executable UUID matches `target/release/macshot`. Windows is not affected by the Dock-specific behavior.
 - Rebuilt macOS arm64 and Windows x64 GNU for version 1.2.1. Prepared `output/release/MacShot-v1.2.1-macos-arm64.zip` (SHA-256 `993e1cf02a1c06fa0e8378eb0891ce63bb6e54495c9e51f8e8330224a55359c5`) and `output/release/MacShot-v1.2.1-windows-x64.zip` (SHA-256 `5b30fb07c28e22a4f6a23148cadf2212342e4a3fca0e3058232da033cc5506aa`). ZIP integrity and local checksum checks passed; the macOS ZIP contains no Finder metadata. The packaged app is arm64, bundle ID `com.macshot.app`, version 1.2.1, with matching build UUID and valid deep/strict signature.
 - `cargo fmt --all -- --check` and `git diff --check` passed. The user-confirmed Dock behavior and current-source build/check results are recorded above; tests were not rerun during release packaging. Windows physical runtime remains unverified.
-- GitHub publication status: pending.
+- Published as [GitHub Release v1.2.1](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.1), tagged at source commit `ee4c0b44593b6f7019f1e1ebd7f2b1e86b9cb4da` (`fix(macos): keep menu bar app after Dock quit`). GitHub reports a non-draft, non-prerelease release with all four assets uploaded. Downloaded all assets again; Mac and Windows ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## Dock終了時にDockアイコンを隠して常駐 — 2026-10-30
 
