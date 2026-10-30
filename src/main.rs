@@ -74,6 +74,7 @@ mod recording_audio;
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
     fn CGShieldingWindowLevel() -> i32;
 }
 
@@ -549,6 +550,11 @@ impl AppLanguage {
                 "Open Screen Recording Settings",
                 "打开屏幕录制设置",
                 "開啟螢幕錄製設定",
+            ],
+            "macOSに画面収録を要求" => [
+                "Request Screen Recording",
+                "请求屏幕录制权限",
+                "要求螢幕錄製權限",
             ],
             "FinderでMacShotを表示" => [
                 "Show MacShot in Finder",
@@ -1709,6 +1715,22 @@ impl AppLanguage {
         }
 
         const FRAGMENTS: &[(&str, [&str; 3])] = &[
+            (
+                "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。反映しない場合はメニューバーのMacShotから終了して再起動してください。",
+                [
+                    "Requested Screen Recording access. Enable MacShot in Settings, then quit from the menu-bar MacShot menu and reopen it if access does not update.",
+                    "已请求屏幕录制权限。请在设置中启用 MacShot；如果权限未更新，请从菜单栏 MacShot 菜单退出后重新打开。",
+                    "已要求螢幕錄製權限。請在設定中啟用 MacShot；如果權限未更新，請從選單列 MacShot 選單結束後重新開啟。",
+                ],
+            ),
+            (
+                "画面収録の許可を確認しました。",
+                [
+                    "Screen Recording access is available.",
+                    "屏幕录制权限已生效。",
+                    "螢幕錄製權限已生效。",
+                ],
+            ),
             (
                 "システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音",
                 [
@@ -7737,6 +7759,16 @@ impl MacShot {
     }
 
     #[cfg(target_os = "macos")]
+    fn request_screen_recording_access(&mut self) {
+        let granted = unsafe { CGRequestScreenCaptureAccess() };
+        self.status = if granted {
+            "画面収録の許可を確認しました。".into()
+        } else {
+            "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。反映しない場合はメニューバーのMacShotから終了して再起動してください。".into()
+        };
+    }
+
+    #[cfg(target_os = "macos")]
     fn reveal_macshot_app(&mut self) {
         let app_path = current_macos_app_bundle_path();
         let Some(app_path) = app_path else {
@@ -9570,6 +9602,10 @@ impl MacShot {
                     );
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
+                        #[cfg(target_os = "macos")]
+                        if ui.button(self.language.text("macOSに画面収録を要求")).clicked() {
+                            self.request_screen_recording_access();
+                        }
                         if ui.add(primary_button(self.language.text("画面収録設定を開く"))).clicked() {
                             self.open_screen_recording_settings();
                         }
@@ -11567,6 +11603,9 @@ impl MacShot {
                     });
                     #[cfg(target_os = "macos")]
                     ui.horizontal_wrapped(|ui| {
+                        if ui.button(language.text("macOSに画面収録を要求")).clicked() {
+                            self.request_screen_recording_access();
+                        }
                         if ui.button(language.text("画面・音声の設定を開く")).clicked() {
                             self.open_screen_recording_settings();
                         }

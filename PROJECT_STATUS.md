@@ -1,5 +1,14 @@
 # Project Status
 
+## v1.3.0 Release candidate — 2026-10-30
+
+- The next release after v1.2.2 is v1.3.0. Added a macOS Screen Recording permission request action to the Capture and Settings pages, with localized guidance in Japanese, English, Simplified Chinese, and Traditional Chinese.
+- The current installed app is `/Applications/MacShot.app` version 1.2.2, signed with the Apple Development identity. Its arm64 executable UUID matches `target/release/macshot`; privacy descriptions, audio-input entitlement, and deep/strict signature verification pass.
+- Built macOS arm64 and Windows x64 GNU as version 1.3.0. Prepared `output/release/MacShot-v1.3.0-macos-arm64.zip` (SHA-256 `99c22f01e77887ce568c5314aec1aa4458f134e290cf8de38f3004b31ada1d16`) and `output/release/MacShot-v1.3.0-windows-x64.zip` (SHA-256 `ed019b3d001e63c7edd07d4a695f5c6efa470898061485a5f5baa8b4f369e352`). Both ZIP integrity and local checksum checks pass; the Mac archive contains no Finder metadata.
+- The app at `output/release/MacShot-v1.3.0-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version 1.3.0, arm64. Its executable UUID matches `target/release/macshot`, and privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It uses the same Apple Development signing identity as `/Applications/MacShot.app`; it is not notarized.
+- `cargo fmt --all -- --check` and `git diff --check` passed. The current-source 106-test suite was not rerun during packaging. The permission status was verified after manual macOS permission reauthorization, but no screen capture or recording was performed during that permission check. Windows physical runtime remains unverified.
+- GitHub publication status: pending.
+
 ## v1.2.2 Release candidate — 2026-10-30
 
 - The next release after v1.2.1 is v1.2.2. There are no app-source changes since v1.2.1; this version carries the Apple Development signing identity used by the current installed app so future updates can keep a stable signature. Existing users moving from the ad hoc signed release may need to toggle Screen Recording permission off/on once, as described in the READMEs.
@@ -25,7 +34,10 @@
 ## 画面収録許可とコード署名 — 2026-10-30
 
 - インストール版がアドホック署名だったため、更新ごとにコード署名の識別子が変わり、macOSが画面収録許可を同じアプリとして引き継げない状態でした。Apple Development署名へ切り替え、バンドルのプライバシー説明・entitlement・deep/strict署名を検証しました。
-- `/Applications/MacShot.app` を完全終了して再起動した後も `CGPreflightScreenCaptureAccess()` は未許可を返しています。以前の署名に紐づいた許可記録は新しい安定署名には移っていないため、ユーザー側で現在のMacShotを一度オフ→オンにして再起動する必要があります。Dockの「終了」は常駐化であり完全終了ではありません。
+- 許可状態の読み取りだけだった画面に `CGRequestScreenCaptureAccess()` を使う「macOSに画面収録を要求」操作を追加しました。撮影画面と設定画面に配置し、日本語・英語・簡体字・繁体字の案内を追加しました。
+- System SettingsでMacShotをオフ→オンにし、表示された「終了して再度開く」を選択した後、v1.2.2 `/Applications/MacShot.app` の設定画面が画面収録・システム音声を「許可済み」と表示することを確認しました。マイクも「許可済み」です。CraftShelfの「開く」は同じ `/Applications/MacShot.app` を参照しています。
+- `cargo fmt --check`、macOS `cargo check --all-targets`、`cargo build --release`、`git diff --check`、バンドルのプライバシー説明・音声入力entitlement・deep/strict署名検証が成功しました。実際の撮影・録画は行っていません。Dockの「終了」は常駐化であり完全終了ではありません。
+- 更新前のアプリは `output/backups/MacShot-installed-before-screen-permission-request-20261030.app` に保存しました。
 
 ## v1.2.0 Release candidate — 2026-10-30
 

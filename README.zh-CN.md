@@ -1,4 +1,4 @@
-# MacShot 1.2.2
+# MacShot 1.3.0
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,9 +6,9 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v1.2.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-macos-arm64.zip)
-- Windows x64：[MacShot-v1.2.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.2)
+- macOS Apple Silicon（arm64）：[MacShot-v1.3.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-macos-arm64.zip)
+- Windows x64：[MacShot-v1.3.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.3.0)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用使用 Apple Development 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。从 Ad Hoc 签名版本升级后，如果屏幕录制未获许可，请在“系统设置 > 隐私与安全性 > 屏幕与系统音频录制”中将 MacShot 关闭再开启一次，然后重新启动应用。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 
@@ -40,7 +40,7 @@ Windows：解压后运行 `MacShot.exe`。压缩包内含所需的 Windows 运�
 
 ## macOS 权限
 
-设置页面会显示屏幕录制和麦克风权限状态。更改权限后，请点按“刷新权限状态”。五秒麦克风测试会显示输入音量。如果麦克风权限被拒绝，MP4 仍可在不请求麦克风权限的情况下录制系统声音。
+设置页面会显示屏幕录制和麦克风权限状态。在 macOS 上，点按“请求屏幕录制权限”后，请在系统设置中启用 MacShot；更改权限后，请点按“刷新权限状态”。五秒麦克风测试会显示输入音量。如果麦克风权限被拒绝，MP4 仍可在不请求麦克风权限的情况下录制系统声音。
 
 MacShot 可以打开 macOS 标准“截图”面板。在设置中启用自动导入后，保存在常用文件夹中的支持格式截图和录屏会复制到 MacShot 保存文件夹，并显示在证据列表中。
 

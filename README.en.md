@@ -1,4 +1,4 @@
-# MacShot 1.2.2
+# MacShot 1.3.0
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.2.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-macos-arm64.zip)
-- Windows x64: [MacShot-v1.2.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.2)
+- macOS Apple Silicon (arm64): [MacShot-v1.3.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.3.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.3.0)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app uses an Apple Development signature and is not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. After updating from an ad hoc signed version, if screen recording is not allowed, toggle MacShot off and on once in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart it. macOS 14 or later on Apple Silicon is supported.
 
@@ -40,7 +40,7 @@ In Evidence, use the edit queue to add rectangles, arrows, or a crop. Edits save
 
 ## macOS permissions
 
-The Settings page shows screen-recording and microphone status. Use **Refresh Permission Status** after changing a permission. For microphone input, the five-second microphone test displays the input level. If microphone access is denied, MP4 can still record system audio without requesting microphone access.
+The Settings page shows screen-recording and microphone status. On macOS, choose **Request Screen Recording** to ask macOS for access, then enable MacShot in System Settings. Use **Refresh Permission Status** after changing a permission. For microphone input, the five-second microphone test displays the input level. If microphone access is denied, MP4 can still record system audio without requesting microphone access.
 
 MacShot can open Apple's standard Screenshot panel. When automatic import is enabled in Settings, supported screenshots and recordings saved in common folders are added to the configured MacShot folder and evidence list.
 
