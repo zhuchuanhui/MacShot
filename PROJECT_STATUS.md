@@ -7,7 +7,7 @@
 - Built macOS arm64 and Windows x64 GNU as version 1.3.0. Prepared `output/release/MacShot-v1.3.0-macos-arm64.zip` (SHA-256 `99c22f01e77887ce568c5314aec1aa4458f134e290cf8de38f3004b31ada1d16`) and `output/release/MacShot-v1.3.0-windows-x64.zip` (SHA-256 `ed019b3d001e63c7edd07d4a695f5c6efa470898061485a5f5baa8b4f369e352`). Both ZIP integrity and local checksum checks pass; the Mac archive contains no Finder metadata.
 - The app at `output/release/MacShot-v1.3.0-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version 1.3.0, arm64. Its executable UUID matches `target/release/macshot`, and privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It uses the same Apple Development signing identity as `/Applications/MacShot.app`; it is not notarized.
 - `cargo fmt --all -- --check` and `git diff --check` passed. The current-source 106-test suite was not rerun during packaging. The permission status was verified after manual macOS permission reauthorization, but no screen capture or recording was performed during that permission check. Windows physical runtime remains unverified.
-- GitHub publication status: pending.
+- Published as [GitHub Release v1.3.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.3.0), tagged at source commit `92587547c2321201736070a9c5318b8de4a5f02e` (`feat(macos): request screen recording permission`). GitHub reports a non-draft, non-prerelease release with all four assets uploaded. Downloaded all four assets again; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.2.2 Release candidate — 2026-10-30
 
