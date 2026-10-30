@@ -1,5 +1,19 @@
 # Project Status
 
+## v1.2.1 Release candidate — 2026-10-30
+
+- The next release after v1.2.0 is v1.2.1. On macOS, choosing Quit from the Dock now hides the Dock icon and window while MacShot stays available in the menu bar. The user confirmed the behavior; the MacShot menu's Quit action still exits the app.
+- The changed macOS source passed formatting, macOS checks and release build, bundle privacy/entitlement and deep/strict signature verification. `/Applications/MacShot.app` was relaunched, and its executable UUID matches `target/release/macshot`. Windows is not affected by the Dock-specific behavior.
+- Rebuilt macOS arm64 and Windows x64 GNU for version 1.2.1. Prepared `output/release/MacShot-v1.2.1-macos-arm64.zip` (SHA-256 `993e1cf02a1c06fa0e8378eb0891ce63bb6e54495c9e51f8e8330224a55359c5`) and `output/release/MacShot-v1.2.1-windows-x64.zip` (SHA-256 `5b30fb07c28e22a4f6a23148cadf2212342e4a3fca0e3058232da033cc5506aa`). ZIP integrity and local checksum checks passed; the macOS ZIP contains no Finder metadata. The packaged app is arm64, bundle ID `com.macshot.app`, version 1.2.1, with matching build UUID and valid deep/strict signature.
+- `cargo fmt --all -- --check` and `git diff --check` passed. The user-confirmed Dock behavior and current-source build/check results are recorded above; tests were not rerun during release packaging. Windows physical runtime remains unverified.
+- GitHub publication status: pending.
+
+## Dock終了時にDockアイコンを隠して常駐 — 2026-10-30
+
+- Dockからの終了要求をmacOS側でキャンセルし、MacShotをAccessoryポリシーへ切り替えてDockアイコンとメイン画面を隠しつつ、メニューバー常駐を維持します。メニューバーから「MacShotを開く」とDock表示を通常へ戻します。メニューバーアイコンの「終了」は既存どおり全プロセスを終了します。撮影・録画・証跡機能は変更していません。
+- 変更後の `cargo fmt --check`、macOS `cargo check --all-targets`、`cargo build --release`、`git diff --check`、バンドルの権限説明・音声入力entitlement・deep/strict署名検証が成功しました。`/Applications/MacShot.app` の実行ファイルUUIDはrelease成果物と一致し、最新版を起動しました。ユーザーがDock終了後もメニューバーに残る動作を確認しました。Windows版はmacOS固有の動作対象外です。
+- 初回更新前のアプリは `output/backups/MacShot-installed-before-dock-quit-resident-20261030.app`、Accessory切替修正前は `output/backups/MacShot-installed-before-dock-icon-toggle-20261030.app` に保存しました。
+
 ## v1.2.0 Release candidate — 2026-10-30
 
 - The next release after v1.1.0 is v1.2.0. It adds a menu-bar capture-target submenu for active window, main display, all displays, individual displays, and discovered windows, plus searchable app/window choices with window dimensions in Settings and the target popup.

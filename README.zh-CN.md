@@ -1,4 +1,4 @@
-# MacShot 1.2.0
+# MacShot 1.2.1
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,15 +6,15 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v1.2.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-macos-arm64.zip)
-- Windows x64：[MacShot-v1.2.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.0)
+- macOS Apple Silicon（arm64）：[MacShot-v1.2.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-macos-arm64.zip)
+- Windows x64：[MacShot-v1.2.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.1)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用仅使用 Ad Hoc 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 
 Windows：解压后运行 `MacShot.exe`。压缩包内含所需的 Windows 运行库 DLL。MP4 录制会采集默认播放设备和默认麦克风；如有需要，请在 Windows 隐私设置中允许桌面应用访问麦克风。
 
-点按窗口的关闭按钮时，MacShot 不会退出，而会留在菜单栏／通知区域。选择菜单中的“打开 MacShot”可重新显示窗口，选择“退出”可结束应用。窗口隐藏期间，录制和连续截图仍会继续。
+点按窗口的关闭按钮时，MacShot 不会退出，而会留在菜单栏／通知区域。在 macOS 上，从 Dock 选择“退出”也会隐藏 Dock 图标和窗口，并让菜单栏应用继续运行。选择菜单中的“打开 MacShot”可重新显示窗口，若要完全退出，请在 MacShot 菜单中选择“退出”。窗口隐藏期间，录制和连续截图仍会继续。
 
 ## 使用方法
 

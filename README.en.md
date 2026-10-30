@@ -1,4 +1,4 @@
-# MacShot 1.2.0
+# MacShot 1.2.1
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,15 +6,15 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.2.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-macos-arm64.zip)
-- Windows x64: [MacShot-v1.2.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.0/MacShot-v1.2.0-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.0)
+- macOS Apple Silicon (arm64): [MacShot-v1.2.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-macos-arm64.zip)
+- Windows x64: [MacShot-v1.2.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.1)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app is ad hoc signed and not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. macOS 14 or later on Apple Silicon is supported.
 
 On Windows, unzip the package and run `MacShot.exe`. Required Windows runtime DLLs are included. MP4 recording captures the default playback device and default microphone; allow desktop apps to use the microphone in Windows privacy settings if needed.
 
-The window's close button hides MacShot to the menu bar or notification area without quitting. Choose **Open MacShot** in the menu to restore the window, or **Quit** to exit. Recording and continuous capture continue while the window is hidden.
+The window's close button hides MacShot to the menu bar or notification area without quitting. On macOS, choosing **Quit** from the Dock also hides its Dock icon and keeps the menu-bar app running. Choose **Open MacShot** in the menu to restore the window, or **Quit** in the MacShot menu to exit. Recording and continuous capture continue while the window is hidden.
 
 ## Use
 

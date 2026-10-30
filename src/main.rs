@@ -7541,6 +7541,10 @@ impl MacShot {
         while let Ok(action) = self.tray_action_rx.try_recv() {
             match action {
                 TrayAction::ShowWindow => {
+                    #[cfg(target_os = "macos")]
+                    set_macos_activation_policy(
+                        objc2_app_kit::NSApplicationActivationPolicy::Regular,
+                    );
                     self.status = "MacShotのウィンドウを表示しました。".into();
                     restore_main_window(ctx);
                 }
@@ -11923,6 +11927,75 @@ fn disable_automatic_window_tabbing() {
     }
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn cancel_dock_termination_and_hide(
+    _delegate: *mut std::ffi::c_void,
+    _selector: *mut std::ffi::c_void,
+    sender: *mut std::ffi::c_void,
+) -> i64 {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+    if let Some(main_thread) = objc2_foundation::MainThreadMarker::new() {
+        // SAFETY: AppKit invokes this callback with its NSApplication instance on the main thread.
+        let application = unsafe { &*sender.cast::<NSApplication>() };
+        application.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        application.hide(None);
+        let _ = main_thread;
+    }
+    0 // NSTerminateCancel: keep the menu-bar process running.
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_activation_policy(policy: objc2_app_kit::NSApplicationActivationPolicy) {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    if let Some(main_thread) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(main_thread).setActivationPolicy(policy);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keep_running_when_quit_from_dock() {
+    use objc2::{msg_send, runtime::Sel, sel};
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+    use std::ffi::{c_char, c_void};
+
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn class_addMethod(
+            class: *mut c_void,
+            selector: *mut c_void,
+            implementation: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i64,
+            types: *const c_char,
+        ) -> bool;
+    }
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    // eframe/winit owns the delegate. Add AppKit's optional termination callback to that
+    // existing delegate class so window/event-loop handling remains under winit's control.
+    let Some(delegate) = (unsafe { application.delegate() }) else {
+        return;
+    };
+    let delegate_class: *mut c_void = unsafe { msg_send![&*delegate, class] };
+    let selector: Sel = sel!(applicationShouldTerminate:);
+    let added = unsafe {
+        class_addMethod(
+            delegate_class,
+            selector.as_ptr().cast_mut().cast(),
+            cancel_dock_termination_and_hide,
+            c"q@:@".as_ptr(),
+        )
+    };
+    if !added {
+        eprintln!("MacShot could not install the Dock-quit resident behavior");
+    }
+}
+
 fn main() -> eframe::Result<()> {
     #[cfg(target_os = "macos")]
     disable_automatic_window_tabbing();
@@ -11939,6 +12012,8 @@ fn main() -> eframe::Result<()> {
         "MacShot",
         options,
         Box::new(|creation| {
+            #[cfg(target_os = "macos")]
+            keep_running_when_quit_from_dock();
             let language = AppLanguage::from_setting(&load_setting("language", "ja"));
             creation.egui_ctx.set_fonts(app_font_definitions(language));
             configure_macshot_theme(&creation.egui_ctx);
