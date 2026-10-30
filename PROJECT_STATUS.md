@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.2.2 Release candidate — 2026-10-30
+
+- The next release after v1.2.1 is v1.2.2. There are no app-source changes since v1.2.1; this version carries the Apple Development signing identity used by the current installed app so future updates can keep a stable signature. Existing users moving from the ad hoc signed release may need to toggle Screen Recording permission off/on once, as described in the READMEs.
+- Rebuilt macOS arm64 and Windows x64 GNU as version 1.2.2. Prepared `output/release/MacShot-v1.2.2-macos-arm64.zip` (SHA-256 `d587564bdf0e7da8fea24b12c4d5f492d0ba875f94c5b66d1568f2b6cd0ea893`) and `output/release/MacShot-v1.2.2-windows-x64.zip` (SHA-256 `604b00755ecd6713b463172509f70f51621e301a0141d3b5bbc95939ccbd5a1f`). Both ZIP integrity and local checksum checks pass; the Mac archive contains no Finder metadata.
+- The app at `output/release/MacShot-v1.2.2-macos-arm64/MacShot.app` is bundle ID `com.macshot.app`, version 1.2.2, arm64. Its executable UUID matches `target/release/macshot`, and privacy descriptions, audio-input entitlement, and deep/strict signature verification pass. It uses the same Apple Development signing identity as `/Applications/MacShot.app`; it is not notarized.
+- `cargo fmt --all -- --check` and `git diff --check` passed. Tests were not rerun because the app source is unchanged from v1.2.1. Windows physical runtime remains unverified.
+- GitHub publication status: pending.
+
 ## v1.2.1 Release candidate — 2026-10-30
 
 - The next release after v1.2.0 is v1.2.1. On macOS, choosing Quit from the Dock now hides the Dock icon and window while MacShot stays available in the menu bar. The user confirmed the behavior; the MacShot menu's Quit action still exits the app.
@@ -13,6 +21,11 @@
 - Dockからの終了要求をmacOS側でキャンセルし、MacShotをAccessoryポリシーへ切り替えてDockアイコンとメイン画面を隠しつつ、メニューバー常駐を維持します。メニューバーから「MacShotを開く」とDock表示を通常へ戻します。メニューバーアイコンの「終了」は既存どおり全プロセスを終了します。撮影・録画・証跡機能は変更していません。
 - 変更後の `cargo fmt --check`、macOS `cargo check --all-targets`、`cargo build --release`、`git diff --check`、バンドルの権限説明・音声入力entitlement・deep/strict署名検証が成功しました。`/Applications/MacShot.app` の実行ファイルUUIDはrelease成果物と一致し、最新版を起動しました。ユーザーがDock終了後もメニューバーに残る動作を確認しました。Windows版はmacOS固有の動作対象外です。
 - 初回更新前のアプリは `output/backups/MacShot-installed-before-dock-quit-resident-20261030.app`、Accessory切替修正前は `output/backups/MacShot-installed-before-dock-icon-toggle-20261030.app` に保存しました。
+
+## 画面収録許可とコード署名 — 2026-10-30
+
+- インストール版がアドホック署名だったため、更新ごとにコード署名の識別子が変わり、macOSが画面収録許可を同じアプリとして引き継げない状態でした。Apple Development署名へ切り替え、バンドルのプライバシー説明・entitlement・deep/strict署名を検証しました。
+- `/Applications/MacShot.app` を完全終了して再起動した後も `CGPreflightScreenCaptureAccess()` は未許可を返しています。以前の署名に紐づいた許可記録は新しい安定署名には移っていないため、ユーザー側で現在のMacShotを一度オフ→オンにして再起動する必要があります。Dockの「終了」は常駐化であり完全終了ではありません。
 
 ## v1.2.0 Release candidate — 2026-10-30
 

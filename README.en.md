@@ -1,4 +1,4 @@
-# MacShot 1.2.1
+# MacShot 1.2.2
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,11 +6,11 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.2.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-macos-arm64.zip)
-- Windows x64: [MacShot-v1.2.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.1/MacShot-v1.2.1-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.1)
+- macOS Apple Silicon (arm64): [MacShot-v1.2.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-macos-arm64.zip)
+- Windows x64: [MacShot-v1.2.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.2.2/MacShot-v1.2.2-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.2.2)
 
-On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app is ad hoc signed and not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. macOS 14 or later on Apple Silicon is supported.
+On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app uses an Apple Development signature and is not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. After updating from an ad hoc signed version, if screen recording is not allowed, toggle MacShot off and on once in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart it. macOS 14 or later on Apple Silicon is supported.
 
 On Windows, unzip the package and run `MacShot.exe`. Required Windows runtime DLLs are included. MP4 recording captures the default playback device and default microphone; allow desktop apps to use the microphone in Windows privacy settings if needed.
 
