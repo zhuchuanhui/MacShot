@@ -3708,6 +3708,43 @@ fn window_choice_label(window: &WindowChoice) -> String {
     }
 }
 
+fn window_search_matches(window: &WindowChoice, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty()
+        || window.app_name.to_lowercase().contains(&query)
+        || window.title.to_lowercase().contains(&query)
+    {
+        return true;
+    }
+
+    let identity = format!("{} {}", window.app_name, window.title).to_lowercase();
+    [
+        (
+            &["notepad", "notepad.exe"][..],
+            &["メモ帳", "记事本", "記事本"][..],
+        ),
+        (
+            &["calculator", "calculatorapp.exe", "calc.exe"][..],
+            &["計算機", "電卓", "计算器", "計算器"][..],
+        ),
+        (
+            &["explorer.exe", "file explorer"][..],
+            &["エクスプローラー", "文件资源管理器", "檔案總管"][..],
+        ),
+    ]
+    .iter()
+    .any(|(english_names, localized_names)| {
+        english_names.iter().any(|name| identity.contains(name))
+            && localized_names
+                .iter()
+                .any(|localized_name| localized_name.contains(&query))
+    })
+}
+
+fn has_annotation_drag_distance(start: egui::Pos2, end: egui::Pos2) -> bool {
+    start.distance(end) >= 0.002
+}
+
 fn show_window_choice(ui: &mut egui::Ui, target: &mut CaptureTarget, window: &WindowChoice) {
     let selected = *target == CaptureTarget::Window(window.id);
     let description = format!(
@@ -5883,25 +5920,62 @@ fn microphone_permission_failure_message(error: &str, denied: bool) -> Option<St
 
 #[cfg(not(target_os = "macos"))]
 fn find_active_window() -> Result<Window, String> {
-    let windows = Window::all().map_err(|error| error.to_string())?;
-    let is_candidate = |window: &Window| is_captureable_window(window);
-
-    let focused_index = windows
-        .iter()
-        .position(|window| is_candidate(window) && window.is_focused().unwrap_or(false));
-
-    // On macOS, xcap returns windows in Core Graphics' front-to-back order.
-    // The app window has already been hidden before capture, but macOS can still
-    // report MacShot as the active application while focus is being transferred.
-    #[cfg(target_os = "macos")]
-    let active_index = focused_index.or_else(|| windows.iter().position(is_candidate));
-
     #[cfg(not(target_os = "macos"))]
-    let active_index = focused_index;
+    {
+        let is_candidate = |window: &Window| is_captureable_window(window);
 
-    active_index
-        .and_then(|index| windows.into_iter().nth(index))
-        .ok_or_else(|| "アクティブウィンドウが見つかりません。".to_string())
+        #[cfg(target_os = "windows")]
+        {
+            for _ in 0..10 {
+                let windows = Window::all().map_err(|error| error.to_string())?;
+                let focused_index = windows.iter().position(|window| {
+                    is_candidate(window) && window.is_focused().unwrap_or(false)
+                });
+                let foreground_pid = foreground_window_process_id();
+                let foreground_process_index = foreground_pid.and_then(|pid| {
+                    windows
+                        .iter()
+                        .position(|window| is_candidate(window) && window.pid().ok() == Some(pid))
+                });
+                if let Some(index) = focused_index.or(foreground_process_index) {
+                    return windows
+                        .into_iter()
+                        .nth(index)
+                        .ok_or_else(|| "アクティブウィンドウが見つかりません。".to_string());
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            return Err("アクティブウィンドウが見つかりません。".to_string());
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let windows = Window::all().map_err(|error| error.to_string())?;
+            let focused_index = windows
+                .iter()
+                .position(|window| is_candidate(window) && window.is_focused().unwrap_or(false));
+            return focused_index
+                .and_then(|index| windows.into_iter().nth(index))
+                .ok_or_else(|| "アクティブウィンドウが見つかりません。".to_string());
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn foreground_window_process_id() -> Option<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut process_id = 0;
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+        (process_id != 0).then_some(process_id)
+    }
 }
 
 struct DisplayCapture {
@@ -6603,6 +6677,16 @@ fn normalized_region_bounds(
         (selection.right() - screen.left()) / screen.width(),
         (selection.bottom() - screen.top()) / screen.height(),
     ])
+}
+
+fn retained_continuous_region(
+    continuous_capture: bool,
+    keep_region: bool,
+    region: Option<[f32; 4]>,
+) -> Option<[f32; 4]> {
+    (continuous_capture && keep_region)
+        .then_some(region)
+        .flatten()
 }
 
 fn update_region_drag_state(
@@ -7962,11 +8046,12 @@ impl MacShot {
             if event.id == self.capture_hotkey.id() {
                 if self.recording || self.recording_starting {
                     self.status = "録画を終了してからスクリーンショットを撮影してください。".into();
+                } else if self.continuous_capture {
+                    // Keep repeated captures immediate; reopening the mode picker
+                    // would discard the remembered region and make users redraw it.
+                    self.begin_capture(ctx);
                 } else if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
                     self.open_capture_target_picker(ctx);
-                } else if self.continuous_capture {
-                    // Keep the capture hotkey immediate during continuous runs.
-                    self.begin_capture(ctx);
                 } else {
                     self.begin_capture(ctx);
                 }
@@ -9327,15 +9412,19 @@ impl MacShot {
     }
 
     fn begin_capture(&mut self, ctx: &egui::Context) {
-        // A saved region is normalized against the primary display. Applying
-        // it to an active or explicitly selected window crops that window at
-        // unrelated coordinates and makes a window capture look like a region
-        // capture. Reuse the region only while the primary display is selected.
-        let region = (self.capture_target == CaptureTarget::PrimaryDisplay
-            && self.continuous_capture
-            && self.keep_region_in_continuous)
-            .then_some(self.continuous_region)
-            .flatten();
+        // A retained range belongs to the continuous-capture session and is
+        // always measured against the primary display, even if the regular
+        // screenshot target changed before the session began.
+        let retained_region = retained_continuous_region(
+            self.continuous_capture,
+            self.keep_region_in_continuous,
+            self.continuous_region,
+        );
+        if let Some(region) = retained_region {
+            self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(region));
+            return;
+        }
+        let region = None;
         self.begin_capture_for(ctx, self.capture_target, region);
     }
 
@@ -10491,7 +10580,21 @@ impl MacShot {
                 });
             }
             if response.drag_stopped() {
-                if let Some(annotation) = self.live_annotation.take() {
+                let final_pointer = response
+                    .interact_pointer_pos()
+                    .or_else(|| response.hover_pos());
+                let annotation = self.live_annotation.take().or_else(|| {
+                    let start = self.crop_drag_start.take()?;
+                    let pointer = final_pointer?;
+                    let end = to_normalized(pointer);
+                    has_annotation_drag_distance(start, end).then(|| Annotation {
+                        tool: self.edit_tool,
+                        start,
+                        end,
+                        text: self.annotation_text.clone(),
+                    })
+                });
+                if let Some(annotation) = annotation {
                     self.annotations.push(annotation);
                 }
                 self.crop_drag_start = None;
@@ -11147,11 +11250,7 @@ impl MacShot {
                                     let windows: Vec<_> = self
                                         .windows
                                         .iter()
-                                        .filter(|window| {
-                                            query.is_empty()
-                                                || window.app_name.to_lowercase().contains(&query)
-                                                || window.title.to_lowercase().contains(&query)
-                                        })
+                                        .filter(|window| window_search_matches(window, &query))
                                         .cloned()
                                         .collect();
                                     if windows.is_empty() {
@@ -13414,11 +13513,7 @@ impl MacShot {
                         let windows: Vec<_> = self
                             .windows
                             .iter()
-                            .filter(|window| {
-                                query.is_empty()
-                                    || window.app_name.to_lowercase().contains(&query)
-                                    || window.title.to_lowercase().contains(&query)
-                            })
+                            .filter(|window| window_search_matches(window, &query))
                             .cloned()
                             .collect();
                         if windows.is_empty() {
@@ -15180,6 +15275,40 @@ mod tests {
         assert!(!has_captureable_window_size(1512, 33));
         assert!(!has_captureable_window_size(66, 20));
         assert!(has_captureable_window_size(708, 464));
+    }
+
+    #[test]
+    fn localized_window_search_matches_common_windows_apps() {
+        let notepad = WindowChoice {
+            id: 1,
+            app_name: "Notepad.exe".into(),
+            title: "Untitled".into(),
+            width: 800,
+            height: 600,
+        };
+        assert!(window_search_matches(&notepad, "メモ帳"));
+        assert!(window_search_matches(&notepad, "notepad"));
+        assert!(!window_search_matches(&notepad, "電卓"));
+    }
+
+    #[test]
+    fn annotation_drag_requires_a_visible_distance() {
+        assert!(!has_annotation_drag_distance(
+            egui::pos2(0.2, 0.2),
+            egui::pos2(0.201, 0.2)
+        ));
+        assert!(has_annotation_drag_distance(
+            egui::pos2(0.2, 0.2),
+            egui::pos2(0.205, 0.2)
+        ));
+    }
+
+    #[test]
+    fn continuous_capture_reuses_only_an_enabled_saved_region() {
+        let region = Some([0.1, 0.2, 0.6, 0.7]);
+        assert_eq!(retained_continuous_region(true, true, region), region);
+        assert_eq!(retained_continuous_region(true, false, region), None);
+        assert_eq!(retained_continuous_region(false, true, region), None);
     }
 
     #[test]

@@ -1,9 +1,17 @@
 # Project Status
 
+## v1.4.2 Release candidate — 2026-11-01
+
+- 最新公開版はv1.4.1です。Windows実機報告を受け、前面ウィンドウ検出にプロセス照合と短時間の再試行、一般的なアプリ名の多言語検索、連続撮影時の範囲維持、ポインター解放を取りこぼした場合の注釈確定補完を加えました。互換性を保つ不具合修正のため、次版をv1.4.2とします。
+- Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.2-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.2`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build. It is not notarized.
+- Prepared `output/release/MacShot-v1.4.2-macos-arm64.zip` (SHA-256 `d8b608c0e74ae9814a8e669b1cd46c95fde3d2d3d5b645141336cfd44a010a45`) and `output/release/MacShot-v1.4.2-windows-x64.zip` (SHA-256 `e71ff1b6c414eb8b4915da626a23ab50d787b952eb9bab73f36e3e59b8995376`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive contains a PE32+ x86-64 GUI executable, required runtime DLLs, and notices.
+- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 112-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. The reported Windows workflows have not yet been rechecked on a Windows device.
+- Publication details will be recorded after upload verification.
+
 ## v1.4.1 Release — 2026-11-01
 
-- Latest GitHub Release is v1.4.0. The current Windows fixes enable xcap's Windows Graphics Capture path, preserve untitled windows in the choice list using their app names, and allow active-window selection when a title is unavailable. This is a patch release, v1.4.1.
-- v1.4.0のWindows実機報告では全画面・範囲撮影・未保存注釈の移動保護は成功し、アクティブ撮影失敗、メモ帳が一覧に出ない、選択ウィンドウが黒画像になる問題がありました。今回の修正がそれらを解消するかはWindows実機で未確認です。
+- GitHub Release v1.4.1 is published. It enables xcap's Windows Graphics Capture path, keeps untitled windows in the choice list using their app names, and allows active-window selection when a title is unavailable.
+- v1.4.1のWindows実機確認では全画面撮影と背面ウィンドウ撮影が成功しました。一方、アクティブウィンドウ撮影は失敗し、メモ帳は日本語検索で見つからず、連続撮影の範囲維持と注釈編集も確認できませんでした。次のローカル確認用ビルドに追加修正を記録しています。
 - Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.1-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.1`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build.
 - Prepared `output/release/MacShot-v1.4.1-macos-arm64.zip` (SHA-256 `6442491f7c1eacfca4228d6595fa8b98fd4a53b56b8d59b792b33db66b8859f6`) and `output/release/MacShot-v1.4.1-windows-x64.zip` (SHA-256 `f882731aa56d7ceaf0f8f5e3015db5c87c2a985908a8fd80d7804533cc3d41a2`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive is PE32+ GUI x86-64 and includes required runtime DLLs and notices.
 - `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 109-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. Windows physical runtime remains unverified.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.2 — 2026-11-01
+
+- Improved Windows foreground-window detection with process matching and retries, localized search aliases for common apps, continuous capture of a retained region, and annotation completion when pointer-release events are missed.
+
 ## 1.4.1 — 2026-11-01
 
 - Improved Windows window capture by enabling Windows Graphics Capture, retaining untitled windows with their app names in the choice list, and allowing active-window selection when the title is unavailable.

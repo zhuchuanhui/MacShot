@@ -1,4 +1,4 @@
-# MacShot 1.4.1
+# MacShot 1.4.2
 
 [English](README.en.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShotは、スクリーンショットの撮影・編集・比較と、GIF／M
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v1.4.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.1/MacShot-v1.4.1-macos-arm64.zip)
-- Windows x64: [MacShot-v1.4.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.1/MacShot-v1.4.1-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.1)
+- macOS Apple Silicon (arm64): [MacShot-v1.4.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.2/MacShot-v1.4.2-macos-arm64.zip)
+- Windows x64: [MacShot-v1.4.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.2/MacShot-v1.4.2-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.2)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Apple Development署名を使用し、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。Ad Hoc署名版から更新した後、画面収録が許可されない場合は、システム設定の「画面収録とシステムオーディオ録音」でMacShotを一度オフ／オンにして再起動してください。macOS 14以降のApple Siliconに対応します。
