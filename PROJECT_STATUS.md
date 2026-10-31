@@ -1,11 +1,12 @@
 # Project Status
 
-## v1.4.0 Release candidate — 2026-11-01
+## v1.4.0 Release — 2026-11-01
 
 - Latest GitHub Release is v1.3.0. The completed changes recorded below add annotation tools and timestamp controls, expanded editing and overwrite-save workflows, safer navigation with unsaved edits, and capture-target/queue correctness fixes. The next version is v1.4.0 (minor feature release).
 - Built macOS arm64 and Windows x64 GNU from this source. The completed app is `output/release/MacShot-v1.4.0-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.0`, arm64; it uses Apple Development signing and is not notarized. Privacy descriptions, audio-input entitlement, and deep/strict signature validation pass, and the app executable UUID matches the macOS release build.
 - Prepared `output/release/MacShot-v1.4.0-macos-arm64.zip` (SHA-256 `1801be4273067999039d7212f4c632d3ba8ba2f9dbfe2d3ed20d3576fc012744`) and `output/release/MacShot-v1.4.0-windows-x64.zip` (SHA-256 `4c4ad171cf6656798a0f2aa8527d57c9b75427a60867b5579ada2e4be3aa2601`). Both ZIP integrity and local checksum checks pass. The macOS ZIP contains no AppleDouble or Finder metadata entries. The Windows executable is PE32+ GUI x86-64 and its package includes its required MinGW runtime DLLs and notices.
-- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 108-test suite passed during the latest feature work and was not rerun during this packaging pass. Windows physical runtime and the capture paths listed above remain unverified. Publication details will be recorded after upload verification.
+- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 108-test suite passed during the latest feature work and was not rerun during this packaging pass. Windows physical runtime and the capture paths listed above remain unverified.
+- Published as [GitHub Release v1.4.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.0), tagged at source commit `7e69614a2e760fe9b5fd8a0d4343043b883c492c` (`feat(editor): expand screenshot annotation workflow`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all four assets; both ZIP hashes matched the sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## 証跡編集時の移動保護と撮影順序を改善 — 2026-11-01
 
