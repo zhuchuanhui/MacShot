@@ -1,12 +1,13 @@
 # Project Status
 
-## v1.4.1 Release candidate — 2026-11-01
+## v1.4.1 Release — 2026-11-01
 
 - Latest GitHub Release is v1.4.0. The current Windows fixes enable xcap's Windows Graphics Capture path, preserve untitled windows in the choice list using their app names, and allow active-window selection when a title is unavailable. This is a patch release, v1.4.1.
 - v1.4.0のWindows実機報告では全画面・範囲撮影・未保存注釈の移動保護は成功し、アクティブ撮影失敗、メモ帳が一覧に出ない、選択ウィンドウが黒画像になる問題がありました。今回の修正がそれらを解消するかはWindows実機で未確認です。
 - Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.1-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.1`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build.
 - Prepared `output/release/MacShot-v1.4.1-macos-arm64.zip` (SHA-256 `6442491f7c1eacfca4228d6595fa8b98fd4a53b56b8d59b792b33db66b8859f6`) and `output/release/MacShot-v1.4.1-windows-x64.zip` (SHA-256 `f882731aa56d7ceaf0f8f5e3015db5c87c2a985908a8fd80d7804533cc3d41a2`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive is PE32+ GUI x86-64 and includes required runtime DLLs and notices.
-- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 109-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. Windows physical runtime remains unverified. Publication details will be recorded after upload verification.
+- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 109-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. Windows physical runtime remains unverified.
+- Published as [GitHub Release v1.4.1](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.1), tagged at source commit `205c75fd6a06cf01edadee50946563954b6e389f` (`fix(windows): improve window capture reliability`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.0 Release — 2026-11-01
 
