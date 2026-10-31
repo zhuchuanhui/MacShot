@@ -3666,11 +3666,17 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
             .into_iter()
             .filter_map(|window| {
                 let id = window.id().ok()?;
-                let title = window.title().ok()?;
-                let app_name = window.app_name().unwrap_or_else(|_| "Window".to_owned());
+                let app_name = window
+                    .app_name()
+                    .ok()
+                    .map(|name| name.trim().to_owned())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "Window".to_owned());
+                let native_title = window.title().ok();
+                let title = window_title_or_app_name(native_title.as_deref(), &app_name);
                 let width = window.width().unwrap_or_default();
                 let height = window.height().unwrap_or_default();
-                if title.trim().is_empty() || !is_captureable_window(&window) {
+                if title.is_empty() || !is_captureable_window(&window) {
                     return None;
                 }
                 Some(WindowChoice {
@@ -3685,8 +3691,21 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
     }
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
+fn window_title_or_app_name(title: Option<&str>, app_name: &str) -> String {
+    title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| app_name.trim())
+        .to_owned()
+}
+
 fn window_choice_label(window: &WindowChoice) -> String {
-    format!("{} — {}", window.app_name, window.title)
+    if window.app_name.eq_ignore_ascii_case(&window.title) {
+        window.app_name.clone()
+    } else {
+        format!("{} — {}", window.app_name, window.title)
+    }
 }
 
 fn show_window_choice(ui: &mut egui::Ui, target: &mut CaptureTarget, window: &WindowChoice) {
@@ -5865,9 +5884,7 @@ fn microphone_permission_failure_message(error: &str, denied: bool) -> Option<St
 #[cfg(not(target_os = "macos"))]
 fn find_active_window() -> Result<Window, String> {
     let windows = Window::all().map_err(|error| error.to_string())?;
-    let is_candidate = |window: &Window| {
-        is_captureable_window(window) && window.title().is_ok_and(|title| !title.trim().is_empty())
-    };
+    let is_candidate = |window: &Window| is_captureable_window(window);
 
     let focused_index = windows
         .iter()
@@ -15163,6 +15180,16 @@ mod tests {
         assert!(!has_captureable_window_size(1512, 33));
         assert!(!has_captureable_window_size(66, 20));
         assert!(has_captureable_window_size(708, 464));
+    }
+
+    #[test]
+    fn untitled_windows_keep_the_application_name_as_a_choice() {
+        assert_eq!(window_title_or_app_name(None, "Notepad"), "Notepad");
+        assert_eq!(window_title_or_app_name(Some("  "), "Notepad"), "Notepad");
+        assert_eq!(
+            window_title_or_app_name(Some(" Untitled - Notepad "), "Notepad"),
+            "Untitled - Notepad"
+        );
     }
 
     #[cfg(target_os = "macos")]

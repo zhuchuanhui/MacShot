@@ -1,8 +1,16 @@
 # Project Status
 
+## v1.4.1 Release candidate — 2026-11-01
+
+- Latest GitHub Release is v1.4.0. The current Windows fixes enable xcap's Windows Graphics Capture path, preserve untitled windows in the choice list using their app names, and allow active-window selection when a title is unavailable. This is a patch release, v1.4.1.
+- v1.4.0のWindows実機報告では全画面・範囲撮影・未保存注釈の移動保護は成功し、アクティブ撮影失敗、メモ帳が一覧に出ない、選択ウィンドウが黒画像になる問題がありました。今回の修正がそれらを解消するかはWindows実機で未確認です。
+- Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.1-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.1`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build.
+- Prepared `output/release/MacShot-v1.4.1-macos-arm64.zip` (SHA-256 `6442491f7c1eacfca4228d6595fa8b98fd4a53b56b8d59b792b33db66b8859f6`) and `output/release/MacShot-v1.4.1-windows-x64.zip` (SHA-256 `f882731aa56d7ceaf0f8f5e3015db5c87c2a985908a8fd80d7804533cc3d41a2`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive is PE32+ GUI x86-64 and includes required runtime DLLs and notices.
+- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 109-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. Windows physical runtime remains unverified. Publication details will be recorded after upload verification.
+
 ## v1.4.0 Release — 2026-11-01
 
-- Latest GitHub Release is v1.3.0. The completed changes recorded below add annotation tools and timestamp controls, expanded editing and overwrite-save workflows, safer navigation with unsaved edits, and capture-target/queue correctness fixes. The next version is v1.4.0 (minor feature release).
+- GitHub Release v1.4.0 is published. The completed changes recorded below add annotation tools and timestamp controls, expanded editing and overwrite-save workflows, safer navigation with unsaved edits, and capture-target/queue correctness fixes.
 - Built macOS arm64 and Windows x64 GNU from this source. The completed app is `output/release/MacShot-v1.4.0-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.0`, arm64; it uses Apple Development signing and is not notarized. Privacy descriptions, audio-input entitlement, and deep/strict signature validation pass, and the app executable UUID matches the macOS release build.
 - Prepared `output/release/MacShot-v1.4.0-macos-arm64.zip` (SHA-256 `1801be4273067999039d7212f4c632d3ba8ba2f9dbfe2d3ed20d3576fc012744`) and `output/release/MacShot-v1.4.0-windows-x64.zip` (SHA-256 `4c4ad171cf6656798a0f2aa8527d57c9b75427a60867b5579ada2e4be3aa2601`). Both ZIP integrity and local checksum checks pass. The macOS ZIP contains no AppleDouble or Finder metadata entries. The Windows executable is PE32+ GUI x86-64 and its package includes its required MinGW runtime DLLs and notices.
 - `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 108-test suite passed during the latest feature work and was not rerun during this packaging pass. Windows physical runtime and the capture paths listed above remain unverified.

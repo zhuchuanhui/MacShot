@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1 — 2026-11-01
+
+- Improved Windows window capture by enabling Windows Graphics Capture, retaining untitled windows with their app names in the choice list, and allowing active-window selection when the title is unavailable.
+
 ## 1.4.0 — 2026-11-01
 
 - Added ellipse, text, mosaic, and capture-time annotations, with an image-backed mosaic preview and configurable timestamp formats, placement, and background.
