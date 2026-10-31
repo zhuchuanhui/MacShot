@@ -1,4 +1,4 @@
-# MacShot 1.3.0
+# MacShot 1.4.0
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,9 +6,9 @@ MacShot captures, edits, and compares screenshots, and records the screen as GIF
 
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.3.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-macos-arm64.zip)
-- Windows x64: [MacShot-v1.3.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.3.0)
+- macOS Apple Silicon (arm64): [MacShot-v1.4.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.0/MacShot-v1.4.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.4.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.0/MacShot-v1.4.0-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.0)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app uses an Apple Development signature and is not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. After updating from an ad hoc signed version, if screen recording is not allowed, toggle MacShot off and on once in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart it. macOS 14 or later on Apple Silicon is supported.
 
@@ -36,7 +36,7 @@ Choose GIF or MP4 (H.264), resolution, and quality in Settings. Press **Record**
 
 ### Edit and compare
 
-In Evidence, use the edit queue to add rectangles, arrows, or a crop. Edits save as new PNG files, leaving the source image intact. **Compare** supports side-by-side, overlay, and pixel-difference views for two PNG or JPEG images.
+In Evidence, use the edit queue to add rectangles, ellipses, arrows, text, mosaic pixelation, timestamps, or a crop. Preview mosaic edits before saving. Save annotated PNGs as a copy or overwrite an existing PNG after confirmation. If you navigate away with unsaved edits, choose to save, discard, or continue editing. **Compare** supports side-by-side, overlay, and pixel-difference views for two PNG or JPEG images.
 
 ## macOS permissions
 

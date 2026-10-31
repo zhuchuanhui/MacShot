@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0 — 2026-11-01
+
+- Added ellipse, text, mosaic, and capture-time annotations, with an image-backed mosaic preview and configurable timestamp formats, placement, and background.
+- Added expanded image editing, safe navigation with unsaved edits, confirmed in-place PNG annotation saves, and capture-queue fixes that keep targets, regions, and timestamps aligned.
+- Improved active-window targeting to avoid saving a different window when the selected target cannot be identified.
+
 ## 1.0.0 — 2026-10-28
 
 - Set the project version to the first stable `1.0.0` release number. The feature set is the one published in v0.11.0.

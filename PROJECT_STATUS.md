@@ -1,5 +1,80 @@
 # Project Status
 
+## v1.4.0 Release candidate — 2026-11-01
+
+- Latest GitHub Release is v1.3.0. The completed changes recorded below add annotation tools and timestamp controls, expanded editing and overwrite-save workflows, safer navigation with unsaved edits, and capture-target/queue correctness fixes. The next version is v1.4.0 (minor feature release).
+- Built macOS arm64 and Windows x64 GNU from this source. The completed app is `output/release/MacShot-v1.4.0-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.0`, arm64; it uses Apple Development signing and is not notarized. Privacy descriptions, audio-input entitlement, and deep/strict signature validation pass, and the app executable UUID matches the macOS release build.
+- Prepared `output/release/MacShot-v1.4.0-macos-arm64.zip` (SHA-256 `1801be4273067999039d7212f4c632d3ba8ba2f9dbfe2d3ed20d3576fc012744`) and `output/release/MacShot-v1.4.0-windows-x64.zip` (SHA-256 `4c4ad171cf6656798a0f2aa8527d57c9b75427a60867b5579ada2e4be3aa2601`). Both ZIP integrity and local checksum checks pass. The macOS ZIP contains no AppleDouble or Finder metadata entries. The Windows executable is PE32+ GUI x86-64 and its package includes its required MinGW runtime DLLs and notices.
+- `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 108-test suite passed during the latest feature work and was not rerun during this packaging pass. Windows physical runtime and the capture paths listed above remain unverified. Publication details will be recorded after upload verification.
+
+## 証跡編集時の移動保護と撮影順序を改善 — 2026-11-01
+
+- 注釈や切り抜きが未保存のまま前後の証跡へ移動するとき、保存して移動・破棄して移動・編集を続ける、の選択を表示します。既存の「保存して次へ」は一操作のままです。未保存編集がある間は新しい撮影や範囲選択を止め、編集中の内容が消える事故を防ぎます。
+- 連続撮影キューは撮影対象と選択範囲を一緒に保持するようにし、待ち行列の撮影でも選択範囲がずれないようにしました。撮影日時とファイル名時刻は、範囲や対象ウィンドウの選択待ちが終わった実際の撮影時点に記録します。
+- アクティブウィンドウを特定できないとき、別アプリのウィンドウを誤って撮影するフォールバックを廃止しました。対象が合わない場合は保存せずエラーを表示します。計算機を明示選択した撮影では460×816 pxの保存を確認しました。自動操作環境ではフォーカス移行の影響でアクティブウィンドウを特定できず、誤撮影せず失敗することを確認しました。通常の前面ウィンドウでのアクティブ撮影成功、メニューバー経由、Windows実機は未確認です。
+- `cargo fmt --all`、`cargo test --all-targets`（108件成功）、Windows x64 GNU向け`cargo check --all-targets`、`cargo build --release`、`git diff --check`、macOSバンドル署名・UUID一致の検証が成功しました。最新版を `/Applications/MacShot.app` に反映して起動しました。確認用バンドルは `output/review-screenshot-logic-final-20261101/MacShot.app`、復旧用バックアップは `output/backups/MacShot-installed-before-screenshot-logic-final-20261101.app` です。公開・commit・pushはしていません。
+
+## 注釈画像の上書き保存を追加 — 2026-11-01
+
+- 注釈付きの画像を、別名コピーに加えて現在のPNGファイルへ上書き保存できるようにしました。確認画面で対象ファイル名を示してから保存し、注釈プレビューと一覧順は維持します。保存は一時ファイル経由で行い、Windowsでは置き換えに失敗した場合に元画像を戻します。PNG以外は上書きボタンを無効にし、別名保存を利用します。
+- `cargo fmt --all`、macOS / Windows x64 GNU の `cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。最新版を `/Applications/MacShot.app` に反映して起動し、release実行ファイルとのUUID一致を確認しました。画面収録UIでボタンを表示する操作確認とWindows実機は未確認です。確認用バンドルは `output/review-overwrite-save-20261101/MacShot.app`、復旧用バックアップは `output/backups/MacShot-installed-before-overwrite-save-20261101.app` と `output/backups/MacShot-app-before-overwrite-save-20261101.app` です。公開・commit・pushはしていません。
+
+## モザイク注釈のプレビューを修正 — 2026-11-01
+
+- 編集中のモザイク範囲が灰色で覆われるだけで、実際のぼかし結果を確認できない表示を修正しました。選択中・配置済みの範囲を画像上でそのままピクセル化して確認できます。ブロックを大きくして効果を見分けやすくし、プレビューと保存画像で同じ処理を使います。モザイク範囲の赤枠も外し、モザイクだけが表示されます。
+- `cargo fmt --all`、macOS / Windows x64 GNU の `cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。最新版を `/Applications/MacShot.app` に反映して起動し、計算機の確認用画像で範囲をドラッグ、編集中のモザイク表示、注釈画像への保存を確認しました。保存画像が元画像と異なることも確認しています。Windows実機は未確認です。復旧用バックアップは `output/backups/MacShot-installed-before-mosaic-preview-20261101.app`、確認用バンドルは `output/review-mosaic-preview-20261101/MacShot.app` です。公開・commit・pushはしていません。
+
+## アクティブウィンドウ撮影のフォーカス移行に対応 — 2026-11-01
+
+- MacShotを隠した直後にmacOSが前面アプリ情報を更新していない場合、アクティブプロセスの一致だけで撮影対象を探して失敗していました。前面アプリの候補を優先し、見つからないときはMacShot自身を除いた最前面の撮影可能ウィンドウへフォールバックします。ショートカット・メニューバー・メイン画面の撮影処理で共有する検出経路です。
+- `cargo fmt --all`、macOSとWindows x64 GNUの`cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。最新版を起動し、計算機を対象にメイン画面のアクティブウィンドウ撮影を実行して成功、460×816 pxの画像が保存されることを確認しました。ショートカットとメニューバーからの個別操作、Windows実機は未確認です。撮影確認画像は `/Users/d/Pictures/MacShot/evidence-20261101-010346-580-001.png` です。復旧用バックアップは `output/backups/MacShot-installed-before-active-window-fallback-20261101.app`、確認用バンドルは `output/review-active-window-fallback-20261101/MacShot.app` です。公開・commit・pushはしていません。
+
+## 撮影時刻の注釈と背景の透過合成 — 2026-11-01
+
+- 編集ツールに「撮影時刻」を追加しました。証跡ファイル名から撮影時刻を読み取り、現在選択中の日時形式で画像上にクリック配置します。
+- 撮影時の日時焼き込み背景を黒の不透明置換から、元画像と合成する薄い背景に変更しました。背景なし・薄い背景・濃い背景を選べ、同じ設定を撮影時刻注釈にも使います。
+- `cargo fmt --all`、macOSとWindows x64 GNUの`cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。最新版を `/Applications/MacShot.app` に反映・起動し、撮影時刻ツールと背景3種を画面で確認しました。実画像への撮影時刻配置・保存とWindows実機は未確認です。復旧用バックアップは `output/backups/MacShot-installed-before-timestamp-annotation-fix-20261101.app`、確認用バンドルは `output/review-timestamp-annotation-20261101/MacShot.app` です。公開・commit・pushはしていません。
+
+## 注釈ツールとタイムスタンプ表示を追加 — 2026-11-01
+
+- 注釈に楕円・テキスト・モザイクを追加しました。テキストは編集画面で内容を入力してクリック配置でき、赤枠・楕円・矢印・テキスト・モザイクを画像へ書き出します。通常編集と拡大編集の両方で選べます。
+- 撮影日時の焼き込み形式を日時・日付・時刻・ミリ秒付き日時・日本語日時から選択でき、表示位置も四隅から選べます。設定は保存され、既存のファイル名・履歴時刻は変更しません。
+- `cargo fmt --all`、`cargo check --all-targets`、Windows x64 GNU向け`cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。最新版を `/Applications/MacShot.app` に反映して起動し、設定画面の形式5種・位置4種、撮影画面の注釈6種とテキスト入力欄を確認しました。実画像への描画・保存、撮影画像への日時焼き込み、Windows実機は未確認です。復旧用バックアップは `output/backups/MacShot-installed-before-annotations-timestamps-20261101.app`、確認用バンドルは `output/review-annotations-timestamps-20261101/MacShot.app` です。公開・commit・pushはしていません。
+
+## 撮影プレビューをクリックして拡大編集 — 2026-11-01
+
+- 撮影画面・証跡一覧から開いた画像プレビューをクリックすると、画像サイズとファイル名を表示するリサイズ可能な編集ウィンドウを開きます。拡大画面でも切り抜き・赤枠・矢印を操作でき、切り抜き保存／注釈画像保存を行えます。注釈・切り抜き状態はメイン画面と共有します。
+- `cargo fmt --all`、`cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。`/Applications/MacShot.app` を更新・再起動し、保存済み1497×855画像のクリックで拡大画面が開き、元画像サイズ・切り抜き／赤枠／矢印操作が表示されることを確認しました。矢印を実際に追加してから消去し、元画像を変更せず戻せることも確認しました。編集画像の保存、Windows実機は未確認です。復旧用バックアップは `output/backups/MacShot-installed-before-image-click-editor-20261101.app`、確認用バンドルは `output/review-image-click-editor-20261101/MacShot.app` です。公開・commit・pushはしていません。
+
+## 撮影ショートカットの優先方式を切り替え — 2026-11-01
+
+- 撮影ショートカットの動作を「撮影対象選択を優先」と「各モード優先」から選べるようにしました。前者は選択済みのWeChatなどをすぐ撮影し、後者はショートカットから撮影方法選択ウィンドウを開きます。設定は保存され、メイン画面とメニューバーの両方から切り替えられます。メニューバーのショートカット項目名も選択方式に連動します。
+- 「ウィンドウを選んで撮影…」は独立したマウス選択機能のままです。ショートカット表示は選択方式に従う項目だけに表示します。
+- `cargo fmt --all`、`cargo check --all-targets`、`cargo build --release`、`git diff --check`、署名済みバンドル検証が成功しました。`/Applications/MacShot.app` を更新・再起動し、実行ファイルUUIDがrelease成果物と一致すること、メイン画面に両方式が表示されること、WeChatが撮影対象として表示されることを確認しました。モード選択への切り替えと設定ファイルへの保存を確認後、ユーザーの初期設定に合わせて「撮影対象選択を優先」に戻しました。実画像の撮影、メニューバー上の切り替え操作、Windows実機は未確認です。公開・commit・pushはしていません。
+
+## 範囲選択キャンセルとマウスで選ぶウィンドウ撮影 — 2026-10-31
+
+- 範囲選択用の全画面ウィンドウに初期フォーカスを与え、Escで閉じる経路を保ちました。画面右上の「Esc キャンセル」でも中止できます。
+- 「ウィンドウを選んで撮影…」はmacOSのインタラクティブなウィンドウ撮影を開始します。ウィンドウ上にポインターを置いてクリックすると、そのウィンドウ全体を撮影し、通常の連番・タイムスタンプ・保存先・編集プレビューに流します。選択待ちは最大120秒です。Escで選択を中止します。「この対象を撮影」は従来どおり現在の撮影対象を即時撮影します。
+- `cargo fmt --all`、`cargo check --all-targets`、`cargo build --release`、`git diff --check` が成功しました。署名済みバンドルを `/Applications/MacShot.app` と `output/review-window-picker-20261031/MacShot.app` に反映し、プライバシー説明・deep/strict署名・実行ファイルUUID一致を確認しました。起動UIに新しいボタンを確認し、範囲選択はEscでキャンセルしてMacShotへ戻りました。ウィンドウ選択UIの起動とキャンセル状態の復帰も確認しましたが、選択クリックによる実画像保存は未確認です。Windows実機のマウス選択動作も未確認です。公開・commit・pushはしていません。
+
+## アクティブウィンドウ撮影で範囲が混入する不具合 — 2026-10-30
+
+- 連続撮影で記憶した範囲はメイン画面基準ですが、撮影対象をアクティブウィンドウに変えてもその範囲で切り抜かれる経路がありました。範囲の再利用をメイン画面撮影に限定し、アクティブ／指定ウィンドウ撮影ではウィンドウ全体を保持します。
+- `cargo fmt --all -- --check`、`cargo check --all-targets`、macOS `cargo build --release`、`git diff --check` が成功しました。v1.3.0の同じApple Development署名で `/Applications/MacShot.app` を更新し、バンドルと署名を検証しました。実行ファイルUUIDは現行ビルドと一致します。
+- 起動中のアプリで撮影対象が「アクティブウィンドウ」と表示され、撮影完了状態になることを確認しました。実際の画像内容を開いて確認するテスト、Windows実機確認、テストスイートは今回未実施です。公開・commit・pushはしていません。
+
+## マウスで選ぶウィンドウ撮影とショートカット — 2026-10-30
+
+- 「アクティブウィンドウ」と区別した「選択ウィンドウを撮影…」ボタンを撮影対象の横に追加しました。macOSではクリックすると標準のスクリーンショットツールバーを開き、ウィンドウモードでマウスを使って対象を選べます。ショートカット Option+Shift+S も、通常時はこの選択UIを開きます。連続撮影中は従来どおり即時撮影します。
+- 選択した撮影対象を撮る専用の「この対象を撮影」ボタンも追加しました。標準ツールバーから保存した撮影結果は既存設定に従いMacShotの保存先へ自動取り込みします。
+- `/Applications/MacShot.app` v1.3.0を同じApple Development署名で更新し、撮影対象欄のボタンと標準パネル起動表示を画面で確認しました。`cargo fmt --all`、`cargo check --all-targets`、`cargo build --release`、`git diff --check`、バンドルと署名検証が成功しました。Windows向けクロスチェックはRustターゲットの`core`を解決できず未完了で、Windows実機も未確認です。実際にウィンドウを選んで撮影する操作、テストスイートは未実施です。公開・commit・pushはしていません。
+
+## 撮影・録画の通知履歴 — 2026-10-30
+
+- 撮影完了小窓に表示する情報を、アプリ内の「通知履歴」画面から後で確認できるようにしました。撮影は日時・連番・画像サイズ・保存先、録画は日時・保存先・警告を記録します。通知は端末内のApplication Supportに最大200件保存し、アプリ再起動後も残ります。履歴から保存ファイルをFinder/Explorerで表示でき、画面から履歴を消去できます。既存の完了小窓表示設定は維持します。
+- `cargo fmt --all`、`cargo check --all-targets`、macOS `cargo build --release`、`git diff --check` が成功しました。確認用バンドル `output/review-notification-history-20261030/MacShot.app` を作成し、プライバシー説明・deep/strict署名・実行ファイルUUID一致を確認しました（ad hoc署名、未notarize）。アプリを起動しての新しい画面と保存・再起動動作の実機確認、Windows実機確認、テストスイートは未実施です。稼働中の `/Applications/MacShot.app` は置換していません。公開・commit・pushはしていません。
+
 ## v1.3.0 Release candidate — 2026-10-30
 
 - The next release after v1.2.2 is v1.3.0. Added a macOS Screen Recording permission request action to the Capture and Settings pages, with localized guidance in Japanese, English, Simplified Chinese, and Traditional Chinese.

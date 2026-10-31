@@ -1,4 +1,4 @@
-# MacShot 1.3.0
+# MacShot 1.4.0
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,9 +6,9 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v1.3.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-macos-arm64.zip)
-- Windows x64：[MacShot-v1.3.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.3.0/MacShot-v1.3.0-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.3.0)
+- macOS Apple Silicon（arm64）：[MacShot-v1.4.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.0/MacShot-v1.4.0-macos-arm64.zip)
+- Windows x64：[MacShot-v1.4.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.0/MacShot-v1.4.0-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.0)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用使用 Apple Development 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。从 Ad Hoc 签名版本升级后，如果屏幕录制未获许可，请在“系统设置 > 隐私与安全性 > 屏幕与系统音频录制”中将 MacShot 关闭再开启一次，然后重新启动应用。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 
@@ -36,7 +36,7 @@ Windows：解压后运行 `MacShot.exe`。压缩包内含所需的 Windows 运�
 
 ### 编辑和比较
 
-在证据列表中使用连续编辑队列添加矩形、箭头或裁剪区域。编辑结果会另存为 PNG，不会覆盖原图。“图像比较”支持并排、叠加和像素差异视图，可比较两张 PNG 或 JPEG 图片。
+在证据列表中使用连续编辑队列添加矩形、椭圆、箭头、文字、马赛克像素化、拍摄时间或裁剪区域。马赛克可在保存前预览；拍摄时间可设置格式、位置和背景。注释图像可另存为 PNG，也可确认后覆盖现有 PNG。带有未保存编辑时切换图像，可选择保存、放弃或继续编辑。“图像比较”支持并排、叠加和像素差异视图，可比较两张 PNG 或 JPEG 图片。
 
 ## macOS 权限
 

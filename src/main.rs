@@ -4,7 +4,7 @@ use ab_glyph::{FontRef, PxScale};
 #[cfg(target_os = "macos")]
 use block2::RcBlock;
 use bytes::Bytes;
-use chrono::Local;
+use chrono::{DateTime, Local};
 #[cfg(target_os = "windows")]
 use cpal::traits::HostTrait;
 use eframe::egui;
@@ -228,10 +228,12 @@ struct MacShot {
     windows: Vec<WindowChoice>,
     window_search_query: String,
     capture_target: CaptureTarget,
+    capture_target_picker_open: bool,
+    capture_shortcut_behavior: CaptureShortcutBehavior,
     continuous_capture: bool,
     keep_region_in_continuous: bool,
     continuous_region: Option<[f32; 4]>,
-    capture_queue: VecDeque<CaptureTarget>,
+    capture_queue: VecDeque<CaptureRequest>,
     region_selecting: bool,
     region_drag_start: Option<egui::Pos2>,
     region_drag_current: Option<egui::Pos2>,
@@ -272,10 +274,14 @@ struct MacShot {
     recording_metadata_tx: Sender<RecordingMetadataResult>,
     recording_metadata_rx: Receiver<RecordingMetadataResult>,
     timestamp_enabled: bool,
+    timestamp_format: String,
+    timestamp_position: String,
+    timestamp_background: String,
     filename_prefix: String,
     show_capture_notice: bool,
     annotation_color: String,
     annotation_width: f32,
+    annotation_text: String,
     status: String,
     capture_in_progress: bool,
     active_capture_is_region: bool,
@@ -301,8 +307,11 @@ struct MacShot {
     tray_capture_active_item: Option<MenuItem>,
     tray_capture_primary_item: Option<MenuItem>,
     tray_capture_all_item: Option<MenuItem>,
+    tray_capture_current_target_item: Option<MenuItem>,
+    tray_capture_shortcut_target_item: Option<MenuItem>,
+    tray_capture_shortcut_mode_item: Option<MenuItem>,
     tray_capture_status_item: Option<MenuItem>,
-    tray_selected_capture_item: Option<MenuItem>,
+    tray_window_selection_item: Option<MenuItem>,
     tray_continuous_capture_item: Option<MenuItem>,
     tray_recording_status_item: Option<MenuItem>,
     tray_recording_action_item: Option<MenuItem>,
@@ -327,6 +336,7 @@ struct MacShot {
     saved_settings_layout: Vec<SettingsCardLayout>,
     editing_settings_layout: bool,
     capture_notice: Option<CaptureNotice>,
+    notifications: Vec<AppNotification>,
     recording_rx: Receiver<RecordingEvent>,
     recording_tx: Sender<RecordingEvent>,
     recording_stop_tx: Arc<Mutex<Option<Sender<()>>>>,
@@ -358,13 +368,18 @@ struct MacShot {
     right_texture: Option<egui::TextureHandle>,
     diff_texture: Option<egui::TextureHandle>,
     overlay_texture: Option<egui::TextureHandle>,
+    mosaic_preview_texture: Option<egui::TextureHandle>,
+    mosaic_preview_key: Option<(Vec<Annotation>, Option<PathBuf>)>,
     crop_selection: Option<egui::Rect>,
     crop_drag_start: Option<egui::Pos2>,
     edit_tool: EditTool,
+    capture_editor_expanded: bool,
+    overwrite_confirmation: bool,
     annotations: Vec<Annotation>,
     live_annotation: Option<Annotation>,
     editing_queue: Vec<PathBuf>,
     editing_index: Option<usize>,
+    pending_edit_navigation: Option<PendingEditNavigation>,
     diff_count: u64,
     compare_mode: CompareMode,
     settings_error: Option<String>,
@@ -377,6 +392,40 @@ enum CaptureTarget {
     AllDisplays,
     Display(usize),
     Window(u32),
+}
+
+#[derive(Clone, Copy)]
+struct CaptureRequest {
+    target: CaptureTarget,
+    region: Option<[f32; 4]>,
+}
+
+#[derive(Clone)]
+enum PendingEditNavigation {
+    Queue { direction: isize },
+    OpenEvidence { queue: Vec<PathBuf>, index: usize },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CaptureShortcutBehavior {
+    SelectedTarget,
+    ChooseMode,
+}
+
+impl CaptureShortcutBehavior {
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "choose_mode" => Self::ChooseMode,
+            _ => Self::SelectedTarget,
+        }
+    }
+
+    fn setting(self) -> &'static str {
+        match self {
+            Self::SelectedTarget => "selected_target",
+            Self::ChooseMode => "choose_mode",
+        }
+    }
 }
 
 fn capture_target_preflight_error(
@@ -405,14 +454,19 @@ fn capture_target_preflight_error(
 enum EditTool {
     Crop,
     Rectangle,
+    Ellipse,
     Arrow,
+    Text,
+    Timestamp,
+    Mosaic,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, PartialEq)]
 struct Annotation {
     tool: EditTool,
     start: egui::Pos2,
     end: egui::Pos2,
+    text: String,
 }
 
 struct CaptureNotice {
@@ -421,6 +475,22 @@ struct CaptureNotice {
     path: PathBuf,
     width: u32,
     height: u32,
+}
+
+#[derive(Clone)]
+struct AppNotification {
+    kind: NotificationKind,
+    timestamp: String,
+    path: PathBuf,
+    width: Option<u32>,
+    height: Option<u32>,
+    detail: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum NotificationKind {
+    Capture(u64),
+    Recording,
 }
 
 #[derive(Clone)]
@@ -436,6 +506,7 @@ struct WindowChoice {
 enum Page {
     Capture,
     Evidence,
+    Notifications,
     Compare,
     Settings,
 }
@@ -467,6 +538,44 @@ impl AppLanguage {
         let translated = match japanese {
             "撮影・編集" => ["Capture & Edit", "截图与编辑", "螢幕截圖與編輯"],
             "証跡一覧" => ["Evidence", "证据列表", "證據清單"],
+            "通知履歴" => ["Notifications", "通知历史", "通知記錄"],
+            "通知" => ["Alerts", "通知", "通知"],
+            "ここに撮影・録画の完了通知が保存されます。" => [
+                "Capture and recording completion notices will appear here.",
+                "截图和录屏完成通知会显示在这里。",
+                "截圖和錄影完成通知會顯示在這裡。",
+            ],
+            "通知履歴はこのMacShot内に最大200件保存されます。" => [
+                "Up to 200 notifications are saved locally by MacShot.",
+                "MacShot 会在本机保存最多 200 条通知。",
+                "MacShot 會在本機儲存最多 200 則通知。",
+            ],
+            "撮影しました" => ["Screenshot captured", "截图已完成", "截圖已完成"],
+            "履歴を消去" => ["Clear History", "清除历史", "清除記錄"],
+            "通知履歴を消去しました" => [
+                "Notification history cleared.",
+                "已清除通知历史。",
+                "已清除通知記錄。",
+            ],
+            "通知履歴を消去できません" => [
+                "Could not clear notification history",
+                "无法清除通知历史",
+                "無法清除通知記錄",
+            ],
+            "通知履歴を保存できません" => [
+                "Could not save notification history",
+                "无法保存通知历史",
+                "無法儲存通知記錄",
+            ],
+            "Finderで表示できません" => [
+                "Could not reveal file",
+                "无法在 Finder 中显示文件",
+                "無法在 Finder 中顯示檔案",
+            ],
+            "Finderで表示" => ["Show in Finder", "在 Finder 中显示", "在 Finder 中顯示"],
+            "ファイルが見つかりません" => {
+                ["File not found", "找不到文件", "找不到檔案"]
+            }
             "画像比較" => ["Compare", "图像比较", "圖片比較"],
             "設定" => ["Settings", "设置", "設定"],
             "録画を終了" => ["Stop Recording", "停止录制", "停止錄製"],
@@ -475,7 +584,82 @@ impl AppLanguage {
             "●  録画" => ["●  Record", "●  录制", "●  錄製"],
             "撮影中…" => ["Capturing…", "正在截图…", "正在截圖…"],
             "撮影してプレビュー" => ["Capture & Preview", "截图并预览", "截圖並預覽"],
+            "クリックして拡大・編集" => [
+                "Click to enlarge and edit",
+                "点击放大并编辑",
+                "點擊放大並編輯",
+            ],
+            "画像を拡大して編集" => {
+                ["Enlarged Image Editor", "放大图片并编辑", "放大圖片並編輯"]
+            }
             "撮影対象" => ["Capture Target", "截图目标", "截圖目標"],
+            "ショートカットの動作" => ["Shortcut Behavior", "快捷键行为", "快速鍵行為"],
+            "この対象を撮影" => ["Capture This Target", "截取此目标", "擷取此目標"],
+            "撮影対象選択を優先" => {
+                ["Prioritize Selected Target", "优先所选目标", "優先所選目標"]
+            }
+            "各モード優先" => [
+                "Choose a Capture Mode",
+                "优先选择截图模式",
+                "優先選擇截圖模式",
+            ],
+            "選択中の対象をすぐ撮影します" => [
+                "Capture the selected target immediately.",
+                "立即截取所选目标。",
+                "立即擷取所選目標。",
+            ],
+            "ショートカット後に撮影方法を選びます" => [
+                "Choose a capture mode after pressing the shortcut.",
+                "按下快捷键后选择截图模式。",
+                "按下快速鍵後選擇截圖模式。",
+            ],
+            "撮影方法を選んで撮影…" => {
+                ["Choose a Capture Mode…", "选择截图模式…", "選擇截圖模式…"]
+            }
+            "ウィンドウを選んで撮影…" => [
+                "Click a Window to Capture…",
+                "点选窗口并截图…",
+                "點選視窗並截圖…",
+            ],
+            "撮影するウィンドウをクリックしてください。Escでキャンセルできます。" => {
+                [
+                    "Click the window to capture. Press Esc to cancel.",
+                    "请点按要截取的窗口。按 Esc 取消。",
+                    "請點選要擷取的視窗。按 Esc 取消。",
+                ]
+            }
+            "ウィンドウ選択をキャンセルしました。" => [
+                "Window selection canceled.",
+                "已取消窗口选择。",
+                "已取消視窗選取。",
+            ],
+            "Esc  キャンセル" => ["Esc  Cancel", "Esc  取消", "Esc  取消"],
+            "撮影方法を選択" => ["Choose Capture Mode", "选择截图方式", "選擇截圖方式"],
+            "撮影対象を選んでから撮影してください" => [
+                "Choose what to capture, then take the screenshot.",
+                "选择截图目标后再进行截图。",
+                "選擇截圖目標後再進行截圖。",
+            ],
+            "ショートカットで開きました。撮影対象を選べます。" => [
+                "Opened from the shortcut. Choose what to capture.",
+                "已通过快捷键打开。请选择截图目标。",
+                "已透過快捷鍵開啟。請選擇截圖目標。",
+            ],
+            "ディスプレイ" => ["Displays", "显示器", "顯示器"],
+            "選択ウィンドウ（背面でも選択できます）" => [
+                "Select a Window (including windows behind others)",
+                "选择窗口（包括被遮挡的窗口）",
+                "選擇視窗（包含被遮住的視窗）",
+            ],
+            "選択中" => ["Selected", "已选择", "已選取"],
+            "ウィンドウ一覧を更新" => {
+                ["Refresh Window List", "刷新窗口列表", "重新整理視窗清單"]
+            }
+            "前後に関係なく、選んだウィンドウの内容を撮影します" => [
+                "Captures the selected window even when it is behind other windows.",
+                "即使窗口被其他窗口遮挡，也会截取所选窗口内容。",
+                "即使視窗被其他視窗遮住，也會擷取所選視窗內容。",
+            ],
             "アクティブウィンドウ" => ["Active Window", "活动窗口", "作用中視窗"],
             "メインディスプレイ" => ["Main Display", "主显示器", "主要顯示器"],
             "すべてのディスプレイ" => ["All Displays", "所有显示器", "所有顯示器"],
@@ -572,6 +756,22 @@ impl AppLanguage {
             "‹ 前へ" => ["‹ Previous", "‹ 上一张", "‹ 上一張"],
             "次へ ›" => ["Next ›", "下一张 ›", "下一張 ›"],
             "保存して次へ" => ["Save & Next", "保存并继续", "儲存並繼續"],
+            "未保存の編集があります" => {
+                ["Unsaved Edits", "有未保存的编辑", "有未儲存的編輯"]
+            }
+            "移動する前に、現在の注釈や切り抜きを保存しますか？" => [
+                "Save the current annotations or crop before moving?",
+                "移动前要保存当前标注或裁剪吗？",
+                "移動前要儲存目前的註記或裁切嗎？",
+            ],
+            "保存して移動" => ["Save & Move", "保存并移动", "儲存並移動"],
+            "破棄して移動" => ["Discard & Move", "放弃并移动", "捨棄並移動"],
+            "編集に戻る" => ["Keep Editing", "继续编辑", "繼續編輯"],
+            "編集内容を保存するか消去してから撮影してください。" => [
+                "Save or clear the current edits before taking another screenshot.",
+                "请先保存或清除当前编辑，再进行截图。",
+                "請先儲存或清除目前編輯，再進行截圖。",
+            ],
             "編集ツール" => ["Editing Tools", "编辑工具", "編輯工具"],
             "⌗  切り出し" => ["⌗  Crop", "⌗  裁剪", "⌗  裁切"],
             "□  赤枠" => ["□  Red Box", "□  红框", "□  紅框"],
@@ -580,6 +780,24 @@ impl AppLanguage {
             "注釈画像を別名で保存" => {
                 ["Save Annotated Copy", "另存为标注图片", "另存為註記圖片"]
             }
+            "上書き保存" => ["Overwrite", "覆盖保存", "覆寫儲存"],
+            "上書き保存の確認" => ["Confirm Overwrite", "确认覆盖", "確認覆寫"],
+            "画像ファイル" => ["Image file", "图像文件", "圖像檔案"],
+            "注釈を反映して、現在の画像ファイルを上書きします。" => [
+                "Apply the annotations and overwrite the current image file.",
+                "应用标注并覆盖当前图像文件。",
+                "套用註記並覆寫目前的圖片檔案。",
+            ],
+            "別名の画像は作成されません。上書きしますか？" => [
+                "No separate copy will be created. Overwrite this file?",
+                "不会创建副本。要覆盖此文件吗？",
+                "不會建立副本。要覆寫此檔案嗎？",
+            ],
+            "現在のPNG画像を注釈付きで上書き" => [
+                "Overwrite this PNG with the annotations",
+                "用标注覆盖此 PNG 图像",
+                "以註記覆寫此 PNG 圖片",
+            ],
             "選択解除" => ["Clear Selection", "清除选区", "清除選取範圍"],
             "切り出しを別名で保存" => {
                 ["Save Cropped Copy", "另存为裁剪图像", "另存為裁切影像"]
@@ -872,6 +1090,26 @@ impl AppLanguage {
                 "在图像中显示截图时间",
                 "在圖片中顯示截圖時間",
             ],
+            "タイムスタンプ形式" => ["Timestamp Format", "时间戳格式", "時間戳格式"],
+            "日時" => ["Date and Time", "日期和时间", "日期和時間"],
+            "日付のみ" => ["Date Only", "仅日期", "僅日期"],
+            "時刻のみ" => ["Time Only", "仅时间", "僅時間"],
+            "日時（ミリ秒）" => [
+                "Date and Time (Milliseconds)",
+                "日期和时间（毫秒）",
+                "日期和時間（毫秒）",
+            ],
+            "日本語日時" => ["Japanese Date and Time", "日文日期和时间", "日文日期和時間"],
+            "表示位置" => ["Position", "显示位置", "顯示位置"],
+            "タイムスタンプ背景" => ["Timestamp Background", "时间戳背景", "時間戳背景"],
+            "背景なし" => ["No Background", "无背景", "無背景"],
+            "薄い背景" => ["Subtle Background", "浅色背景", "淺色背景"],
+            "濃い背景" => ["Dark Background", "深色背景", "深色背景"],
+            "◷  撮影時刻" => ["◷  Capture Time", "◷  截图时间", "◷  截圖時間"],
+            "左上" => ["Top Left", "左上", "左上"],
+            "右上" => ["Top Right", "右上", "右上"],
+            "左下" => ["Bottom Left", "左下", "左下"],
+            "右下" => ["Bottom Right", "右下", "右下"],
             "撮影後に完了小窓を表示" => [
                 "Show Completion Notice After Capture",
                 "截图后显示完成提示",
@@ -892,6 +1130,10 @@ impl AppLanguage {
             "注釈" => ["Annotations", "标注", "註記"],
             "色" => ["Color", "颜色", "顏色"],
             "線の太さ" => ["Line Width", "线条粗细", "線條粗細"],
+            "○  楕円" => ["○  Ellipse", "○  椭圆", "○  橢圓"],
+            "T  テキスト" => ["T  Text", "T  文字", "T  文字"],
+            "▦  モザイク" => ["▦  Mosaic", "▦  马赛克", "▦  馬賽克"],
+            "注釈テキスト" => ["Annotation Text", "标注文字", "註記文字"],
             "保存先" => ["Save Location", "保存位置", "儲存位置"],
             "権限とデバイス" => ["Permissions & Devices", "权限与设备", "權限與裝置"],
             "許可済み" => ["Allowed", "已允许", "已允許"],
@@ -2250,18 +2492,22 @@ impl AppLanguage {
         match (self, page) {
             (Self::Japanese, Page::Capture) => "証跡の撮影を始めましょう",
             (Self::Japanese, Page::Evidence) => "撮影済みの画像・録画",
+            (Self::Japanese, Page::Notifications) => "通知履歴",
             (Self::Japanese, Page::Compare) => "画像比較",
             (Self::Japanese, Page::Settings) => "設定",
             (Self::English, Page::Capture) => "Start capturing evidence",
             (Self::English, Page::Evidence) => "Captured Images & Recordings",
+            (Self::English, Page::Notifications) => "Notifications",
             (Self::English, Page::Compare) => "Compare Images",
             (Self::English, Page::Settings) => "Settings",
             (Self::SimplifiedChinese, Page::Capture) => "开始截取证据",
             (Self::SimplifiedChinese, Page::Evidence) => "已截取的图像与录屏",
+            (Self::SimplifiedChinese, Page::Notifications) => "通知历史",
             (Self::SimplifiedChinese, Page::Compare) => "图像比较",
             (Self::SimplifiedChinese, Page::Settings) => "设置",
             (Self::TraditionalChinese, Page::Capture) => "開始擷取證據",
             (Self::TraditionalChinese, Page::Evidence) => "已擷取的圖片與錄影",
+            (Self::TraditionalChinese, Page::Notifications) => "通知記錄",
             (Self::TraditionalChinese, Page::Compare) => "圖片比較",
             (Self::TraditionalChinese, Page::Settings) => "設定",
         }
@@ -2288,18 +2534,22 @@ impl AppLanguage {
         match (self, page) {
             (Self::Japanese, Page::Capture) => "◉  撮影・編集",
             (Self::Japanese, Page::Evidence) => "▦  証跡一覧",
+            (Self::Japanese, Page::Notifications) => "♧  通知履歴",
             (Self::Japanese, Page::Compare) => "⇄  画像比較",
             (Self::Japanese, Page::Settings) => "⚙  設定",
             (Self::English, Page::Capture) => "◉  Capture & Edit",
             (Self::English, Page::Evidence) => "▦  Evidence",
+            (Self::English, Page::Notifications) => "♧  Alerts",
             (Self::English, Page::Compare) => "⇄  Compare",
             (Self::English, Page::Settings) => "⚙  Settings",
             (Self::SimplifiedChinese, Page::Capture) => "◉  截图与编辑",
             (Self::SimplifiedChinese, Page::Evidence) => "▦  证据列表",
+            (Self::SimplifiedChinese, Page::Notifications) => "♧  通知",
             (Self::SimplifiedChinese, Page::Compare) => "⇄  图像比较",
             (Self::SimplifiedChinese, Page::Settings) => "⚙  设置",
             (Self::TraditionalChinese, Page::Capture) => "◉  螢幕截圖與編輯",
             (Self::TraditionalChinese, Page::Evidence) => "▦  證據清單",
+            (Self::TraditionalChinese, Page::Notifications) => "♧  通知",
             (Self::TraditionalChinese, Page::Compare) => "⇄  圖片比較",
             (Self::TraditionalChinese, Page::Settings) => "⚙  設定",
         }
@@ -2313,7 +2563,11 @@ impl AppLanguage {
             (Self::Japanese, "active") => "アクティブウィンドウを撮影",
             (Self::Japanese, "primary") => "デスクトップ（メイン画面）を撮影",
             (Self::Japanese, "all") => "すべてのディスプレイを撮影",
+            (Self::Japanese, "window_select") => "ウィンドウを選んで撮影…",
             (Self::Japanese, "selected") => "選択中の撮影対象で撮影",
+            (Self::Japanese, "choose_mode") => "撮影方法を選んで撮影…",
+            (Self::Japanese, "shortcut_target") => "撮影対象選択を優先",
+            (Self::Japanese, "shortcut_mode") => "各モード優先",
             (Self::Japanese, "current_target") => "現在の撮影方法",
             (Self::Japanese, "target_menu") => "撮影対象を選択",
             (Self::Japanese, "continuous_start") => "連続撮影を開始",
@@ -2331,7 +2585,11 @@ impl AppLanguage {
             (Self::English, "active") => "Capture Active Window",
             (Self::English, "primary") => "Capture Desktop (Main Display)",
             (Self::English, "all") => "Capture All Displays",
+            (Self::English, "window_select") => "Click a Window to Capture…",
             (Self::English, "selected") => "Capture Selected Target",
+            (Self::English, "choose_mode") => "Choose a Capture Mode…",
+            (Self::English, "shortcut_target") => "Prioritize Selected Target",
+            (Self::English, "shortcut_mode") => "Choose a Capture Mode",
             (Self::English, "current_target") => "Current Capture Method",
             (Self::English, "target_menu") => "Select Capture Target",
             (Self::English, "continuous_start") => "Start Continuous Capture",
@@ -2349,7 +2607,11 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "active") => "截取活动窗口",
             (Self::SimplifiedChinese, "primary") => "截取桌面（主显示器）",
             (Self::SimplifiedChinese, "all") => "截取所有显示器",
+            (Self::SimplifiedChinese, "window_select") => "点选窗口并截图…",
             (Self::SimplifiedChinese, "selected") => "截取所选目标",
+            (Self::SimplifiedChinese, "choose_mode") => "选择截图模式…",
+            (Self::SimplifiedChinese, "shortcut_target") => "优先所选目标",
+            (Self::SimplifiedChinese, "shortcut_mode") => "优先选择截图模式",
             (Self::SimplifiedChinese, "current_target") => "当前截图方式",
             (Self::SimplifiedChinese, "target_menu") => "选择截图目标",
             (Self::SimplifiedChinese, "continuous_start") => "开始连续截图",
@@ -2367,7 +2629,11 @@ impl AppLanguage {
             (Self::TraditionalChinese, "active") => "擷取作用中視窗",
             (Self::TraditionalChinese, "primary") => "擷取桌面（主要顯示器）",
             (Self::TraditionalChinese, "all") => "擷取所有顯示器",
+            (Self::TraditionalChinese, "window_select") => "點選視窗並截圖…",
             (Self::TraditionalChinese, "selected") => "擷取所選目標",
+            (Self::TraditionalChinese, "choose_mode") => "選擇截圖模式…",
+            (Self::TraditionalChinese, "shortcut_target") => "優先所選目標",
+            (Self::TraditionalChinese, "shortcut_mode") => "優先選擇截圖模式",
             (Self::TraditionalChinese, "current_target") => "目前截圖方式",
             (Self::TraditionalChinese, "target_menu") => "選擇截圖目標",
             (Self::TraditionalChinese, "continuous_start") => "開始連續截圖",
@@ -2434,11 +2700,13 @@ type CaptureResult = (
 #[derive(Clone, Copy)]
 enum TrayAction {
     ShowWindow,
-    Capture,
+    CaptureCurrentTarget,
+    CaptureSelectedWindow,
     CaptureActiveWindow,
     CapturePrimaryDisplay,
     CaptureAllDisplays,
     SelectCaptureTarget(CaptureTarget),
+    SetCaptureShortcutBehavior(CaptureShortcutBehavior),
     CaptureRegion,
     OpenNativeScreenshot,
     ToggleContinuousCapture,
@@ -3153,7 +3421,17 @@ impl Default for MacShot {
                 .unwrap_or(CaptureTarget::ActiveWindow),
             _ => CaptureTarget::ActiveWindow,
         };
+        let capture_shortcut_behavior = CaptureShortcutBehavior::from_setting(&load_setting(
+            "capture_shortcut_behavior",
+            "selected_target",
+        ));
         let timestamp_enabled = load_setting("timestamp_enabled", "true") != "false";
+        let timestamp_format =
+            normalized_timestamp_format(&load_setting("timestamp_format", "datetime"));
+        let timestamp_position =
+            normalized_timestamp_position(&load_setting("timestamp_position", "bottom_right"));
+        let timestamp_background =
+            normalized_timestamp_background(&load_setting("timestamp_background", "subtle"));
         let filename_prefix = load_setting("filename_prefix", "evidence");
         let show_capture_notice = load_setting("show_capture_notice", "true") != "false";
         let annotation_color = load_setting("annotation_color", "red");
@@ -3161,6 +3439,7 @@ impl Default for MacShot {
             .parse::<f32>()
             .unwrap_or(3.0)
             .clamp(1.0, 8.0);
+        let annotation_text = load_setting("annotation_text", "注釈");
         let capture_hotkey = capture_hotkey_text
             .parse()
             .unwrap_or_else(|_| DEFAULT_CAPTURE_HOTKEY.parse().unwrap());
@@ -3193,6 +3472,8 @@ impl Default for MacShot {
             windows,
             window_search_query: String::new(),
             capture_target,
+            capture_target_picker_open: false,
+            capture_shortcut_behavior,
             continuous_capture: false,
             keep_region_in_continuous: load_setting("keep_region_in_continuous", "true") != "false",
             continuous_region: None,
@@ -3237,10 +3518,14 @@ impl Default for MacShot {
             recording_metadata_tx,
             recording_metadata_rx,
             timestamp_enabled,
+            timestamp_format,
+            timestamp_position,
+            timestamp_background,
             filename_prefix,
             show_capture_notice,
             annotation_color,
             annotation_width,
+            annotation_text,
             status,
             capture_in_progress: false,
             active_capture_is_region: false,
@@ -3266,8 +3551,11 @@ impl Default for MacShot {
             tray_capture_active_item: None,
             tray_capture_primary_item: None,
             tray_capture_all_item: None,
+            tray_capture_current_target_item: None,
+            tray_capture_shortcut_target_item: None,
+            tray_capture_shortcut_mode_item: None,
             tray_capture_status_item: None,
-            tray_selected_capture_item: None,
+            tray_window_selection_item: None,
             tray_continuous_capture_item: None,
             tray_recording_status_item: None,
             tray_recording_action_item: None,
@@ -3292,6 +3580,7 @@ impl Default for MacShot {
             saved_settings_layout: settings_layout,
             editing_settings_layout: false,
             capture_notice: None,
+            notifications: load_notifications(),
             recording_rx,
             recording_tx,
             recording_stop_tx: Arc::new(Mutex::new(None)),
@@ -3323,13 +3612,18 @@ impl Default for MacShot {
             right_texture: None,
             diff_texture: None,
             overlay_texture: None,
+            mosaic_preview_texture: None,
+            mosaic_preview_key: None,
             crop_selection: None,
             crop_drag_start: None,
             edit_tool: EditTool::Crop,
+            capture_editor_expanded: false,
+            overwrite_confirmation: false,
             annotations: Vec::new(),
             live_annotation: None,
             editing_queue: Vec::new(),
             editing_index: None,
+            pending_edit_navigation: None,
             diff_count: 0,
             compare_mode: CompareMode::SideBySide,
             settings_error: None,
@@ -3450,6 +3744,108 @@ fn settings_path() -> PathBuf {
     base.join("MacShot").join("settings.txt")
 }
 
+fn notifications_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("notifications.tsv")
+}
+
+fn encode_notification_field(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn decode_notification_field(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn load_notifications() -> Vec<AppNotification> {
+    let Ok(contents) = std::fs::read_to_string(notifications_path()) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let kind = fields.next()?;
+            let timestamp = decode_notification_field(fields.next()?)?;
+            let path = PathBuf::from(decode_notification_field(fields.next()?)?);
+            let width = fields.next()?.parse::<u32>().ok();
+            let height = fields.next()?.parse::<u32>().ok();
+            let detail =
+                decode_notification_field(fields.next()?).filter(|value| !value.is_empty());
+            let kind = if let Some(sequence) = kind.strip_prefix("capture:") {
+                NotificationKind::Capture(sequence.parse().ok()?)
+            } else if kind == "recording" {
+                NotificationKind::Recording
+            } else {
+                return None;
+            };
+            Some(AppNotification {
+                kind,
+                timestamp,
+                path,
+                width,
+                height,
+                detail,
+            })
+        })
+        .take(200)
+        .collect()
+}
+
+fn save_notifications(notifications: &[AppNotification]) -> Result<(), String> {
+    let path = notifications_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| "通知履歴フォルダを取得できません。".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    for notification in notifications.iter().take(200) {
+        let kind = match notification.kind {
+            NotificationKind::Capture(sequence) => format!("capture:{sequence}"),
+            NotificationKind::Recording => "recording".into(),
+        };
+        writeln!(
+            file,
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            kind,
+            encode_notification_field(&notification.timestamp),
+            encode_notification_field(&notification.path.to_string_lossy()),
+            notification
+                .width
+                .map_or_else(String::new, |value| value.to_string()),
+            notification
+                .height
+                .map_or_else(String::new, |value| value.to_string()),
+            encode_notification_field(notification.detail.as_deref().unwrap_or_default()),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn app_bundle_path_from_executable(executable: &Path) -> Option<PathBuf> {
     executable
@@ -3516,12 +3912,17 @@ struct Preferences<'a> {
     capture_hotkey: &'a str,
     recording_hotkey: &'a str,
     capture_target: &'a str,
+    capture_shortcut_behavior: CaptureShortcutBehavior,
     timestamp_enabled: bool,
+    timestamp_format: &'a str,
+    timestamp_position: &'a str,
+    timestamp_background: &'a str,
     filename_prefix: &'a str,
     show_capture_notice: bool,
     keep_region_in_continuous: bool,
     annotation_color: &'a str,
     annotation_width: f32,
+    annotation_text: &'a str,
     save_folder: &'a Path,
     auto_import_native_captures: bool,
     recording_format: RecordingFormat,
@@ -3546,8 +3947,28 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
     writeln!(file, "{}", preferences.recording_hotkey).map_err(|error| error.to_string())?;
     writeln!(file, "capture_target={}", preferences.capture_target)
         .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "capture_shortcut_behavior={}",
+        preferences.capture_shortcut_behavior.setting()
+    )
+    .map_err(|error| error.to_string())?;
     writeln!(file, "timestamp_enabled={}", preferences.timestamp_enabled)
         .map_err(|error| error.to_string())?;
+    writeln!(file, "timestamp_format={}", preferences.timestamp_format)
+        .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "timestamp_position={}",
+        preferences.timestamp_position
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "timestamp_background={}",
+        preferences.timestamp_background
+    )
+    .map_err(|error| error.to_string())?;
     writeln!(file, "filename_prefix={}", preferences.filename_prefix)
         .map_err(|error| error.to_string())?;
     writeln!(
@@ -3565,6 +3986,8 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
     writeln!(file, "annotation_color={}", preferences.annotation_color)
         .map_err(|error| error.to_string())?;
     writeln!(file, "annotation_width={}", preferences.annotation_width)
+        .map_err(|error| error.to_string())?;
+    writeln!(file, "annotation_text={}", preferences.annotation_text)
         .map_err(|error| error.to_string())?;
     writeln!(file, "save_folder={}", preferences.save_folder.display())
         .map_err(|error| error.to_string())?;
@@ -5294,6 +5717,69 @@ fn save_png_without_overwrite(
     Ok(path)
 }
 
+fn overwrite_png(path: &Path, image: &image::RgbaImage) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "保存先のフォルダを特定できません。".to_string())?;
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("evidence");
+    let temporary_path = parent.join(format!(".{stem}-macshot-overwrite.png"));
+    let (temporary_path, mut file) = create_unique_file(parent, &temporary_path)?;
+    let encoded = image::codecs::png::PngEncoder::new(&mut file).write_image(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::Rgba8,
+    );
+    if let Err(error) = encoded {
+        drop(file);
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(error.to_string());
+    }
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(error.to_string());
+    }
+    drop(file);
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(&temporary_path, path).map_err(|error| {
+            let _ = std::fs::remove_file(&temporary_path);
+            error.to_string()
+        })?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let backup_path = parent.join(format!(".{stem}-macshot-backup-{nonce}.png"));
+        std::fs::rename(path, &backup_path).map_err(|error| {
+            let _ = std::fs::remove_file(&temporary_path);
+            error.to_string()
+        })?;
+        if let Err(error) = std::fs::rename(&temporary_path, path) {
+            let restore_error = std::fs::rename(&backup_path, path).err();
+            let _ = std::fs::remove_file(&temporary_path);
+            return Err(match restore_error {
+                Some(restore_error) => format!(
+                    "置き換えに失敗しました: {error}。元画像は {} に退避されています ({restore_error})",
+                    backup_path.display()
+                ),
+                None => format!("置き換えに失敗したため元画像を復元しました: {error}"),
+            });
+        }
+        let _ = std::fs::remove_file(backup_path);
+    }
+    Ok(())
+}
+
 fn gif_delay_centiseconds(elapsed: Duration) -> u16 {
     elapsed.as_millis().div_ceil(10).clamp(1, u16::MAX as u128) as u16
 }
@@ -5638,6 +6124,52 @@ fn capture_window_image(window_id: u32) -> Result<image::RgbaImage, String> {
 }
 
 #[cfg(target_os = "macos")]
+fn capture_window_by_user_selection(
+    cancelled: &Arc<AtomicBool>,
+) -> Result<image::RgbaImage, String> {
+    let path = std::env::temp_dir().join(format!(
+        "macshot-window-selection-{}-{}.png",
+        std::process::id(),
+        Local::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let mut child = Command::new("/usr/sbin/screencapture")
+        .args(["-i", "-w"])
+        .arg(&path)
+        .spawn()
+        .map_err(|error| format!("ウィンドウ選択を開始できません: {error}"))?;
+
+    let status = loop {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&path);
+            return Err(capture_timeout_message().to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("ウィンドウ選択を確認できません: {error}"));
+            }
+        }
+    };
+
+    if !status.success() || !path.is_file() {
+        let _ = std::fs::remove_file(&path);
+        return Err("__MACSHOT_WINDOW_SELECTION_CANCELLED__".into());
+    }
+    let image = image::open(&path)
+        .map(image::DynamicImage::into_rgba8)
+        .map_err(|error| format!("選択したウィンドウ画像を読み込めません: {error}"));
+    let _ = std::fs::remove_file(&path);
+    image
+}
+
+#[cfg(target_os = "macos")]
 fn is_captureable_screen_capture_window(window: &SCWindow) -> bool {
     if !window.is_on_screen() || window.window_layer() != 0 {
         return false;
@@ -5696,40 +6228,36 @@ fn select_active_window_candidate(
 fn find_active_screen_capture_window_id() -> Result<u32, String> {
     use objc2_app_kit::NSWorkspace;
 
-    // Hiding the MacShot window is asynchronous. Wait briefly for macOS to
-    // return focus to the app the user was recording before enumerating it.
+    // Hiding the MacShot window is asynchronous. Prefer the frontmost app's
+    // shareable window, then fall back to the first visible external window.
     for _ in 0..50 {
         let workspace = unsafe { NSWorkspace::sharedWorkspace() };
         let frontmost_process_id = unsafe { workspace.frontmostApplication() }
             .map(|application| unsafe { application.processIdentifier() });
-        if let Some(frontmost_process_id) = frontmost_process_id
-            && frontmost_process_id != std::process::id() as i32
+        let content = SCShareableContent::get().map_err(|error| {
+            format!("ScreenCaptureKitでウィンドウ一覧を取得できません: {error}")
+        })?;
+        let candidates = content
+            .windows()
+            .iter()
+            .map(|window| ActiveWindowCandidate {
+                window_id: window.window_id(),
+                owning_process_id: window
+                    .owning_application()
+                    .map(|application| application.process_id()),
+                captureable: is_captureable_screen_capture_window(window),
+                stage_manager_active: window.is_active(),
+            })
+            .collect::<Vec<_>>();
+        if let Some(window_id) =
+            select_active_window_candidate(&candidates, frontmost_process_id.unwrap_or_default())
         {
-            let content = SCShareableContent::get().map_err(|error| {
-                format!("ScreenCaptureKitでウィンドウ一覧を取得できません: {error}")
-            })?;
-            let candidates = content
-                .windows()
-                .iter()
-                .map(|window| ActiveWindowCandidate {
-                    window_id: window.window_id(),
-                    owning_process_id: window
-                        .owning_application()
-                        .map(|application| application.process_id()),
-                    captureable: is_captureable_screen_capture_window(window),
-                    stage_manager_active: window.is_active(),
-                })
-                .collect::<Vec<_>>();
-            if let Some(window_id) =
-                select_active_window_candidate(&candidates, frontmost_process_id)
-            {
-                return Ok(window_id);
-            }
+            return Ok(window_id);
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
-    Err("アクティブウィンドウを特定できません。録画したいウィンドウを前面にして再試行してください。".to_string())
+    Err("アクティブウィンドウを特定できません。撮影または録画したいウィンドウを前面にして再試行してください。".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -6086,21 +6614,147 @@ fn capture_saved_status(sequence: u64, timestamp: &str, width: u32, height: u32)
     format!("撮影 {sequence} 枚目を保存しました ({timestamp}) · {width}×{height} px")
 }
 
-fn stamp_timestamp(image: &mut image::RgbaImage, timestamp: &str) {
+fn normalized_timestamp_format(value: &str) -> String {
+    match value {
+        "date" | "time" | "datetime_millis" | "japanese" => value.to_string(),
+        _ => "datetime".into(),
+    }
+}
+
+fn normalized_timestamp_position(value: &str) -> String {
+    match value {
+        "top_left" | "top_right" | "bottom_left" => value.to_string(),
+        _ => "bottom_right".into(),
+    }
+}
+
+fn normalized_timestamp_background(value: &str) -> String {
+    match value {
+        "none" | "dark" => value.to_string(),
+        _ => "subtle".into(),
+    }
+}
+
+fn capture_image_timestamp(captured_at: &DateTime<Local>, format: &str) -> String {
+    match format {
+        "date" => captured_at.format("%Y-%m-%d").to_string(),
+        "time" => captured_at.format("%H:%M:%S").to_string(),
+        "datetime_millis" => captured_at.format("%Y-%m-%d %H:%M:%S.%3f").to_string(),
+        "japanese" => captured_at.format("%Y年%m月%d日 %H:%M:%S").to_string(),
+        _ => captured_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+    }
+}
+
+fn timestamp_for_evidence_path(path: &Path, format: &str) -> String {
+    let Some((stamp, _)) = parse_evidence_identity(path) else {
+        let modified = std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .map(DateTime::<Local>::from)
+            .unwrap_or_else(Local::now);
+        return capture_image_timestamp(&modified, format);
+    };
+    let date = &stamp[..8];
+    let time = &stamp[9..15];
+    let millis = &stamp[16..19];
+    match format {
+        "date" => format!("{}-{}-{}", &date[..4], &date[4..6], &date[6..8]),
+        "time" => format!("{}:{}:{}", &time[..2], &time[2..4], &time[4..6]),
+        "datetime_millis" => format!(
+            "{}-{}-{} {}:{}:{}.{}",
+            &date[..4],
+            &date[4..6],
+            &date[6..8],
+            &time[..2],
+            &time[2..4],
+            &time[4..6],
+            millis
+        ),
+        "japanese" => format!(
+            "{}年{}月{}日 {}:{}:{}",
+            &date[..4],
+            &date[4..6],
+            &date[6..8],
+            &time[..2],
+            &time[2..4],
+            &time[4..6]
+        ),
+        _ => format!(
+            "{}-{}-{} {}:{}:{}",
+            &date[..4],
+            &date[4..6],
+            &date[6..8],
+            &time[..2],
+            &time[2..4],
+            &time[4..6]
+        ),
+    }
+}
+
+fn blend_black_rect(
+    image: &mut image::RgbaImage,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    alpha: u8,
+) {
+    if alpha == 0 {
+        return;
+    }
+    let start_x = x.max(0) as u32;
+    let start_y = y.max(0) as u32;
+    let end_x = (x.max(0) as u32).saturating_add(width).min(image.width());
+    let end_y = (y.max(0) as u32).saturating_add(height).min(image.height());
+    for py in start_y..end_y {
+        for px in start_x..end_x {
+            let pixel = image.get_pixel_mut(px, py);
+            for channel in 0..3 {
+                pixel[channel] =
+                    ((u16::from(pixel[channel]) * (255 - u16::from(alpha))) / 255) as u8;
+            }
+        }
+    }
+}
+
+fn timestamp_background_alpha(style: &str) -> u8 {
+    match style {
+        "none" => 0,
+        "dark" => 112,
+        _ => 64,
+    }
+}
+
+fn stamp_timestamp(
+    image: &mut image::RgbaImage,
+    timestamp: &str,
+    position: &str,
+    background: &str,
+) {
     let font = FontRef::try_from_slice(include_bytes!("../assets/NotoSansJP-SemiBold.ttf"))
         .expect("bundled timestamp font must be valid");
     let scale = PxScale::from((image.width().min(image.height()) as f32 / 45.0).clamp(18.0, 34.0));
     let (text_width, text_height) = text_size(scale, &font, timestamp);
     let padding = (scale.y * 0.45).round() as i32;
-    let left = (image.width() as i32 - text_width as i32 - padding * 3).max(padding);
-    let top = (image.height() as i32 - text_height as i32 - padding * 3).max(padding);
-    draw_filled_rect_mut(
+    let right = position.ends_with("right");
+    let bottom = position.starts_with("bottom");
+    let left = if right {
+        (image.width() as i32 - text_width as i32 - padding * 3).max(padding)
+    } else {
+        padding * 2
+    };
+    let top = if bottom {
+        (image.height() as i32 - text_height as i32 - padding * 3).max(padding)
+    } else {
+        padding * 2
+    };
+    blend_black_rect(
         image,
-        ImageRect::at(left - padding, top - padding).of_size(
-            text_width + (padding * 2) as u32,
-            text_height + (padding * 2) as u32,
-        ),
-        Rgba([0, 0, 0, 190]),
+        left - padding,
+        top - padding,
+        text_width + (padding * 2) as u32,
+        text_height + (padding * 2) as u32,
+        timestamp_background_alpha(background),
     );
     draw_text_mut(
         image,
@@ -6121,11 +6775,18 @@ fn annotation_rgb(color: &str) -> [u8; 3] {
     }
 }
 
+fn mosaic_block_size(width: u32, height: u32, annotation_width: f32) -> u32 {
+    ((width.min(height) as f32 / 36.0) * (annotation_width / 3.0).clamp(0.7, 2.0))
+        .round()
+        .clamp(14.0, 64.0) as u32
+}
+
 fn draw_annotation(
     image: &mut image::RgbaImage,
-    annotation: Annotation,
+    annotation: &Annotation,
     color: [u8; 3],
     annotation_width: f32,
+    timestamp_background: &str,
 ) {
     let color = Rgba([color[0], color[1], color[2], 255]);
     let width = image.width() as f32;
@@ -6154,6 +6815,23 @@ fn draw_annotation(
                 }
             }
         }
+        EditTool::Ellipse => {
+            let center_x = (x1 + x2) * 0.5;
+            let center_y = (y1 + y2) * 0.5;
+            let radius_x = (x2 - x1).abs() * 0.5;
+            let radius_y = (y2 - y1).abs() * 0.5;
+            let segments = 72;
+            let mut previous = (center_x + radius_x, center_y);
+            for step in 1..=segments {
+                let angle = std::f32::consts::TAU * step as f32 / segments as f32;
+                let next = (
+                    center_x + radius_x * angle.cos(),
+                    center_y + radius_y * angle.sin(),
+                );
+                draw_line_segment_mut(image, previous, next, color);
+                previous = next;
+            }
+        }
         EditTool::Arrow => {
             draw_line_segment_mut(image, (x1, y1), (x2, y2), color);
             let angle = (y2 - y1).atan2(x2 - x1);
@@ -6170,6 +6848,126 @@ fn draw_annotation(
                 );
             }
         }
+        EditTool::Text => {
+            if annotation.text.trim().is_empty() {
+                return;
+            }
+            let font = FontRef::try_from_slice(include_bytes!("../assets/NotoSansJP-SemiBold.ttf"))
+                .expect("bundled annotation font must be valid");
+            let scale = PxScale::from(
+                (image.width().min(image.height()) as f32 / 28.0).clamp(18.0, 52.0)
+                    * (annotation_width / 3.0).clamp(0.6, 2.5),
+            );
+            let (text_width, text_height) = text_size(scale, &font, &annotation.text);
+            let padding = (scale.y * 0.35).round() as i32;
+            let left = (x1.round() as i32).clamp(
+                padding,
+                (image.width() as i32 - text_width as i32 - padding).max(padding),
+            );
+            let top = (y1.round() as i32).clamp(
+                padding,
+                (image.height() as i32 - text_height as i32 - padding).max(padding),
+            );
+            draw_filled_rect_mut(
+                image,
+                ImageRect::at(left - padding, top - padding).of_size(
+                    text_width.saturating_add((padding * 2) as u32),
+                    text_height.saturating_add((padding * 2) as u32),
+                ),
+                Rgba([color[0], color[1], color[2], 220]),
+            );
+            draw_text_mut(
+                image,
+                Rgba([255, 255, 255, 255]),
+                left,
+                top,
+                scale,
+                &font,
+                &annotation.text,
+            );
+        }
+        EditTool::Timestamp => {
+            if annotation.text.trim().is_empty() {
+                return;
+            }
+            let font = FontRef::try_from_slice(include_bytes!("../assets/NotoSansJP-SemiBold.ttf"))
+                .expect("bundled timestamp font must be valid");
+            let scale =
+                PxScale::from((image.width().min(image.height()) as f32 / 45.0).clamp(18.0, 34.0));
+            let (text_width, text_height) = text_size(scale, &font, &annotation.text);
+            let padding = (scale.y * 0.4).round() as i32;
+            let left = (x1.round() as i32).clamp(
+                padding,
+                (image.width() as i32 - text_width as i32 - padding).max(padding),
+            );
+            let top = (y1.round() as i32).clamp(
+                padding,
+                (image.height() as i32 - text_height as i32 - padding).max(padding),
+            );
+            blend_black_rect(
+                image,
+                left - padding,
+                top - padding,
+                text_width.saturating_add((padding * 2) as u32),
+                text_height.saturating_add((padding * 2) as u32),
+                timestamp_background_alpha(timestamp_background),
+            );
+            draw_text_mut(
+                image,
+                Rgba([255, 255, 255, 255]),
+                left,
+                top,
+                scale,
+                &font,
+                &annotation.text,
+            );
+        }
+        EditTool::Mosaic => {
+            let image_width = image.width();
+            let image_height = image.height();
+            if image_width == 0 || image_height == 0 {
+                return;
+            }
+            let start_x = (x1.min(x2).floor() as u32).min(image_width - 1);
+            let end_x = (x1.max(x2).ceil() as u32).clamp(start_x + 1, image_width);
+            let start_y = (y1.min(y2).floor() as u32).min(image_height - 1);
+            let end_y = (y1.max(y2).ceil() as u32).clamp(start_y + 1, image_height);
+            let block_size = mosaic_block_size(image_width, image_height, annotation_width);
+            let mut block_y = start_y;
+            while block_y < end_y {
+                let mut block_x = start_x;
+                let block_bottom = (block_y + block_size).min(end_y);
+                while block_x < end_x {
+                    let block_right = (block_x + block_size).min(end_x);
+                    let mut totals = [0_u64; 4];
+                    let mut count = 0_u64;
+                    for y in block_y..block_bottom {
+                        for x in block_x..block_right {
+                            let pixel = image.get_pixel(x, y).0;
+                            for channel in 0..4 {
+                                totals[channel] += u64::from(pixel[channel]);
+                            }
+                            count += 1;
+                        }
+                    }
+                    if count > 0 {
+                        let average = Rgba([
+                            (totals[0] / count) as u8,
+                            (totals[1] / count) as u8,
+                            (totals[2] / count) as u8,
+                            (totals[3] / count) as u8,
+                        ]);
+                        for y in block_y..block_bottom {
+                            for x in block_x..block_right {
+                                image.put_pixel(x, y, average);
+                            }
+                        }
+                    }
+                    block_x = block_right;
+                }
+                block_y = block_bottom;
+            }
+        }
         EditTool::Crop => {}
     }
 }
@@ -6179,10 +6977,17 @@ fn annotated_image(
     annotations: &[Annotation],
     color: [u8; 3],
     annotation_width: f32,
+    timestamp_background: &str,
 ) -> image::RgbaImage {
     let mut output = image.to_rgba8();
     for annotation in annotations {
-        draw_annotation(&mut output, *annotation, color, annotation_width);
+        draw_annotation(
+            &mut output,
+            annotation,
+            color,
+            annotation_width,
+            timestamp_background,
+        );
     }
     output
 }
@@ -6332,7 +7137,7 @@ fn tray_capture_method_label(
     hotkey: &str,
 ) -> String {
     let marker = if selected { "✓ " } else { "" };
-    let shortcut = if selected {
+    let shortcut = if selected && !hotkey.is_empty() {
         format!("  ({})", hotkey_badge_text(hotkey))
     } else {
         String::new()
@@ -7140,6 +7945,11 @@ impl MacShot {
             if event.id == self.capture_hotkey.id() {
                 if self.recording || self.recording_starting {
                     self.status = "録画を終了してからスクリーンショットを撮影してください。".into();
+                } else if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
+                    self.open_capture_target_picker(ctx);
+                } else if self.continuous_capture {
+                    // Keep the capture hotkey immediate during continuous runs.
+                    self.begin_capture(ctx);
                 } else {
                     self.begin_capture(ctx);
                 }
@@ -7158,8 +7968,11 @@ impl MacShot {
         self.tray_capture_active_item = None;
         self.tray_capture_primary_item = None;
         self.tray_capture_all_item = None;
+        self.tray_capture_current_target_item = None;
+        self.tray_capture_shortcut_target_item = None;
+        self.tray_capture_shortcut_mode_item = None;
         self.tray_capture_status_item = None;
-        self.tray_selected_capture_item = None;
+        self.tray_window_selection_item = None;
         self.tray_continuous_capture_item = None;
         self.tray_recording_status_item = None;
         self.tray_recording_action_item = None;
@@ -7210,47 +8023,71 @@ impl MacShot {
         let capture_active_selected = matches!(self.capture_target, CaptureTarget::ActiveWindow);
         let capture_active_item = MenuItem::with_id(
             "macshot.capture.active",
-            tray_capture_method_label(
-                self.language,
-                "active",
-                capture_active_selected,
-                &self.capture_hotkey_text,
-            ),
+            tray_capture_method_label(self.language, "active", capture_active_selected, ""),
             true,
             None,
         );
         let capture_primary_selected = matches!(self.capture_target, CaptureTarget::PrimaryDisplay);
         let capture_primary_item = MenuItem::with_id(
             "macshot.capture.primary",
-            tray_capture_method_label(
-                self.language,
-                "primary",
-                capture_primary_selected,
-                &self.capture_hotkey_text,
-            ),
+            tray_capture_method_label(self.language, "primary", capture_primary_selected, ""),
             true,
             None,
         );
         let capture_all_selected = matches!(self.capture_target, CaptureTarget::AllDisplays);
         let capture_all_item = MenuItem::with_id(
             "macshot.capture.all",
-            tray_capture_method_label(
-                self.language,
-                "all",
-                capture_all_selected,
-                &self.capture_hotkey_text,
+            tray_capture_method_label(self.language, "all", capture_all_selected, ""),
+            true,
+            None,
+        );
+        let capture_current_target_item = MenuItem::with_id(
+            "macshot.capture.current-target",
+            format!(
+                "{}  ({})",
+                self.language.tray_label(
+                    if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
+                        "choose_mode"
+                    } else {
+                        "selected"
+                    }
+                ),
+                hotkey_badge_text(&self.capture_hotkey_text)
             ),
             true,
             None,
         );
-        let capture_selected_item = MenuItem::with_id(
-            "macshot.capture.selected",
-            tray_capture_method_label(
-                self.language,
-                "selected",
-                !capture_active_selected && !capture_primary_selected && !capture_all_selected,
-                &self.capture_hotkey_text,
+        let shortcut_target_item = MenuItem::with_id(
+            "macshot.capture.shortcut-target",
+            format!(
+                "{}{}",
+                if self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
+                    "✓  "
+                } else {
+                    "    "
+                },
+                self.language.tray_label("shortcut_target")
             ),
+            true,
+            None,
+        );
+        let shortcut_mode_item = MenuItem::with_id(
+            "macshot.capture.shortcut-mode",
+            format!(
+                "{}{}",
+                if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
+                    "✓  "
+                } else {
+                    "    "
+                },
+                self.language.tray_label("shortcut_mode")
+            ),
+            true,
+            None,
+        );
+        let capture_window_selection_item = MenuItem::with_id(
+            "macshot.capture.window-selection",
+            self.language.tray_label("window_select"),
             true,
             None,
         );
@@ -7311,7 +8148,10 @@ impl MacShot {
             &capture_active_item,
             &capture_primary_item,
             &capture_all_item,
-            &capture_selected_item,
+            &capture_current_target_item,
+            &shortcut_target_item,
+            &shortcut_mode_item,
+            &capture_window_selection_item,
             &native_screenshot_item,
             &recording_separator,
             &continuous_capture_item,
@@ -7337,7 +8177,10 @@ impl MacShot {
         let capture_active_id = capture_active_item.id().0.clone();
         let capture_primary_id = capture_primary_item.id().0.clone();
         let capture_all_id = capture_all_item.id().0.clone();
-        let capture_selected_id = capture_selected_item.id().0.clone();
+        let capture_current_target_id = capture_current_target_item.id().0.clone();
+        let shortcut_target_id = shortcut_target_item.id().0.clone();
+        let shortcut_mode_id = shortcut_mode_item.id().0.clone();
+        let capture_window_selection_id = capture_window_selection_item.id().0.clone();
         let native_screenshot_id = native_screenshot_item.id().0.clone();
         let continuous_capture_id = continuous_capture_item.id().0.clone();
         let record_id = recording_item.id().0.clone();
@@ -7358,7 +8201,14 @@ impl MacShot {
                 id if id == capture_active_id => Some(TrayAction::CaptureActiveWindow),
                 id if id == capture_primary_id => Some(TrayAction::CapturePrimaryDisplay),
                 id if id == capture_all_id => Some(TrayAction::CaptureAllDisplays),
-                id if id == capture_selected_id => Some(TrayAction::Capture),
+                id if id == capture_current_target_id => Some(TrayAction::CaptureCurrentTarget),
+                id if id == shortcut_target_id => Some(TrayAction::SetCaptureShortcutBehavior(
+                    CaptureShortcutBehavior::SelectedTarget,
+                )),
+                id if id == shortcut_mode_id => Some(TrayAction::SetCaptureShortcutBehavior(
+                    CaptureShortcutBehavior::ChooseMode,
+                )),
+                id if id == capture_window_selection_id => Some(TrayAction::CaptureSelectedWindow),
                 id if id == native_screenshot_id => Some(TrayAction::OpenNativeScreenshot),
                 id if id == continuous_capture_id => Some(TrayAction::ToggleContinuousCapture),
                 id if id == record_id => Some(TrayAction::ToggleRecording),
@@ -7388,7 +8238,10 @@ impl MacShot {
                 self.tray_capture_active_item = Some(capture_active_item);
                 self.tray_capture_primary_item = Some(capture_primary_item);
                 self.tray_capture_all_item = Some(capture_all_item);
-                self.tray_selected_capture_item = Some(capture_selected_item);
+                self.tray_capture_current_target_item = Some(capture_current_target_item);
+                self.tray_capture_shortcut_target_item = Some(shortcut_target_item);
+                self.tray_capture_shortcut_mode_item = Some(shortcut_mode_item);
+                self.tray_window_selection_item = Some(capture_window_selection_item);
                 self.tray_continuous_capture_item = Some(continuous_capture_item);
                 self.tray_recording_status_item = Some(recording_status_item);
                 self.tray_recording_action_item = Some(recording_item);
@@ -7505,7 +8358,11 @@ impl MacShot {
             self.language.tray_label("current_target"),
             selected_target
         );
-        let target_state = format!("{status_label}\n{}", self.capture_hotkey_text);
+        let target_state = format!(
+            "{status_label}\n{}\n{}",
+            self.capture_hotkey_text,
+            self.capture_shortcut_behavior.setting()
+        );
         if self.tray_capture_target_text.as_deref() != Some(target_state.as_str()) {
             if let Some(item) = &self.tray_capture_target_item {
                 item.set_text(status_label);
@@ -7520,7 +8377,7 @@ impl MacShot {
                     self.language,
                     "active",
                     is_active,
-                    &self.capture_hotkey_text,
+                    "",
                 ));
             }
             if let Some(item) = &self.tray_capture_primary_item {
@@ -7528,24 +8385,49 @@ impl MacShot {
                     self.language,
                     "primary",
                     is_primary,
-                    &self.capture_hotkey_text,
+                    "",
                 ));
             }
             if let Some(item) = &self.tray_capture_all_item {
-                item.set_text(tray_capture_method_label(
-                    self.language,
-                    "all",
-                    is_all,
-                    &self.capture_hotkey_text,
+                item.set_text(tray_capture_method_label(self.language, "all", is_all, ""));
+            }
+            if let Some(item) = &self.tray_capture_current_target_item {
+                item.set_text(format!(
+                    "{}  ({})",
+                    self.language.tray_label(
+                        if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
+                            "choose_mode"
+                        } else {
+                            "selected"
+                        }
+                    ),
+                    hotkey_badge_text(&self.capture_hotkey_text)
                 ));
             }
-            if let Some(item) = &self.tray_selected_capture_item {
-                item.set_text(tray_capture_method_label(
-                    self.language,
-                    "selected",
-                    !is_active && !is_primary && !is_all,
-                    &self.capture_hotkey_text,
+            if let Some(item) = &self.tray_capture_shortcut_target_item {
+                item.set_text(format!(
+                    "{}{}",
+                    if self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
+                        "✓  "
+                    } else {
+                        "    "
+                    },
+                    self.language.tray_label("shortcut_target")
                 ));
+            }
+            if let Some(item) = &self.tray_capture_shortcut_mode_item {
+                item.set_text(format!(
+                    "{}{}",
+                    if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
+                        "✓  "
+                    } else {
+                        "    "
+                    },
+                    self.language.tray_label("shortcut_mode")
+                ));
+            }
+            if let Some(item) = &self.tray_window_selection_item {
+                item.set_text(self.language.tray_label("window_select"));
             }
             for (item, target) in &self.tray_target_selection_items {
                 item.set_text(tray_target_choice_label(
@@ -7570,11 +8452,23 @@ impl MacShot {
                     self.status = "MacShotのウィンドウを表示しました。".into();
                     restore_main_window(ctx);
                 }
-                TrayAction::Capture => {
+                TrayAction::CaptureSelectedWindow => {
                     if self.recording || self.recording_starting {
                         self.report_capture_failure(
                             "録画を終了してからスクリーンショットを撮影してください。",
                         );
+                    } else {
+                        self.begin_interactive_window_capture(ctx);
+                    }
+                }
+                TrayAction::CaptureCurrentTarget => {
+                    if self.recording || self.recording_starting {
+                        self.report_capture_failure(
+                            "録画を終了してからスクリーンショットを撮影してください。",
+                        );
+                    } else if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode
+                    {
+                        self.open_capture_target_picker(ctx);
                     } else {
                         self.begin_capture(ctx);
                     }
@@ -7606,6 +8500,9 @@ impl MacShot {
                         }
                     }
                 }
+                TrayAction::SetCaptureShortcutBehavior(behavior) => {
+                    self.set_capture_shortcut_behavior(behavior);
+                }
                 TrayAction::CaptureRegion => self.begin_region_selection(ctx),
                 TrayAction::OpenNativeScreenshot => self.open_native_screenshot(),
                 TrayAction::ToggleContinuousCapture => self.toggle_continuous_capture(ctx),
@@ -7625,6 +8522,34 @@ impl MacShot {
             }
         } else {
             std::process::exit(0);
+        }
+    }
+
+    fn set_capture_shortcut_behavior(&mut self, behavior: CaptureShortcutBehavior) {
+        if self.capture_shortcut_behavior == behavior {
+            return;
+        }
+        let previous = self.capture_shortcut_behavior;
+        self.capture_shortcut_behavior = behavior;
+        match self.save_preferences() {
+            Ok(()) => {
+                self.tray_capture_target_text = None;
+                self.update_tray_capture_target();
+                self.status = format!(
+                    "ショートカットの動作を「{}」に変更しました。",
+                    self.language.text(match behavior {
+                        CaptureShortcutBehavior::SelectedTarget => "撮影対象選択を優先",
+                        CaptureShortcutBehavior::ChooseMode => "各モード優先",
+                    })
+                );
+            }
+            Err(error) => {
+                self.capture_shortcut_behavior = previous;
+                self.settings_error =
+                    Some(format!("ショートカットの動作を保存できません: {error}"));
+                self.tray_capture_target_text = None;
+                self.update_tray_capture_target();
+            }
         }
     }
 
@@ -8053,6 +8978,14 @@ impl MacShot {
                             let status = format!("録画を保存しました ({finished_at})");
                             self.status =
                                 append_recording_warning(&status, recording_warning.as_deref());
+                            self.add_notification(AppNotification {
+                                kind: NotificationKind::Recording,
+                                timestamp: finished_at.clone(),
+                                path: path.clone(),
+                                width: None,
+                                height: None,
+                                detail: recording_warning.clone(),
+                            });
                             self.recording_notice = Some((path, finished_at, recording_warning));
                             let folder =
                                 self.save_folder.clone().unwrap_or_else(default_save_folder);
@@ -8146,12 +9079,17 @@ impl MacShot {
             capture_hotkey: &self.capture_hotkey_text,
             recording_hotkey: &self.recording_hotkey_text,
             capture_target: &self.capture_target_setting(),
+            capture_shortcut_behavior: self.capture_shortcut_behavior,
             timestamp_enabled: self.timestamp_enabled,
+            timestamp_format: &self.timestamp_format,
+            timestamp_position: &self.timestamp_position,
+            timestamp_background: &self.timestamp_background,
             filename_prefix: &self.filename_prefix,
             show_capture_notice: self.show_capture_notice,
             keep_region_in_continuous: self.keep_region_in_continuous,
             annotation_color: &self.annotation_color,
             annotation_width: self.annotation_width,
+            annotation_text: &self.annotation_text,
             save_folder: &folder,
             auto_import_native_captures: self.auto_import_native_captures,
             recording_format: self.recording_format,
@@ -8198,6 +9136,15 @@ impl MacShot {
     }
 
     fn open_evidence_image(&mut self, queue: Vec<PathBuf>, index: usize) {
+        if self.has_pending_edit() {
+            self.pending_edit_navigation =
+                Some(PendingEditNavigation::OpenEvidence { queue, index });
+            return;
+        }
+        self.load_evidence_image(queue, index);
+    }
+
+    fn load_evidence_image(&mut self, queue: Vec<PathBuf>, index: usize) {
         let Some(path) = queue.get(index).cloned() else {
             return;
         };
@@ -8212,6 +9159,7 @@ impl MacShot {
                 self.crop_drag_start = None;
                 self.annotations.clear();
                 self.live_annotation = None;
+                self.pending_edit_navigation = None;
                 switch_page(&mut self.page, Page::Capture, &mut self.status);
                 self.status = format!("編集する画像を開きました: {}", path.display());
                 self.refresh_diff();
@@ -8221,6 +9169,7 @@ impl MacShot {
     }
 
     fn move_in_edit_queue(&mut self, direction: isize) {
+        self.commit_live_annotation();
         let Some(index) = self.editing_index else {
             return;
         };
@@ -8228,20 +9177,40 @@ impl MacShot {
         if next < 0 || next >= self.editing_queue.len() as isize {
             return;
         }
-        self.open_evidence_image(self.editing_queue.clone(), next as usize);
+        if self.has_pending_edit() {
+            self.pending_edit_navigation = Some(PendingEditNavigation::Queue { direction });
+            return;
+        }
+        self.navigate_in_edit_queue(direction, false);
+    }
+
+    fn navigate_in_edit_queue(&mut self, direction: isize, save_pending_edit: bool) {
+        self.commit_live_annotation();
+        let Some(index) = self.editing_index else {
+            return;
+        };
+        let next = index as isize + direction;
+        if next < 0 || next >= self.editing_queue.len() as isize {
+            return;
+        }
+        if save_pending_edit {
+            let saved = if self.crop_selection.is_some() {
+                self.save_crop()
+            } else if !self.annotations.is_empty() {
+                self.save_annotated_image()
+            } else {
+                true
+            };
+            if !saved {
+                return;
+            }
+        }
+        self.pending_edit_navigation = None;
+        self.load_evidence_image(self.editing_queue.clone(), next as usize);
     }
 
     fn save_then_next(&mut self) {
-        let saved = if self.crop_selection.is_some() {
-            self.save_crop()
-        } else if !self.annotations.is_empty() {
-            self.save_annotated_image()
-        } else {
-            true
-        };
-        if saved {
-            self.move_in_edit_queue(1);
-        }
+        self.navigate_in_edit_queue(1, true);
     }
 
     fn finish_region_capture(&mut self, ctx: &egui::Context) {
@@ -8262,11 +9231,92 @@ impl MacShot {
     }
 
     fn has_pending_edit(&self) -> bool {
-        self.crop_selection.is_some() || !self.annotations.is_empty()
+        self.crop_selection.is_some()
+            || !self.annotations.is_empty()
+            || self.live_annotation.is_some()
+    }
+
+    fn commit_live_annotation(&mut self) {
+        if let Some(annotation) = self.live_annotation.take() {
+            self.annotations.push(annotation);
+        }
+    }
+
+    fn show_pending_edit_navigation_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(navigation) = self.pending_edit_navigation.clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut save_and_move = false;
+        let mut discard_and_move = false;
+        let mut keep_editing = false;
+        egui::Window::new(self.language.text("未保存の編集があります"))
+            .id(egui::Id::new("pending_edit_navigation_confirmation"))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(
+                    self.language
+                        .text("移動する前に、現在の注釈や切り抜きを保存しますか？"),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(primary_button(self.language.text("保存して移動")))
+                        .clicked()
+                    {
+                        save_and_move = true;
+                    }
+                    if ui.button(self.language.text("破棄して移動")).clicked() {
+                        discard_and_move = true;
+                    }
+                    if ui.button(self.language.text("編集に戻る")).clicked() {
+                        keep_editing = true;
+                    }
+                });
+            });
+
+        if keep_editing {
+            open = false;
+        }
+        if save_and_move || discard_and_move {
+            let save = save_and_move;
+            let saved = if save && self.has_pending_edit() {
+                if self.crop_selection.is_some() {
+                    self.save_crop()
+                } else if !self.annotations.is_empty() {
+                    self.save_annotated_image()
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+            if saved {
+                self.pending_edit_navigation = None;
+                match navigation {
+                    PendingEditNavigation::Queue { direction } => {
+                        self.navigate_in_edit_queue(direction, false);
+                    }
+                    PendingEditNavigation::OpenEvidence { queue, index } => {
+                        self.load_evidence_image(queue, index);
+                    }
+                }
+            }
+        } else if !open {
+            self.pending_edit_navigation = None;
+        }
     }
 
     fn begin_capture(&mut self, ctx: &egui::Context) {
-        let region = (self.continuous_capture && self.keep_region_in_continuous)
+        // A saved region is normalized against the primary display. Applying
+        // it to an active or explicitly selected window crops that window at
+        // unrelated coordinates and makes a window capture look like a region
+        // capture. Reuse the region only while the primary display is selected.
+        let region = (self.capture_target == CaptureTarget::PrimaryDisplay
+            && self.continuous_capture
+            && self.keep_region_in_continuous)
             .then_some(self.continuous_region)
             .flatten();
         self.begin_capture_for(ctx, self.capture_target, region);
@@ -8282,8 +9332,8 @@ impl MacShot {
     }
 
     fn advance_capture_queue(&mut self, ctx: &egui::Context) {
-        while let Some(next_target) = self.capture_queue.pop_front() {
-            self.begin_capture_for(ctx, next_target, None);
+        while let Some(request) = self.capture_queue.pop_front() {
+            self.begin_capture_for(ctx, request.target, request.region);
             if self.capture_in_progress {
                 return;
             }
@@ -8320,6 +9370,14 @@ impl MacShot {
     }
 
     fn begin_region_selection(&mut self, ctx: &egui::Context) {
+        self.commit_live_annotation();
+        if self.has_pending_edit() {
+            self.status = self
+                .language
+                .text("編集内容を保存するか消去してから撮影してください。")
+                .into();
+            return;
+        }
         if self.recording || self.recording_starting || self.capture_in_progress {
             self.report_capture_failure("録画または撮影が終わってから範囲撮影を開始してください。");
             return;
@@ -8499,6 +9557,7 @@ impl MacShot {
         let viewport_id = egui::ViewportId::from_hash_of("macshot-region-selector");
         let builder = egui::ViewportBuilder::default()
             .with_title(&title)
+            .with_active(true)
             .with_position(self.region_overlay_position)
             .with_inner_size(self.region_overlay_size)
             .with_min_inner_size(self.region_overlay_size)
@@ -8512,6 +9571,7 @@ impl MacShot {
         ctx.show_viewport_immediate(viewport_id, builder, |viewport_ctx, _class| {
             #[cfg(target_os = "macos")]
             raise_window_above_system_bars(&title);
+            viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 
             if viewport_ctx.input(|input| input.key_pressed(egui::Key::Escape))
                 || viewport_ctx.input(|input| input.viewport().close_requested())
@@ -8648,6 +9708,20 @@ impl MacShot {
                         action = Some(Some(bounds));
                         viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
+                    let cancel_rect = egui::Rect::from_min_size(
+                        egui::pos2(screen.right() - 164.0, screen.top() + 16.0),
+                        egui::vec2(148.0, 38.0),
+                    );
+                    if ui
+                        .put(
+                            cancel_rect,
+                            egui::Button::new(language.text("Esc  キャンセル")),
+                        )
+                        .clicked()
+                    {
+                        action = Some(None);
+                        viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 });
             viewport_ctx.request_repaint_after(Duration::from_millis(16));
         });
@@ -8677,45 +9751,86 @@ impl MacShot {
         target: CaptureTarget,
         region: Option<[f32; 4]>,
     ) {
+        self.begin_capture_task(ctx, target, region, false);
+    }
+
+    fn begin_interactive_window_capture(&mut self, ctx: &egui::Context) {
+        if self.recording || self.recording_starting {
+            self.report_capture_failure("録画を終了してからウィンドウ撮影を開始してください。");
+            return;
+        }
         if self.capture_in_progress {
-            self.capture_queue.push_back(target);
+            self.status = "撮影の保存が終わってからウィンドウを選んでください。".into();
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        self.begin_capture_task(ctx, CaptureTarget::ActiveWindow, None, true);
+        #[cfg(not(target_os = "macos"))]
+        self.open_capture_target_picker(ctx);
+    }
+
+    fn begin_capture_task(
+        &mut self,
+        ctx: &egui::Context,
+        target: CaptureTarget,
+        region: Option<[f32; 4]>,
+        interactive_window_selection: bool,
+    ) {
+        self.commit_live_annotation();
+        if self.has_pending_edit() {
+            self.status = self
+                .language
+                .text("編集内容を保存するか消去してから撮影してください。")
+                .into();
+            return;
+        }
+        if self.capture_in_progress {
+            self.capture_queue
+                .push_back(CaptureRequest { target, region });
             self.status = format!(
                 "撮影を順番待ちに追加しました（残り{}枚）。",
                 self.capture_queue.len()
             );
             return;
         }
-        if let Some(message) = capture_target_preflight_error(
-            target,
-            self.recording,
-            self.recording_starting,
-            self.monitors.len(),
-            &self.windows,
-        ) {
-            self.report_capture_failure(message);
-            return;
+        if !interactive_window_selection {
+            if let Some(message) = capture_target_preflight_error(
+                target,
+                self.recording,
+                self.recording_starting,
+                self.monitors.len(),
+                &self.windows,
+            ) {
+                self.report_capture_failure(message);
+                return;
+            }
         }
 
         self.capture_sequence += 1;
         let sequence = self.capture_sequence;
         self.active_capture_sequence = Some(sequence);
         self.last_capture_sequence = sequence;
-        let captured_at = Local::now();
-        let timestamp = captured_at.format("%Y-%m-%d %H:%M:%S").to_string();
-        let file_timestamp = captured_at.format("%Y%m%d-%H%M%S-%3f").to_string();
+        let timestamp_format = self.timestamp_format.clone();
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         let filename_prefix = self.filename_prefix.clone();
         let timestamp_enabled = self.timestamp_enabled;
+        let timestamp_position = self.timestamp_position.clone();
+        let timestamp_background = self.timestamp_background.clone();
         let sender = self.capture_tx.clone();
         let ctx = ctx.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
+        let timeout = if interactive_window_selection {
+            Duration::from_secs(120)
+        } else {
+            Duration::from_secs(15)
+        };
         {
-            self.capture_deadline = Some(Instant::now() + Duration::from_secs(15));
+            self.capture_deadline = Some(Instant::now() + timeout);
             self.capture_cancel = Some(cancelled.clone());
             let watchdog_context = ctx.clone();
             let watchdog_cancelled = cancelled.clone();
             thread::spawn(move || {
-                thread::sleep(Duration::from_secs(15));
+                thread::sleep(timeout);
                 if !watchdog_cancelled.load(Ordering::Relaxed) {
                     restore_main_window(&watchdog_context);
                     watchdog_context.request_repaint();
@@ -8725,7 +9840,11 @@ impl MacShot {
         self.capture_in_progress = true;
         self.active_capture_is_region = region.is_some();
         self.region_annotation_pending = false;
-        self.status = format!("撮影 {} 枚目を保存しています…", sequence);
+        self.status = if interactive_window_selection {
+            "撮影するウィンドウをクリックしてください。Escでキャンセルできます。".into()
+        } else {
+            format!("撮影 {} 枚目を保存しています…", sequence)
+        };
         minimize_main_window_for_capture(&ctx);
         self.update_tray_recording_status();
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -8736,10 +9855,28 @@ impl MacShot {
             let capture = if cancelled.load(Ordering::Relaxed) {
                 Err(capture_timeout_message().to_string())
             } else {
-                capture_target_image(target).and_then(|image| {
+                let capture_result = if interactive_window_selection {
+                    #[cfg(target_os = "macos")]
+                    {
+                        capture_window_by_user_selection(&cancelled)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        capture_target_image(target)
+                    }
+                } else {
+                    capture_target_image(target)
+                };
+                capture_result.and_then(|image| {
                     if cancelled.load(Ordering::Relaxed) {
                         return Err(capture_timeout_message().to_string());
                     }
+                    // Stamp and name the evidence when the target was actually
+                    // captured. Interactive window selection can take a while.
+                    let captured_at = Local::now();
+                    let timestamp = captured_at.format("%Y-%m-%d %H:%M:%S").to_string();
+                    let image_timestamp = capture_image_timestamp(&captured_at, &timestamp_format);
+                    let file_timestamp = captured_at.format("%Y%m%d-%H%M%S-%3f").to_string();
                     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
                     let path =
                         new_evidence_path(&folder, &filename_prefix, &file_timestamp, sequence, "");
@@ -8752,7 +9889,12 @@ impl MacShot {
                         image
                     };
                     if timestamp_enabled {
-                        stamp_timestamp(&mut image, &timestamp);
+                        stamp_timestamp(
+                            &mut image,
+                            &image_timestamp,
+                            &timestamp_position,
+                            &timestamp_background,
+                        );
                     }
                     if cancelled.load(Ordering::Relaxed) {
                         return Err(capture_timeout_message().to_string());
@@ -8793,6 +9935,14 @@ impl MacShot {
                     self.active_capture_is_region = false;
                     let (width, height) = image.dimensions();
                     self.status = capture_saved_status(sequence, &timestamp, width, height);
+                    self.add_notification(AppNotification {
+                        kind: NotificationKind::Capture(sequence),
+                        timestamp: timestamp.clone(),
+                        path: path.clone(),
+                        width: Some(width),
+                        height: Some(height),
+                        detail: None,
+                    });
                     if self.continuous_capture_session_active {
                         self.continuous_capture_saved_count =
                             self.continuous_capture_saved_count.saturating_add(1);
@@ -8824,7 +9974,11 @@ impl MacShot {
                 Err(error) => {
                     self.active_capture_is_region = false;
                     self.region_annotation_pending = false;
-                    self.status = capture_failure_message(&error);
+                    self.status = if error == "__MACSHOT_WINDOW_SELECTION_CANCELLED__" {
+                        "ウィンドウ選択をキャンセルしました。".into()
+                    } else {
+                        capture_failure_message(&error)
+                    };
                     if self.continuous_capture_session_active {
                         self.continuous_capture_failed_count =
                             self.continuous_capture_failed_count.saturating_add(1);
@@ -8918,6 +10072,7 @@ impl MacShot {
             &self.annotations,
             annotation_rgb(&self.annotation_color),
             self.annotation_width,
+            &self.timestamp_background,
         );
         let Some(cropped) = crop_normalized(
             &source,
@@ -8976,6 +10131,108 @@ impl MacShot {
         true
     }
 
+    fn can_overwrite_current_png(&self) -> bool {
+        self.left_path.as_ref().is_some_and(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+        })
+    }
+
+    fn overwrite_annotated_image(&mut self) -> bool {
+        let Some(path) = self.left_path.clone() else {
+            self.status = "上書きする画像ファイルがありません。".into();
+            return false;
+        };
+        let Some(image) = &self.left_image else {
+            return false;
+        };
+        if self.annotations.is_empty() {
+            return false;
+        }
+        if !path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+        {
+            self.status = "上書き保存はPNG画像に対応しています。別名保存をご利用ください。".into();
+            return false;
+        }
+        let output = annotated_image(
+            image,
+            &self.annotations,
+            annotation_rgb(&self.annotation_color),
+            self.annotation_width,
+            &self.timestamp_background,
+        );
+        if let Err(error) = overwrite_png(&path, &output) {
+            self.status = format!("画像を上書きできません: {error}");
+            return false;
+        }
+        self.left_image = Some(DynamicImage::ImageRgba8(output));
+        self.left_texture = None;
+        self.mosaic_preview_texture = None;
+        self.mosaic_preview_key = None;
+        self.annotations.clear();
+        self.live_annotation = None;
+        self.refresh_diff();
+        self.status = format!("画像を上書き保存しました: {}", path.display());
+        true
+    }
+
+    fn show_overwrite_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.overwrite_confirmation {
+            return;
+        }
+        let mut open = true;
+        let mut confirmed = false;
+        let mut cancelled = false;
+        let filename = self
+            .left_path
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.language.text("画像ファイル").to_string());
+        egui::Window::new(self.language.text("上書き保存の確認"))
+            .id(egui::Id::new("overwrite_annotation_confirmation"))
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(
+                    self.language
+                        .text("注釈を反映して、現在の画像ファイルを上書きします。"),
+                );
+                ui.label(egui::RichText::new(filename).strong());
+                ui.label(
+                    self.language
+                        .text("別名の画像は作成されません。上書きしますか？"),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(primary_button(self.language.text("上書き保存")))
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button(self.language.text("キャンセル")).clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        if cancelled {
+            open = false;
+        }
+        self.overwrite_confirmation = open;
+        if confirmed {
+            self.overwrite_confirmation = false;
+            self.overwrite_annotated_image();
+        }
+    }
+
     fn save_annotated_image(&mut self) -> bool {
         let Some(image) = &self.left_image else {
             return false;
@@ -8988,6 +10245,7 @@ impl MacShot {
             &self.annotations,
             annotation_rgb(&self.annotation_color),
             self.annotation_width,
+            &self.timestamp_background,
         );
         let folder = self
             .save_folder
@@ -9073,6 +10331,44 @@ impl MacShot {
         ));
     }
 
+    fn show_clickable_capture_preview(&mut self, ui: &mut egui::Ui) {
+        let Some(image) = &self.left_image else {
+            return;
+        };
+        let size = [image.width() as usize, image.height() as usize];
+        if self.left_texture.is_none() {
+            let rgba = image.to_rgba8();
+            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            self.left_texture = Some(ui.ctx().load_texture(
+                "capture-preview",
+                color,
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        let available = ui.available_size();
+        let scale = (available.x / size[0] as f32)
+            .min(available.y / size[1] as f32)
+            .min(1.0);
+        let display_size = egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale);
+        let (rect, response) = ui.allocate_exact_size(display_size, egui::Sense::click());
+        ui.painter().image(
+            self.left_texture.as_ref().unwrap().id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        if response.clicked() {
+            self.capture_editor_expanded = true;
+        }
+        response.on_hover_text(self.language.text("クリックして拡大・編集"));
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(self.language.text("クリックして拡大・編集"))
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+    }
+
     #[cfg(test)]
     fn show_recording_preview_image(
         ui: &mut egui::Ui,
@@ -9118,13 +10414,6 @@ impl MacShot {
             .min(1.0);
         let display_size = egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale);
         let (rect, response) = ui.allocate_exact_size(display_size, egui::Sense::click_and_drag());
-        ui.painter().image(
-            self.left_texture.as_ref().unwrap().id(),
-            rect,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-
         let to_normalized = |point: egui::Pos2| {
             egui::pos2(
                 ((point.x - rect.min.x) / rect.width()).clamp(0.0, 1.0),
@@ -9166,12 +10455,14 @@ impl MacShot {
                 }
             }
         } else {
-            if response.drag_started()
+            if !matches!(self.edit_tool, EditTool::Text | EditTool::Timestamp)
+                && response.drag_started()
                 && let Some(pointer) = response.interact_pointer_pos()
             {
                 self.crop_drag_start = Some(to_normalized(pointer));
             }
-            if response.dragged()
+            if !matches!(self.edit_tool, EditTool::Text | EditTool::Timestamp)
+                && response.dragged()
                 && let (Some(start), Some(pointer)) =
                     (self.crop_drag_start, response.interact_pointer_pos())
             {
@@ -9179,6 +10470,7 @@ impl MacShot {
                     tool: self.edit_tool,
                     start,
                     end: to_normalized(pointer),
+                    text: self.annotation_text.clone(),
                 });
             }
             if response.drag_stopped() {
@@ -9191,11 +10483,33 @@ impl MacShot {
                 && let Some(pointer) = response.interact_pointer_pos()
             {
                 let point = to_normalized(pointer);
-                if let Some(start) = self.crop_drag_start.take() {
+                if self.edit_tool == EditTool::Text {
+                    self.annotations.push(Annotation {
+                        tool: EditTool::Text,
+                        start: point,
+                        end: point,
+                        text: self.annotation_text.clone(),
+                    });
+                } else if self.edit_tool == EditTool::Timestamp {
+                    let timestamp = self
+                        .left_path
+                        .as_deref()
+                        .map(|path| timestamp_for_evidence_path(path, &self.timestamp_format))
+                        .unwrap_or_else(|| {
+                            capture_image_timestamp(&Local::now(), &self.timestamp_format)
+                        });
+                    self.annotations.push(Annotation {
+                        tool: EditTool::Timestamp,
+                        start: point,
+                        end: point,
+                        text: timestamp,
+                    });
+                } else if let Some(start) = self.crop_drag_start.take() {
                     self.annotations.push(Annotation {
                         tool: self.edit_tool,
                         start,
                         end: point,
+                        text: self.annotation_text.clone(),
                     });
                 } else {
                     self.crop_drag_start = Some(point);
@@ -9204,6 +10518,49 @@ impl MacShot {
                 }
             }
         }
+
+        let mosaic_annotations: Vec<_> = self
+            .annotations
+            .iter()
+            .chain(self.live_annotation.iter())
+            .filter(|annotation| annotation.tool == EditTool::Mosaic)
+            .cloned()
+            .collect();
+        if mosaic_annotations.is_empty() {
+            self.mosaic_preview_key = None;
+            self.mosaic_preview_texture = None;
+        } else {
+            let cache_key = (mosaic_annotations.clone(), self.left_path.clone());
+            if self.mosaic_preview_key.as_ref() != Some(&cache_key)
+                || self.mosaic_preview_texture.is_none()
+            {
+                let preview = annotated_image(
+                    image,
+                    &mosaic_annotations,
+                    annotation_rgb(&self.annotation_color),
+                    self.annotation_width,
+                    &self.timestamp_background,
+                );
+                let color = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
+                self.mosaic_preview_texture = Some(ui.ctx().load_texture(
+                    "mosaic-annotation-preview",
+                    color,
+                    egui::TextureOptions::LINEAR,
+                ));
+                self.mosaic_preview_key = Some(cache_key);
+            }
+        }
+        let preview_texture = self
+            .mosaic_preview_texture
+            .as_ref()
+            .or(self.left_texture.as_ref())
+            .expect("capture preview texture is initialized");
+        ui.painter().image(
+            preview_texture.id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
 
         if self.edit_tool == EditTool::Crop
             && let Some(selection) = self.crop_selection
@@ -9232,7 +10589,7 @@ impl MacShot {
                 egui::StrokeKind::Inside,
             );
         }
-        for annotation in self.annotations.iter().copied().chain(self.live_annotation) {
+        for annotation in self.annotations.iter().chain(self.live_annotation.iter()) {
             let start = rect.min
                 + egui::vec2(
                     annotation.start.x * rect.width(),
@@ -9257,6 +10614,19 @@ impl MacShot {
                         egui::StrokeKind::Inside,
                     );
                 }
+                EditTool::Ellipse => {
+                    let bounds = egui::Rect::from_two_pos(start, end);
+                    let points: Vec<_> = (0..=48)
+                        .map(|step| {
+                            let angle = std::f32::consts::TAU * step as f32 / 48.0;
+                            egui::pos2(
+                                bounds.center().x + bounds.width() * 0.5 * angle.cos(),
+                                bounds.center().y + bounds.height() * 0.5 * angle.sin(),
+                            )
+                        })
+                        .collect();
+                    ui.painter().add(egui::Shape::line(points, stroke));
+                }
                 EditTool::Arrow => {
                     ui.painter().line_segment([start, end], stroke);
                     let angle = (end.y - start.y).atan2(end.x - start.x);
@@ -9268,6 +10638,34 @@ impl MacShot {
                         ui.painter().line_segment([end, tip], stroke);
                     }
                 }
+                EditTool::Text => {
+                    ui.painter().text(
+                        start,
+                        egui::Align2::LEFT_TOP,
+                        &annotation.text,
+                        egui::FontId::proportional(18.0 * (self.annotation_width / 3.0)),
+                        egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                    );
+                }
+                EditTool::Timestamp => {
+                    let galley = ui.painter().layout_no_wrap(
+                        annotation.text.clone(),
+                        egui::FontId::proportional(15.0),
+                        egui::Color32::WHITE,
+                    );
+                    let padding = egui::vec2(5.0, 3.0);
+                    let label_rect =
+                        egui::Rect::from_min_size(start - padding, galley.size() + padding * 2.0);
+                    ui.painter().rect_filled(
+                        label_rect,
+                        3.0,
+                        egui::Color32::from_black_alpha(timestamp_background_alpha(
+                            &self.timestamp_background,
+                        )),
+                    );
+                    ui.painter().galley(start, galley, egui::Color32::WHITE);
+                }
+                EditTool::Mosaic => {}
                 EditTool::Crop => {}
             }
         }
@@ -9319,6 +10717,49 @@ fn compare_images(
 }
 
 impl MacShot {
+    fn add_notification(&mut self, notification: AppNotification) {
+        self.notifications.insert(0, notification);
+        self.notifications.truncate(200);
+        if let Err(error) = save_notifications(&self.notifications) {
+            self.status = format!(
+                "{}: {error}",
+                self.language.text("通知履歴を保存できません")
+            );
+        }
+    }
+
+    fn clear_notification_history(&mut self) {
+        self.notifications.clear();
+        if let Err(error) = save_notifications(&self.notifications) {
+            self.status = format!(
+                "{}: {error}",
+                self.language.text("通知履歴を消去できません")
+            );
+        } else {
+            self.status = self.language.text("通知履歴を消去しました");
+        }
+    }
+
+    fn reveal_notification_file(&mut self, path: &Path) {
+        if !path.exists() {
+            self.status = self.language.text("ファイルが見つかりません");
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        let result = Command::new("open").arg("-R").arg(path).spawn();
+        #[cfg(target_os = "windows")]
+        let result = Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let result = Command::new("xdg-open")
+            .arg(path.parent().unwrap_or_else(|| Path::new(".")))
+            .spawn();
+        if let Err(error) = result {
+            self.status = format!("{}: {error}", self.language.text("Finderで表示できません"));
+        }
+    }
+
     fn target_caption(&self) -> String {
         match self.capture_target {
             CaptureTarget::ActiveWindow => self.language.text("アクティブウィンドウ"),
@@ -9335,6 +10776,194 @@ impl MacShot {
                 .find(|window| window.id == id)
                 .map(window_choice_label)
                 .unwrap_or_else(|| self.language.text("ウィンドウを選択")),
+        }
+    }
+
+    fn open_capture_target_picker(&mut self, ctx: &egui::Context) {
+        self.page = Page::Capture;
+        self.capture_target_picker_open = true;
+        self.status = self
+            .language
+            .text("ショートカットで開きました。撮影対象を選べます。");
+        #[cfg(target_os = "macos")]
+        set_macos_activation_policy(objc2_app_kit::NSApplicationActivationPolicy::Regular);
+        restore_main_window(ctx);
+    }
+
+    fn select_capture_target(&mut self, target: CaptureTarget) {
+        let previous_target = self.capture_target;
+        self.capture_target = target;
+        match self.save_preferences() {
+            Ok(()) => {
+                self.tray_capture_target_text = None;
+                self.update_tray_capture_target();
+            }
+            Err(error) => {
+                self.capture_target = previous_target;
+                self.settings_error = Some(format!("撮影対象を保存できません: {error}"));
+            }
+        }
+    }
+
+    fn show_capture_target_picker(&mut self, ctx: &egui::Context) {
+        if !self.capture_target_picker_open {
+            return;
+        }
+
+        let mut open = true;
+        let mut cancel = false;
+        let mut capture = false;
+        let mut select_region = false;
+        let language = self.language;
+        egui::Window::new(language.text("撮影方法を選択"))
+            .id(egui::Id::new("capture_target_picker"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(620.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(language.text("撮影対象を選んでから撮影してください"));
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .selectable_label(false, language.text("範囲を選択"))
+                        .clicked()
+                    {
+                        select_region = true;
+                    }
+                    for (target, label) in [
+                        (CaptureTarget::ActiveWindow, "アクティブウィンドウ"),
+                        (CaptureTarget::PrimaryDisplay, "デスクトップ（メイン画面）"),
+                        (CaptureTarget::AllDisplays, "全画面（全ディスプレイ）"),
+                    ] {
+                        let selected = self.capture_target == target;
+                        if ui
+                            .selectable_label(selected, language.text(label))
+                            .clicked()
+                        {
+                            self.select_capture_target(target);
+                        }
+                    }
+                });
+
+                if !self.monitors.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(language.text("ディスプレイ")).strong());
+                    ui.horizontal_wrapped(|ui| {
+                        let displays = self
+                            .monitors
+                            .iter()
+                            .enumerate()
+                            .map(|(index, monitor)| {
+                                (
+                                    index,
+                                    monitor.name().unwrap_or_else(|_| {
+                                        format!("{} {}", language.text("Display"), index + 1)
+                                    }),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        for (index, name) in displays {
+                            let target = CaptureTarget::Display(index);
+                            if ui
+                                .selectable_label(
+                                    self.capture_target == target,
+                                    format!("{} — {name}", language.text("Full Display")),
+                                )
+                                .clicked()
+                            {
+                                self.select_capture_target(target);
+                            }
+                        }
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            language.text("選択ウィンドウ（背面でも選択できます）"),
+                        )
+                        .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            language.text("前後に関係なく、選んだウィンドウの内容を撮影します"),
+                        )
+                        .color(TEXT_MUTED),
+                    );
+                    if ui
+                        .button(language.text("↻  ウィンドウ一覧を更新"))
+                        .clicked()
+                    {
+                        match discover_windows() {
+                            Ok(windows) => {
+                                self.windows = windows;
+                                self.reset_tray_menu();
+                            }
+                            Err(error) => self.status = capture_failure_message(&error),
+                        }
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("capture_picker_windows")
+                    .max_height(250.0)
+                    .show(ui, |ui| {
+                        let windows = self.windows.clone();
+                        for window in &windows {
+                            let target = CaptureTarget::Window(window.id);
+                            let label = format!(
+                                "{} — {}\n{} × {} px",
+                                window.app_name, window.title, window.width, window.height
+                            );
+                            if ui
+                                .selectable_label(self.capture_target == target, label)
+                                .clicked()
+                            {
+                                self.select_capture_target(target);
+                            }
+                        }
+                        if self.windows.is_empty() {
+                            ui.label(
+                                language
+                                    .text("ウィンドウ候補がありません。一覧を更新してください。"),
+                            );
+                        }
+                    });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "{}: {}",
+                        language.text("選択中"),
+                        self.target_caption()
+                    ));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(primary_button(language.text("この対象を撮影")))
+                            .clicked()
+                        {
+                            capture = true;
+                        }
+                        if ui.button(language.text("キャンセル")).clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+
+        if cancel {
+            open = false;
+        }
+        self.capture_target_picker_open = open;
+        if select_region {
+            self.capture_target_picker_open = false;
+            self.begin_region_selection(ctx);
+        } else if capture && !self.capture_in_progress {
+            self.capture_target_picker_open = false;
+            self.begin_capture(ctx);
         }
     }
 
@@ -9368,6 +10997,10 @@ impl MacShot {
                     for (page, label) in [
                         (Page::Capture, self.language.page_label(Page::Capture)),
                         (Page::Evidence, self.language.page_label(Page::Evidence)),
+                        (
+                            Page::Notifications,
+                            self.language.page_label(Page::Notifications),
+                        ),
                         (Page::Compare, self.language.page_label(Page::Compare)),
                         (Page::Settings, self.language.page_label(Page::Settings)),
                     ] {
@@ -9522,6 +11155,18 @@ impl MacShot {
                     if ui.add(primary_button(self.language.text("範囲を選択"))).clicked() {
                         self.begin_region_selection(ui.ctx());
                     }
+                    if ui
+                        .add(primary_button(self.language.text("この対象を撮影")))
+                        .clicked()
+                    {
+                        self.begin_capture(ui.ctx());
+                    }
+                    if ui.button(self.language.text("ウィンドウを選んで撮影…")).clicked() {
+                        #[cfg(target_os = "macos")]
+                        self.begin_interactive_window_capture(ui.ctx());
+                        #[cfg(target_os = "windows")]
+                        self.open_capture_target_picker(ui.ctx());
+                    }
                     if ui.button(self.language.text("↻  ウィンドウ一覧を更新")).clicked() {
                         match discover_windows() {
                             Ok(windows) => {
@@ -9536,6 +11181,36 @@ impl MacShot {
                             Err(error) => self.status = capture_failure_message(&error),
                         }
                     }
+                });
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(self.language.text("ショートカットの動作"))
+                            .size(11.0)
+                            .color(TEXT_MUTED),
+                    );
+                    let target_priority = ui.selectable_label(
+                        self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
+                        self.language.text("撮影対象選択を優先"),
+                    );
+                    if target_priority.clicked() {
+                        self.set_capture_shortcut_behavior(CaptureShortcutBehavior::SelectedTarget);
+                    }
+                    let mode_priority = ui.selectable_label(
+                        self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                        self.language.text("各モード優先"),
+                    );
+                    if mode_priority.clicked() {
+                        self.set_capture_shortcut_behavior(CaptureShortcutBehavior::ChooseMode);
+                    }
+                    ui.label(
+                        egui::RichText::new(self.language.text(match self.capture_shortcut_behavior {
+                            CaptureShortcutBehavior::SelectedTarget => "選択中の対象をすぐ撮影します",
+                            CaptureShortcutBehavior::ChooseMode => "ショートカット後に撮影方法を選びます",
+                        }))
+                        .size(10.0)
+                        .color(TEXT_MUTED),
+                    );
                 });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
@@ -9687,7 +11362,11 @@ impl MacShot {
                 for (tool, label) in [
                     (EditTool::Crop, self.language.text("⌗  切り出し")),
                     (EditTool::Rectangle, self.language.text("□  赤枠")),
+                    (EditTool::Ellipse, self.language.text("○  楕円")),
                     (EditTool::Arrow, self.language.text("↗  矢印")),
+                    (EditTool::Text, self.language.text("T  テキスト")),
+                    (EditTool::Timestamp, self.language.text("◷  撮影時刻")),
+                    (EditTool::Mosaic, self.language.text("▦  モザイク")),
                 ] {
                     let selected = self.edit_tool == tool;
                     if ui
@@ -9710,6 +11389,13 @@ impl MacShot {
                         self.edit_tool = tool;
                     }
                 }
+                if self.edit_tool == EditTool::Text {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.annotation_text)
+                            .hint_text(self.language.text("注釈テキスト"))
+                            .desired_width(170.0),
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.annotations.is_empty() {
                         if ui.button(self.language.text("注釈を消去")).clicked() {
@@ -9721,6 +11407,16 @@ impl MacShot {
                             .clicked()
                         {
                             self.save_annotated_image();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_overwrite_current_png(),
+                                egui::Button::new(self.language.text("上書き保存")),
+                            )
+                            .on_hover_text(self.language.text("現在のPNG画像を注釈付きで上書き"))
+                            .clicked()
+                        {
+                            self.overwrite_confirmation = true;
                         }
                     }
                     if self.edit_tool == EditTool::Crop && self.crop_selection.is_some() {
@@ -9743,7 +11439,7 @@ impl MacShot {
         glass_frame().show(ui, |ui| {
             ui.set_min_height(preview_height - 34.0);
             if self.left_image.is_some() {
-                ui.centered_and_justified(|ui| self.show_croppable_image(ui));
+                ui.centered_and_justified(|ui| self.show_clickable_capture_preview(ui));
             } else {
                 ui.vertical_centered(|ui| {
                     ui.add_space((preview_height * 0.2).max(36.0));
@@ -9997,6 +11693,139 @@ impl MacShot {
         self.recording_player_last_pointer_activity = None;
         self.recording_player_error = None;
         self.status.clear();
+    }
+
+    fn show_capture_editor_viewport(&mut self, ctx: &egui::Context) {
+        if !self.capture_editor_expanded {
+            return;
+        }
+        let Some(image) = self.left_image.as_ref() else {
+            self.capture_editor_expanded = false;
+            return;
+        };
+        let (width, height) = image.dimensions();
+        let title = format!(
+            "{} — {} × {} px",
+            self.language.text("画像を拡大して編集"),
+            width,
+            height
+        );
+        let viewport_id = egui::ViewportId::from_hash_of("macshot-capture-editor");
+        let builder = egui::ViewportBuilder::default()
+            .with_title(&title)
+            .with_inner_size([1480.0, 960.0])
+            .with_min_inner_size([720.0, 520.0])
+            .with_resizable(true);
+        let mut close = false;
+        ctx.show_viewport_immediate(viewport_id, builder, |editor_ctx, _class| {
+            if editor_ctx.input(|input| input.viewport().close_requested()) {
+                close = true;
+                editor_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            egui::TopBottomPanel::top("capture_editor_header")
+                .frame(
+                    egui::Frame::new()
+                        .fill(egui::Color32::WHITE)
+                        .inner_margin(egui::Margin::symmetric(18, 10)),
+                )
+                .show(editor_ctx, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new(&title).size(15.0).strong());
+                        if let Some(path) = &self.left_path {
+                            ui.label(
+                                egui::RichText::new(
+                                    path.file_name().unwrap_or_default().to_string_lossy(),
+                                )
+                                .size(11.0)
+                                .color(TEXT_MUTED),
+                            );
+                        }
+                        if ui.button(self.language.text("閉じる")).clicked() {
+                            close = true;
+                            editor_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new(self.language.text("編集ツール"))
+                                .size(11.0)
+                                .color(TEXT_MUTED),
+                        );
+                        for (tool, label) in [
+                            (EditTool::Crop, self.language.text("⌗  切り出し")),
+                            (EditTool::Rectangle, self.language.text("□  赤枠")),
+                            (EditTool::Ellipse, self.language.text("○  楕円")),
+                            (EditTool::Arrow, self.language.text("↗  矢印")),
+                            (EditTool::Text, self.language.text("T  テキスト")),
+                            (EditTool::Timestamp, self.language.text("◷  撮影時刻")),
+                            (EditTool::Mosaic, self.language.text("▦  モザイク")),
+                        ] {
+                            if ui.selectable_label(self.edit_tool == tool, label).clicked() {
+                                self.edit_tool = tool;
+                            }
+                        }
+                        if self.edit_tool == EditTool::Text {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.annotation_text)
+                                    .hint_text(self.language.text("注釈テキスト"))
+                                    .desired_width(170.0),
+                            );
+                        }
+                        if self.edit_tool == EditTool::Crop && self.crop_selection.is_some() {
+                            if ui.button(self.language.text("選択解除")).clicked() {
+                                self.crop_selection = None;
+                                self.crop_drag_start = None;
+                            }
+                            if ui
+                                .add(primary_button(self.language.text("切り出しを別名で保存")))
+                                .clicked()
+                            {
+                                self.save_crop();
+                            }
+                        }
+                        if !self.annotations.is_empty() {
+                            if ui.button(self.language.text("注釈を消去")).clicked() {
+                                self.annotations.clear();
+                                self.live_annotation = None;
+                            }
+                            if ui
+                                .add(primary_button(self.language.text("注釈画像を別名で保存")))
+                                .clicked()
+                            {
+                                self.save_annotated_image();
+                            }
+                            if ui
+                                .add_enabled(
+                                    self.can_overwrite_current_png(),
+                                    egui::Button::new(self.language.text("上書き保存")),
+                                )
+                                .on_hover_text(
+                                    self.language.text("現在のPNG画像を注釈付きで上書き"),
+                                )
+                                .clicked()
+                            {
+                                self.overwrite_confirmation = true;
+                            }
+                        }
+                    });
+                });
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(249, 248, 251))
+                        .inner_margin(egui::Margin::symmetric(16, 14)),
+                )
+                .show(editor_ctx, |ui| {
+                    if self.left_image.is_some() {
+                        ui.centered_and_justified(|ui| self.show_croppable_image(ui));
+                    }
+                });
+            self.show_overwrite_confirmation(editor_ctx);
+        });
+        if close {
+            self.capture_editor_expanded = false;
+        }
     }
 
     fn show_recording_player_viewport(&mut self, ctx: &egui::Context) {
@@ -10742,6 +12571,125 @@ impl MacShot {
         });
     }
 
+    fn show_notifications_page(&mut self, ui: &mut egui::Ui) {
+        let language = self.language;
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(language.page_heading(Page::Notifications))
+                        .size(24.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        language.text("通知履歴はこのMacShot内に最大200件保存されます。"),
+                    )
+                    .color(TEXT_MUTED),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        !self.notifications.is_empty(),
+                        egui::Button::new(language.text("履歴を消去")),
+                    )
+                    .clicked()
+                {
+                    self.clear_notification_history();
+                }
+            });
+        });
+        ui.add_space(14.0);
+        if self.notifications.is_empty() {
+            glass_frame().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(38.0);
+                    ui.label(egui::RichText::new("♧").size(40.0).color(ACCENT_BRIGHT));
+                    ui.label(
+                        egui::RichText::new(language.text("通知履歴"))
+                            .size(18.0)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            language.text("ここに撮影・録画の完了通知が保存されます。"),
+                        )
+                        .color(TEXT_MUTED),
+                    );
+                    ui.add_space(38.0);
+                });
+            });
+            return;
+        }
+
+        egui::ScrollArea::vertical()
+            .id_salt("notification_history")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let notifications = self.notifications.clone();
+                for notification in notifications {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 150))
+                        .corner_radius(egui::CornerRadius::same(13))
+                        .inner_margin(egui::Margin::symmetric(16, 12))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    let title = match notification.kind {
+                                        NotificationKind::Capture(sequence) => format!(
+                                            "{}  ·  {} {}",
+                                            language.text("撮影しました"),
+                                            language.text("撮影"),
+                                            sequence
+                                        ),
+                                        NotificationKind::Recording => {
+                                            language.text("録画を保存しました")
+                                        }
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(title).strong().color(ACCENT_BRIGHT),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&notification.timestamp)
+                                            .color(TEXT_MUTED),
+                                    );
+                                    if let (Some(width), Some(height)) =
+                                        (notification.width, notification.height)
+                                    {
+                                        ui.label(
+                                            language.message(&capture_size_label(width, height)),
+                                        );
+                                    }
+                                    ui.label(
+                                        egui::RichText::new(
+                                            notification.path.display().to_string(),
+                                        )
+                                        .size(12.0),
+                                    );
+                                    if let Some(detail) = notification.detail.as_deref() {
+                                        ui.label(
+                                            egui::RichText::new(language.message(detail))
+                                                .size(11.0)
+                                                .color(TEXT_MUTED),
+                                        );
+                                    }
+                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button(language.text("Finderで表示")).clicked()
+                                        {
+                                            self.reveal_notification_file(&notification.path);
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                    ui.add_space(7.0);
+                }
+            });
+    }
+
     fn show_settings_page(&mut self, ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(self.language.page_heading(Page::Settings))
@@ -10785,8 +12733,11 @@ impl MacShot {
             self.tray_capture_active_item = None;
             self.tray_capture_primary_item = None;
             self.tray_capture_all_item = None;
+            self.tray_capture_current_target_item = None;
+            self.tray_capture_shortcut_target_item = None;
+            self.tray_capture_shortcut_mode_item = None;
             self.tray_capture_status_item = None;
-            self.tray_selected_capture_item = None;
+            self.tray_window_selection_item = None;
             self.tray_continuous_capture_item = None;
             self.tray_recording_status_item = None;
             self.tray_recording_action_item = None;
@@ -10809,8 +12760,11 @@ impl MacShot {
                 self.tray_capture_active_item = None;
                 self.tray_capture_primary_item = None;
                 self.tray_capture_all_item = None;
+                self.tray_capture_current_target_item = None;
+                self.tray_capture_shortcut_target_item = None;
+                self.tray_capture_shortcut_mode_item = None;
                 self.tray_capture_status_item = None;
-                self.tray_selected_capture_item = None;
+                self.tray_window_selection_item = None;
                 self.tray_continuous_capture_item = None;
                 self.tray_recording_status_item = None;
                 self.tray_recording_action_item = None;
@@ -11475,6 +13429,49 @@ impl MacShot {
                 ui.add(egui::TextEdit::singleline(&mut self.filename_prefix).desired_width(240.0));
                 ui.add_space(8.0);
                 ui.checkbox(&mut self.timestamp_enabled, self.language.text("画像に撮影日時を表示"));
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(self.language.text("タイムスタンプ形式")).size(11.0).color(TEXT_MUTED));
+                egui::ComboBox::from_id_salt("timestamp_format_setting")
+                    .selected_text(match self.timestamp_format.as_str() {
+                        "date" => self.language.text("日付のみ"),
+                        "time" => self.language.text("時刻のみ"),
+                        "datetime_millis" => self.language.text("日時（ミリ秒）"),
+                        "japanese" => self.language.text("日本語日時"),
+                        _ => self.language.text("日時"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.timestamp_format, "datetime".into(), self.language.text("日時"));
+                        ui.selectable_value(&mut self.timestamp_format, "date".into(), self.language.text("日付のみ"));
+                        ui.selectable_value(&mut self.timestamp_format, "time".into(), self.language.text("時刻のみ"));
+                        ui.selectable_value(&mut self.timestamp_format, "datetime_millis".into(), self.language.text("日時（ミリ秒）"));
+                        ui.selectable_value(&mut self.timestamp_format, "japanese".into(), self.language.text("日本語日時"));
+                    });
+                ui.label(egui::RichText::new(self.language.text("表示位置")).size(11.0).color(TEXT_MUTED));
+                egui::ComboBox::from_id_salt("timestamp_position_setting")
+                    .selected_text(match self.timestamp_position.as_str() {
+                        "top_left" => self.language.text("左上"),
+                        "top_right" => self.language.text("右上"),
+                        "bottom_left" => self.language.text("左下"),
+                        _ => self.language.text("右下"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.timestamp_position, "top_left".into(), self.language.text("左上"));
+                        ui.selectable_value(&mut self.timestamp_position, "top_right".into(), self.language.text("右上"));
+                        ui.selectable_value(&mut self.timestamp_position, "bottom_left".into(), self.language.text("左下"));
+                        ui.selectable_value(&mut self.timestamp_position, "bottom_right".into(), self.language.text("右下"));
+                    });
+                ui.label(egui::RichText::new(self.language.text("タイムスタンプ背景")).size(11.0).color(TEXT_MUTED));
+                egui::ComboBox::from_id_salt("timestamp_background_setting")
+                    .selected_text(match self.timestamp_background.as_str() {
+                        "none" => self.language.text("背景なし"),
+                        "dark" => self.language.text("濃い背景"),
+                        _ => self.language.text("薄い背景"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.timestamp_background, "none".into(), self.language.text("背景なし"));
+                        ui.selectable_value(&mut self.timestamp_background, "subtle".into(), self.language.text("薄い背景"));
+                        ui.selectable_value(&mut self.timestamp_background, "dark".into(), self.language.text("濃い背景"));
+                    });
                 ui.checkbox(&mut self.show_capture_notice, self.language.text("撮影後に完了小窓を表示"));
                 let keep_region_changed = ui.checkbox(
                     &mut self.keep_region_in_continuous,
@@ -11854,13 +13851,20 @@ impl eframe::App for MacShot {
                     .show(ui, |ui| match self.page {
                         Page::Capture => self.show_capture_page(ui, ctx),
                         Page::Evidence => self.show_evidence_page(ui),
+                        Page::Notifications => self.show_notifications_page(ui),
                         Page::Compare => self.show_compare_page(ui),
                         Page::Settings => self.show_settings_page(ui),
                     });
             });
 
+        self.show_capture_editor_viewport(ctx);
+        self.show_pending_edit_navigation_confirmation(ctx);
+        if !self.capture_editor_expanded {
+            self.show_overwrite_confirmation(ctx);
+        }
         self.show_recording_player_viewport(ctx);
         self.show_recording_rename_dialog(ctx);
+        self.show_capture_target_picker(ctx);
 
         if should_show_completion_notice(self.page) {
             if let Some(notice) = &self.capture_notice {
@@ -12841,12 +14845,17 @@ mod tests {
             capture_hotkey: "Alt+Shift+KeyS",
             recording_hotkey: "Control+Alt+KeyR",
             capture_target: "window:123",
+            capture_shortcut_behavior: CaptureShortcutBehavior::ChooseMode,
             timestamp_enabled: false,
+            timestamp_format: "datetime_millis",
+            timestamp_position: "top_left",
+            timestamp_background: "none",
             filename_prefix: "案件_β",
             show_capture_notice: false,
             keep_region_in_continuous: true,
             annotation_color: "blue",
             annotation_width: 3.5,
+            annotation_text: "確認",
             save_folder: Path::new("/tmp/MacShot=Evidence"),
             auto_import_native_captures: true,
             recording_format: RecordingFormat::Mp4,
@@ -12874,8 +14883,24 @@ mod tests {
             "window:123"
         );
         assert_eq!(
+            parse_setting(&serialized, "capture_shortcut_behavior", "selected_target"),
+            "choose_mode"
+        );
+        assert_eq!(
             parse_setting(&serialized, "timestamp_enabled", "true"),
             "false"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "timestamp_format", "datetime"),
+            "datetime_millis"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "timestamp_position", "bottom_right"),
+            "top_left"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "timestamp_background", "subtle"),
+            "none"
         );
         assert_eq!(
             parse_setting(&serialized, "filename_prefix", "evidence"),
@@ -12890,6 +14915,10 @@ mod tests {
             "blue"
         );
         assert_eq!(parse_setting(&serialized, "annotation_width", "2"), "3.5");
+        assert_eq!(
+            parse_setting(&serialized, "annotation_text", "注釈"),
+            "確認"
+        );
         assert_eq!(
             parse_setting(&serialized, "save_folder", "/default"),
             "/tmp/MacShot=Evidence"
@@ -12943,7 +14972,13 @@ mod tests {
         ] {
             assert_eq!(AppLanguage::from_setting(setting), language);
             assert_eq!(language.setting_value(), setting);
-            for page in [Page::Capture, Page::Evidence, Page::Compare, Page::Settings] {
+            for page in [
+                Page::Capture,
+                Page::Evidence,
+                Page::Notifications,
+                Page::Compare,
+                Page::Settings,
+            ] {
                 assert!(!language.page_label(page).is_empty());
             }
         }
@@ -13805,7 +15840,10 @@ mod tests {
         app.active_capture_sequence = Some(42);
         app.capture_deadline = Some(Instant::now() - Duration::from_millis(1));
         app.capture_cancel = Some(cancelled.clone());
-        app.capture_queue.push_back(CaptureTarget::PrimaryDisplay);
+        app.capture_queue.push_back(CaptureRequest {
+            target: CaptureTarget::PrimaryDisplay,
+            region: None,
+        });
         app.continuous_capture_session_active = true;
         app.capture_tx
             .send((42, Err("late capture failure".to_string())))
@@ -13989,26 +16027,30 @@ mod tests {
         let mut image = ImageBuffer::from_pixel(100, 100, background);
         draw_annotation(
             &mut image,
-            Annotation {
+            &Annotation {
                 tool: EditTool::Rectangle,
                 start: egui::pos2(0.1, 0.1),
                 end: egui::pos2(0.8, 0.8),
+                text: String::new(),
             },
             annotation_rgb("red"),
             3.0,
+            "subtle",
         );
         assert_eq!(*image.get_pixel(10, 10), Rgba([255, 38, 38, 255]));
         assert_eq!(*image.get_pixel(50, 50), background);
 
         draw_annotation(
             &mut image,
-            Annotation {
+            &Annotation {
                 tool: EditTool::Arrow,
                 start: egui::pos2(0.1, 0.5),
                 end: egui::pos2(0.8, 0.5),
+                text: String::new(),
             },
             annotation_rgb("blue"),
             3.0,
+            "subtle",
         );
         assert_eq!(*image.get_pixel(50, 50), Rgba([30, 130, 255, 255]));
     }
@@ -14016,7 +16058,7 @@ mod tests {
     #[test]
     fn timestamp_stamp_preserves_dimensions_and_draws_text() {
         let mut image = ImageBuffer::from_pixel(320, 100, Rgba([0, 0, 0, 255]));
-        stamp_timestamp(&mut image, "2026-10-25 19:05:12");
+        stamp_timestamp(&mut image, "2026-10-25 19:05:12", "bottom_right", "subtle");
 
         assert_eq!(image.dimensions(), (320, 100));
         assert!(
@@ -14176,5 +16218,56 @@ mod tests {
             capture_size_label(notice.width, notice.height),
             "画像サイズ: 2067 × 1327 px"
         );
+    }
+
+    #[test]
+    fn moving_between_evidence_keeps_pending_annotations_until_resolved() {
+        let current = PathBuf::from("current.png");
+        let mut app = MacShot {
+            left_path: Some(current.clone()),
+            editing_queue: vec![current.clone(), PathBuf::from("next.png")],
+            editing_index: Some(0),
+            annotations: vec![Annotation {
+                tool: EditTool::Rectangle,
+                start: egui::pos2(0.1, 0.1),
+                end: egui::pos2(0.8, 0.8),
+                text: String::new(),
+            }],
+            ..MacShot::default()
+        };
+
+        app.move_in_edit_queue(1);
+
+        assert_eq!(app.left_path, Some(current));
+        assert_eq!(app.annotations.len(), 1);
+        assert!(matches!(
+            app.pending_edit_navigation,
+            Some(PendingEditNavigation::Queue { direction: 1 })
+        ));
+    }
+
+    #[test]
+    fn opening_another_evidence_defers_while_edits_are_pending() {
+        let current = PathBuf::from("current.png");
+        let target = PathBuf::from("target.png");
+        let mut app = MacShot {
+            left_path: Some(current.clone()),
+            annotations: vec![Annotation {
+                tool: EditTool::Mosaic,
+                start: egui::pos2(0.2, 0.2),
+                end: egui::pos2(0.4, 0.4),
+                text: String::new(),
+            }],
+            ..MacShot::default()
+        };
+
+        app.open_evidence_image(vec![target.clone()], 0);
+
+        assert_eq!(app.left_path, Some(current));
+        assert_eq!(app.annotations.len(), 1);
+        assert!(matches!(
+            app.pending_edit_navigation,
+            Some(PendingEditNavigation::OpenEvidence { queue, index: 0 }) if queue == vec![target]
+        ));
     }
 }
