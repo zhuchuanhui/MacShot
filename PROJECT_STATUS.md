@@ -1,12 +1,12 @@
 # Project Status
 
-## v1.4.2 Release candidate — 2026-11-01
+## v1.4.2 Release — 2026-11-01
 
 - 最新公開版はv1.4.1です。Windows実機報告を受け、前面ウィンドウ検出にプロセス照合と短時間の再試行、一般的なアプリ名の多言語検索、連続撮影時の範囲維持、ポインター解放を取りこぼした場合の注釈確定補完を加えました。互換性を保つ不具合修正のため、次版をv1.4.2とします。
 - Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.2-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.2`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build. It is not notarized.
 - Prepared `output/release/MacShot-v1.4.2-macos-arm64.zip` (SHA-256 `d8b608c0e74ae9814a8e669b1cd46c95fde3d2d3d5b645141336cfd44a010a45`) and `output/release/MacShot-v1.4.2-windows-x64.zip` (SHA-256 `e71ff1b6c414eb8b4915da626a23ab50d787b952eb9bab73f36e3e59b8995376`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive contains a PE32+ x86-64 GUI executable, required runtime DLLs, and notices.
 - `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 112-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. The reported Windows workflows have not yet been rechecked on a Windows device.
-- Publication details will be recorded after upload verification.
+- Published as [GitHub Release v1.4.2](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.2), tagged at source commit `7ff3e73cd94b8677d4f3b8a52c2f0bd147ee49d1` (`fix(windows): refine capture and editing workflows`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.1 Release — 2026-11-01
 
