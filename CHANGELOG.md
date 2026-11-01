@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.9 — 2026-11-01
+
+- Reorganized menu bar actions into screenshot, recording, utility, and quit sections, keeping the quit action at the bottom.
+
 ## 1.4.8 — 2026-11-01
 
 - Added recording target selection for the primary display, all displays, an individual window, or a selected screen region. Region recordings are cropped per frame, and all-display recordings are composed across monitor positions and scales.

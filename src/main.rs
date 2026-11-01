@@ -8724,6 +8724,7 @@ impl MacShot {
             MenuItem::with_id("macshot.quit", self.language.tray_label("quit"), true, None);
         let capture_separator = PredefinedMenuItem::separator();
         let recording_separator = PredefinedMenuItem::separator();
+        let utility_separator = PredefinedMenuItem::separator();
         let quit_separator = PredefinedMenuItem::separator();
         let menu = match Menu::with_items(&[
             &show_window_item,
@@ -8735,18 +8736,18 @@ impl MacShot {
             &capture_primary_item,
             &capture_all_item,
             &capture_current_target_item,
+            &capture_window_selection_item,
             &shortcut_target_item,
             &shortcut_mode_item,
-            &capture_window_selection_item,
-            &native_screenshot_item,
             &recording_separator,
-            &continuous_capture_item,
-            &capture_status_item,
-            &quit_separator,
             &recording_mode_submenu,
             &recording_item,
             &recording_status_item,
-            &PredefinedMenuItem::separator(),
+            &utility_separator,
+            &native_screenshot_item,
+            &continuous_capture_item,
+            &capture_status_item,
+            &quit_separator,
             &quit_item,
         ]) {
             Ok(menu) => menu,

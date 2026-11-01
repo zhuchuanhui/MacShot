@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.4.9 Release — 2026-11-01
+
+- メニューバーをスクリーンショット、録画、補助操作、終了の順に整理しました。スクリーンショットのショートカット優先設定は撮影操作群の最後へ移し、録画操作の後にmacOS標準スクリーンショット、連続撮影と状態をまとめています。終了項目は最下部に残しました。互換性を保つUI整理としてv1.4.9に反映しました。
+- macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、`cargo fmt --all -- --check`、`git diff --check`が成功しました。変更確認時にはmacOS/Windows x64 GNUの`cargo check --all-targets`も成功しています。完成済み.appは`output/release/MacShot-v1.4.9-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.9`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.4.9-macos-arm64.zip`（SHA-256 `122c5529d252ef79511b1a23c92e125b24c6b02b5e3d9d5a1045ceaa9c44bd52`）と`output/release/MacShot-v1.4.9-windows-x64.zip`（SHA-256 `b472b4aafa5e93eb6d126046dfa0a3174e775fdca8edafb030b0c484cd3854b7`）。ZIP整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- メニューバーの実表示は未確認です。自動テストは実行していません。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、ビルドと梱包は成功しました。
+- GitHub Releaseへの公開結果を追記します。
+
 ## v1.4.8 Release — 2026-11-01
 
 - 録画開始前に対象を選べるようにしました。メイン画面の録画ボタンと録画ショートカットは録画モード選択を開き、メニューバーにはスクリーンショット項目と分けた録画専用サブメニューを追加しました。デスクトップ（メイン画面）、すべてのディスプレイ、一覧から選ぶウィンドウ、ドラッグで指定する範囲から選べます。スクリーンショット用のメニューバー項目と設定は分離したままです。
