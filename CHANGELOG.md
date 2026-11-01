@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.5 — 2026-11-01
+
+- Fixed Windows window discovery and capture by enumerating visible native windows and capturing the selected HWND directly, including standard dialogs through their owner window.
+
 ## 1.4.4 — 2026-11-01
 
 - Improved Windows active-window capture by tracking foreground-window changes and refusing to save a different window when the intended target cannot be identified.

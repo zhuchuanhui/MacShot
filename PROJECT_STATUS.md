@@ -1,8 +1,16 @@
 # Project Status
 
+## v1.4.5 Release candidate — 2026-11-01
+
+- 最新公開版はv1.4.4です。Windowsで撮影対象一覧にメモ帳がなく、アクティブ撮影が「開く」ダイアログになる問題に対し、表示中のネイティブHWND列挙とHWND直接撮影・録画を導入しました。標準ダイアログは所有元ウィンドウへ解決します。互換性を保つ修正のため次版はv1.4.5です。
+- Windows x64 GNUとmacOS arm64のv1.4.5 release buildが成功しました。xcap 0.9.8はネイティブHWND連携用に`vendor/xcap`でローカル改修し、プロジェクトから参照するためvendorソースもリポジトリに含めます。Windowsビルドではrust-objcopyのlibLLVM.dylib不足でデバッグ情報を除去できない警告が出ましたが、ビルドは成功しました。macOS buildではvendor/xcap内の2つの非推奨API警告が出ましたが、ビルドは成功しました。
+- 完成済み.appは`output/release/MacShot-v1.4.5-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.5`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOS buildのUUIDが一致します。公証はしていません。
+- `output/release/MacShot-v1.4.5-macos-arm64.zip`のSHA-256は`1ebac3971b4278054503c282abcfd0ef179e8488e08f95ca512e6a93976f8db0`、`output/release/MacShot-v1.4.5-windows-x64.zip`は`158a1f97dd9e05f83279f368644bc4e72bbdc1e6574f4161219f631df8889ce9`です。両ZIPの整合性とローカルチェックサム検証が成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。テストは今回実行していません。Windows実機でのメモ帳一覧、アクティブ撮影、ショートカット撮影は未確認です。GitHub CI workflowはありません。公開結果はアップロード検証後に追記します。
+
 ## v1.4.4 Release — 2026-11-01
 
-- 最新公開版はv1.4.3です。Windows実機でメモ帳のアクティブ撮影を指定した際にCodexの画面を保存する誤撮影が再現したため、前景ウィンドウ変更通知を追跡し、目的の対象を特定できない場合は撮影せず失敗を返すようにしました。撮影対象カードに常時表示する検索欄を加え、一覧を開く際に候補を再取得します。互換性を保つ不具合修正のため、次版はv1.4.4です。
+- v1.4.4公開後のWindows実機再検証では、最初のアクティブ撮影が「開く」ダイアログを写し、その後の撮影とショートカット撮影は失敗しました。メモ帳は検索候補に出ませんでした。対象不明時に余分な画像を保存しない動作は確認されました。
 - Windows x64 GNUとmacOSの`cargo check --all-targets`、既存112テスト、書式・差分チェックは変更作業時に成功しています。`output/release/MacShot-v1.4.4-rc.1-windows-x64.zip`（SHA-256 `c4e87aa223fe28087aa2a1b432bc1bfa84caa251c3d61740d8183fa662f88ce4`）は確認用候補で、正式版向けには両OSを再ビルドします。Windows実機確認は未実施です。
 - macOS arm64/Windows x64 GNUのv1.4.4 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.4-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.4`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.4-macos-arm64.zip`のSHA-256は`7b992e6d90d8c5f33ed76879b81649674679c0e89bfb7a9365476aee9085b46a`、`output/release/MacShot-v1.4.4-windows-x64.zip`は`42e8b1ef36388e6fab69defa49b4fbf6cff4b16aa5af630cdd789c4d1b2114b8`です。両ZIPの整合性・ローカルチェックサム検証が成功しました。Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。

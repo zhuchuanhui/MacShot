@@ -3690,8 +3690,14 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Ok(Window::all()
-            .map_err(|error| error.to_string())?
+        #[cfg(target_os = "windows")]
+        let windows = enumerate_native_windows()?
+            .into_iter()
+            .filter_map(|id| Window::from_native_id(id).ok())
+            .collect::<Vec<_>>();
+        #[cfg(not(target_os = "windows"))]
+        let windows = Window::all().map_err(|error| error.to_string())?;
+        Ok(windows
             .into_iter()
             .filter_map(|window| {
                 let id = window.id().ok()?;
@@ -3717,6 +3723,33 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
                 })
             })
             .collect())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn enumerate_native_windows() -> Result<Vec<u32>, String> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    unsafe extern "system" fn collect(hwnd: *mut c_void, state: isize) -> i32 {
+        let windows = unsafe { &mut *(state as *mut Vec<u32>) };
+        let visible = unsafe { IsWindowVisible(hwnd) } != 0;
+        let mut process_id = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut process_id) };
+        if visible && process_id != 0 && process_id != std::process::id() {
+            windows.push(hwnd as usize as u32);
+        }
+        1
+    }
+
+    let mut windows = Vec::new();
+    let result = unsafe { EnumWindows(Some(collect), &mut windows as *mut _ as isize) };
+    if result == 0 {
+        Err("Windowsのウィンドウ一覧を取得できません。".into())
+    } else {
+        Ok(windows)
     }
 }
 
@@ -5956,21 +5989,24 @@ fn find_active_window() -> Result<Window, String> {
         #[cfg(target_os = "windows")]
         {
             for _ in 0..10 {
-                let windows = Window::all().map_err(|error| error.to_string())?;
-                let focused_index = windows.iter().position(|window| {
-                    is_candidate(window) && window.is_focused().unwrap_or(false)
+                let windows = enumerate_native_windows()?
+                    .into_iter()
+                    .filter_map(|id| Window::from_native_id(id).ok())
+                    .collect::<Vec<_>>();
+                let foreground_id = foreground_window_id().map(|id| {
+                    foreground_capture_window(id as usize as *mut std::ffi::c_void) as usize as u32
                 });
-                let foreground_pid = foreground_window_process_id();
-                let foreground_process_index = foreground_pid.and_then(|pid| {
-                    windows
+                let tracked_id = LAST_EXTERNAL_FOREGROUND_WINDOW_ID.load(Ordering::Relaxed);
+                for id in [foreground_id, (tracked_id != 0).then_some(tracked_id)]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(window) = windows
                         .iter()
-                        .position(|window| is_candidate(window) && window.pid().ok() == Some(pid))
-                });
-                if let Some(index) = focused_index.or(foreground_process_index) {
-                    return windows
-                        .into_iter()
-                        .nth(index)
-                        .ok_or_else(|| "アクティブウィンドウが見つかりません。".to_string());
+                        .find(|window| window.id().ok() == Some(id) && is_candidate(window))
+                    {
+                        return Ok(window.clone());
+                    }
                 }
                 thread::sleep(Duration::from_millis(50));
             }
@@ -6036,11 +6072,33 @@ unsafe extern "system" fn foreground_window_event_callback(
     if hwnd.is_null() {
         return;
     }
+    let hwnd = foreground_capture_window(hwnd);
     let mut process_id = 0;
     unsafe { GetWindowThreadProcessId(hwnd, &mut process_id) };
     if process_id != 0 && process_id != std::process::id() {
         LAST_EXTERNAL_FOREGROUND_WINDOW_ID.store(hwnd as usize as u32, Ordering::Relaxed);
     }
+}
+
+#[cfg(target_os = "windows")]
+fn foreground_capture_window(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+) -> windows_sys::Win32::Foundation::HWND {
+    use windows_sys::Win32::{
+        Foundation::MAX_PATH,
+        UI::WindowsAndMessaging::{GW_OWNER, GetClassNameW, GetWindow},
+    };
+
+    let mut class_name = [0u16; MAX_PATH as usize];
+    let length = unsafe { GetClassNameW(hwnd, class_name.as_mut_ptr(), class_name.len() as i32) };
+    let class_name = String::from_utf16_lossy(&class_name[..length.max(0) as usize]);
+    if class_name == "#32770" {
+        let owner = unsafe { GetWindow(hwnd, GW_OWNER) };
+        if !owner.is_null() {
+            return owner;
+        }
+    }
+    hwnd
 }
 
 #[cfg(target_os = "windows")]
@@ -6221,11 +6279,21 @@ impl RecordingCapture {
             {
                 let window = match target {
                     CaptureTarget::ActiveWindow => find_active_window()?,
-                    CaptureTarget::Window(window_id) => Window::all()
-                        .map_err(|error| error.to_string())?
-                        .into_iter()
-                        .find(|window| window.id().ok() == Some(window_id))
-                        .ok_or_else(|| "録画するウィンドウが見つかりません。".to_string())?,
+                    CaptureTarget::Window(window_id) => {
+                        #[cfg(target_os = "windows")]
+                        {
+                            Window::from_native_id(window_id)
+                                .map_err(|_| "録画するウィンドウが見つかりません。".to_string())?
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            Window::all()
+                                .map_err(|error| error.to_string())?
+                                .into_iter()
+                                .find(|window| window.id().ok() == Some(window_id))
+                                .ok_or_else(|| "録画するウィンドウが見つかりません。".to_string())?
+                        }
+                    }
                     _ => unreachable!("window capture target was checked above"),
                 };
                 Ok(Self {
@@ -6530,6 +6598,10 @@ fn capture_target_image(target: CaptureTarget) -> Result<image::RgbaImage, Strin
             }
             #[cfg(not(target_os = "macos"))]
             {
+                #[cfg(target_os = "windows")]
+                let window = Window::from_native_id(id)
+                    .map_err(|_| "選択したウィンドウが見つかりません。".to_string())?;
+                #[cfg(not(target_os = "windows"))]
                 let window = Window::all()
                     .map_err(|error| error.to_string())?
                     .into_iter()
@@ -8075,11 +8147,17 @@ fn write_gif_frame_with_speed<W: Write>(
 impl MacShot {
     #[cfg(target_os = "windows")]
     fn resolve_active_window_target(&self) -> Option<CaptureTarget> {
-        let windows = Window::all().ok()?;
+        let windows = enumerate_native_windows()
+            .ok()?
+            .into_iter()
+            .filter_map(|id| Window::from_native_id(id).ok())
+            .collect::<Vec<_>>();
         let is_external_captureable = |window: &Window| {
             is_captureable_window(window) && window.pid().ok() != Some(std::process::id())
         };
-        let foreground_id = foreground_window_id();
+        let foreground_id = foreground_window_id().map(|id| {
+            foreground_capture_window(id as usize as *mut std::ffi::c_void) as usize as u32
+        });
         let selected = foreground_id
             .filter(|id| {
                 windows

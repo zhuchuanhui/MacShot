@@ -1,6 +1,6 @@
 [package]
 name = "macshot"
-version = "1.4.4"
+version = "1.4.5"
 edition = "2024"
 build = "build.rs"
 description = "Screenshot evidence capture and comparison tool"
@@ -45,6 +45,9 @@ zvidlib-core = "=0.5.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
+
+[patch.crates-io]
+xcap = { path = "vendor/xcap" }
 
 [profile.release]
 lto = true
