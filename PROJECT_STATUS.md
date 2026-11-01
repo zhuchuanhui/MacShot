@@ -1,5 +1,14 @@
 # Project Status
 
+## v1.6.1 Release — 2026-11-01
+
+- メイン画面のタブとページ見出しを「◉ スクリーンショット」「● 画面録画」に分け、対象欄にも対応するアイコンと用途を表示します。メニューバーにも同じアイコン付きのスクリーンショット／画面録画見出しを置き、項目をグループ化します。4言語に反映しました。
+- v1.6.0公開後の表示改善のため次版をpatch更新のv1.6.1としました。macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。
+- 完成済み.appは`output/release/MacShot-v1.6.1-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.6.1`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。起動してスクリーンショット／画面録画ページの見出しと対象欄を確認しました。メニューバーの実画面は未確認です。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.6.1-macos-arm64.zip`（SHA-256 `441c2246d467908d083915bd4c14090e218e54ab147390e3889b91efa337fe07`）と`output/release/MacShot-v1.6.1-windows-x64.zip`（SHA-256 `5782aea2fedf5ac3bff685665e3a62342aac900dd6d599f4c1b836ff2381d476`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- Windows cross-buildでは`rust-objcopy`が`libLLVM.dylib`不足でdebug infoを除去できない警告、macOS buildではvendor/xcapの非推奨API警告がありましたが、両release buildと梱包は成功しました。メニューバーの実画面、Windows実機動作は未確認です。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- GitHub Releaseは公開準備済みです。タグ・4つの添付ファイルを公開後に確認して結果を記録します。production deploymentは行いません。
+
 ## v1.6.0 Release — 2026-11-01
 
 - 録画のショートカット動作をスクリーンショットと別設定にし、「録画対象選択を優先」（保存済み対象をすぐ録画）と「録画方法優先」（対象選択画面を開く）をメニューバーと「録画・編集」画面から切り替えられるようにしました。設定は既存の設定ファイルへ保存し、起動時に読み込みます。

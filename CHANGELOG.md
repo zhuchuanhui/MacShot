@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 — 2026-11-01
+
+- Clarified screenshot and screen recording labels across page tabs, page headings, target selectors, and grouped menu bar actions in all four languages.
+
 ## 1.6.0 — 2026-11-01
 
 - Added a recording shortcut behavior setting independent of screenshot shortcuts: start recording the saved target immediately or open the recording mode chooser.

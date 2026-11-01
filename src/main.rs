@@ -662,7 +662,14 @@ impl AppLanguage {
             "画像を拡大して編集" => {
                 ["Enlarged Image Editor", "放大图片并编辑", "放大圖片並編輯"]
             }
-            "撮影対象" => ["Capture Target", "截图目标", "截圖目標"],
+            "スクリーンショットの撮影対象" => {
+                ["◉ Screenshot Target", "◉ 截图目标", "◉ 螢幕截圖目標"]
+            }
+            "画面録画の対象" => [
+                "● Screen Recording Target",
+                "● 屏幕录制目标",
+                "● 螢幕錄影目標",
+            ],
             "ショートカットの動作" => ["Shortcut Behavior", "快捷键行为", "快速鍵行為"],
             "この対象を撮影" => ["Capture This Target", "截取此目标", "擷取此目標"],
             "撮影対象選択を優先" => {
@@ -2681,26 +2688,26 @@ impl AppLanguage {
 
     fn page_heading(self, page: Page) -> &'static str {
         match (self, page) {
-            (Self::Japanese, Page::Capture) => "証跡の撮影を始めましょう",
-            (Self::Japanese, Page::Recording) => "録画を作成して編集しましょう",
+            (Self::Japanese, Page::Capture) => "スクリーンショットを撮影・編集",
+            (Self::Japanese, Page::Recording) => "画面録画を作成・編集",
             (Self::Japanese, Page::Evidence) => "撮影済みの画像・録画",
             (Self::Japanese, Page::Notifications) => "通知履歴",
             (Self::Japanese, Page::Compare) => "画像比較",
             (Self::Japanese, Page::Settings) => "設定",
-            (Self::English, Page::Capture) => "Start capturing evidence",
-            (Self::English, Page::Recording) => "Record and edit your clips",
+            (Self::English, Page::Capture) => "Capture and edit screenshots",
+            (Self::English, Page::Recording) => "Record and edit screen videos",
             (Self::English, Page::Evidence) => "Captured Images & Recordings",
             (Self::English, Page::Notifications) => "Notifications",
             (Self::English, Page::Compare) => "Compare Images",
             (Self::English, Page::Settings) => "Settings",
-            (Self::SimplifiedChinese, Page::Capture) => "开始截取证据",
-            (Self::SimplifiedChinese, Page::Recording) => "录制并编辑视频",
+            (Self::SimplifiedChinese, Page::Capture) => "截取并编辑屏幕截图",
+            (Self::SimplifiedChinese, Page::Recording) => "录制并编辑屏幕视频",
             (Self::SimplifiedChinese, Page::Evidence) => "已截取的图像与录屏",
             (Self::SimplifiedChinese, Page::Notifications) => "通知历史",
             (Self::SimplifiedChinese, Page::Compare) => "图像比较",
             (Self::SimplifiedChinese, Page::Settings) => "设置",
-            (Self::TraditionalChinese, Page::Capture) => "開始擷取證據",
-            (Self::TraditionalChinese, Page::Recording) => "錄製並編輯影片",
+            (Self::TraditionalChinese, Page::Capture) => "擷取並編輯螢幕截圖",
+            (Self::TraditionalChinese, Page::Recording) => "錄製並編輯螢幕影片",
             (Self::TraditionalChinese, Page::Evidence) => "已擷取的圖片與錄影",
             (Self::TraditionalChinese, Page::Notifications) => "通知記錄",
             (Self::TraditionalChinese, Page::Compare) => "圖片比較",
@@ -2727,26 +2734,26 @@ impl AppLanguage {
 
     fn page_label(self, page: Page) -> &'static str {
         match (self, page) {
-            (Self::Japanese, Page::Capture) => "◉  撮影・編集",
-            (Self::Japanese, Page::Recording) => "●  録画・編集",
+            (Self::Japanese, Page::Capture) => "◉  スクリーンショット",
+            (Self::Japanese, Page::Recording) => "●  画面録画",
             (Self::Japanese, Page::Evidence) => "▦  証跡一覧",
             (Self::Japanese, Page::Notifications) => "♧  通知履歴",
             (Self::Japanese, Page::Compare) => "⇄  画像比較",
             (Self::Japanese, Page::Settings) => "⚙  設定",
-            (Self::English, Page::Capture) => "◉  Capture & Edit",
-            (Self::English, Page::Recording) => "●  Record & Edit",
+            (Self::English, Page::Capture) => "◉  Screenshot",
+            (Self::English, Page::Recording) => "●  Screen Recording",
             (Self::English, Page::Evidence) => "▦  Evidence",
             (Self::English, Page::Notifications) => "♧  Alerts",
             (Self::English, Page::Compare) => "⇄  Compare",
             (Self::English, Page::Settings) => "⚙  Settings",
-            (Self::SimplifiedChinese, Page::Capture) => "◉  截图与编辑",
-            (Self::SimplifiedChinese, Page::Recording) => "●  录制与编辑",
+            (Self::SimplifiedChinese, Page::Capture) => "◉  屏幕截图",
+            (Self::SimplifiedChinese, Page::Recording) => "●  屏幕录制",
             (Self::SimplifiedChinese, Page::Evidence) => "▦  证据列表",
             (Self::SimplifiedChinese, Page::Notifications) => "♧  通知",
             (Self::SimplifiedChinese, Page::Compare) => "⇄  图像比较",
             (Self::SimplifiedChinese, Page::Settings) => "⚙  设置",
-            (Self::TraditionalChinese, Page::Capture) => "◉  螢幕截圖與編輯",
-            (Self::TraditionalChinese, Page::Recording) => "●  錄影與編輯",
+            (Self::TraditionalChinese, Page::Capture) => "◉  螢幕截圖",
+            (Self::TraditionalChinese, Page::Recording) => "●  螢幕錄影",
             (Self::TraditionalChinese, Page::Evidence) => "▦  證據清單",
             (Self::TraditionalChinese, Page::Notifications) => "♧  通知",
             (Self::TraditionalChinese, Page::Compare) => "⇄  圖片比較",
@@ -2758,6 +2765,7 @@ impl AppLanguage {
         match (self, key) {
             (Self::Japanese, "show") => "MacShotを開く",
             (Self::Japanese, "capture") => "スクリーンショット",
+            (Self::Japanese, "capture_section") => "◉  スクリーンショット — 撮影",
             (Self::Japanese, "area") => "範囲を選択して撮影…",
             (Self::Japanese, "active") => "アクティブウィンドウを撮影",
             (Self::Japanese, "primary") => "デスクトップ（メイン画面）を撮影",
@@ -2767,14 +2775,15 @@ impl AppLanguage {
             (Self::Japanese, "choose_mode") => "撮影方法を選んで撮影…",
             (Self::Japanese, "shortcut_target") => "撮影対象選択を優先",
             (Self::Japanese, "shortcut_mode") => "各モード優先",
-            (Self::Japanese, "current_target") => "現在の撮影方法",
-            (Self::Japanese, "target_menu") => "撮影対象を選択",
+            (Self::Japanese, "current_target") => "現在のスクリーンショット対象",
+            (Self::Japanese, "target_menu") => "スクリーンショット対象を選択",
             (Self::Japanese, "continuous_start") => "連続撮影を開始",
             (Self::Japanese, "continuous_stop") => "連続撮影を終了",
             (Self::Japanese, "native") => "macOS標準の撮影・録画を開く…",
             (Self::Japanese, "capture_stopped") => "連続撮影 — 停止中",
             (Self::Japanese, "record_time") => "録画時間 00:00",
             (Self::Japanese, "recording") => "録画中",
+            (Self::Japanese, "recording_section") => "●  画面録画 — 動画撮影",
             (Self::Japanese, "record_start") => "選択中の録画対象で録画",
             (Self::Japanese, "record_choose_mode") => "録画方法を選んで録画…",
             (Self::Japanese, "record_shortcut_target") => "録画対象選択を優先",
@@ -2795,6 +2804,7 @@ impl AppLanguage {
             (Self::Japanese, "quit") => "終了",
             (Self::English, "show") => "Open MacShot",
             (Self::English, "capture") => "Screenshot",
+            (Self::English, "capture_section") => "◉  SCREENSHOT — CAPTURE",
             (Self::English, "area") => "Select Region…",
             (Self::English, "active") => "Capture Active Window",
             (Self::English, "primary") => "Capture Desktop (Main Display)",
@@ -2804,14 +2814,15 @@ impl AppLanguage {
             (Self::English, "choose_mode") => "Choose a Capture Mode…",
             (Self::English, "shortcut_target") => "Prioritize Selected Target",
             (Self::English, "shortcut_mode") => "Choose a Capture Mode",
-            (Self::English, "current_target") => "Current Capture Method",
-            (Self::English, "target_menu") => "Select Capture Target",
+            (Self::English, "current_target") => "Current Screenshot Target",
+            (Self::English, "target_menu") => "Select Screenshot Target",
             (Self::English, "continuous_start") => "Start Continuous Capture",
             (Self::English, "continuous_stop") => "Stop Continuous Capture",
             (Self::English, "native") => "Open macOS Screenshot…",
             (Self::English, "capture_stopped") => "Continuous Capture — Stopped",
             (Self::English, "record_time") => "Recording Time 00:00",
             (Self::English, "recording") => "Recording",
+            (Self::English, "recording_section") => "●  SCREEN RECORDING — VIDEO",
             (Self::English, "record_start") => "Record Selected Target",
             (Self::English, "record_choose_mode") => "Choose a Recording Mode…",
             (Self::English, "record_shortcut_target") => "Prioritize Selected Recording Target",
@@ -2832,6 +2843,7 @@ impl AppLanguage {
             (Self::English, "quit") => "Quit",
             (Self::SimplifiedChinese, "show") => "打开 MacShot",
             (Self::SimplifiedChinese, "capture") => "屏幕截图",
+            (Self::SimplifiedChinese, "capture_section") => "◉  屏幕截图 — 截图",
             (Self::SimplifiedChinese, "area") => "选择区域并截图…",
             (Self::SimplifiedChinese, "active") => "截取活动窗口",
             (Self::SimplifiedChinese, "primary") => "截取桌面（主显示器）",
@@ -2841,7 +2853,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "choose_mode") => "选择截图模式…",
             (Self::SimplifiedChinese, "shortcut_target") => "优先所选目标",
             (Self::SimplifiedChinese, "shortcut_mode") => "优先选择截图模式",
-            (Self::SimplifiedChinese, "current_target") => "当前截图方式",
+            (Self::SimplifiedChinese, "current_target") => "当前截图目标",
             (Self::SimplifiedChinese, "target_menu") => "选择截图目标",
             (Self::SimplifiedChinese, "continuous_start") => "开始连续截图",
             (Self::SimplifiedChinese, "continuous_stop") => "停止连续截图",
@@ -2849,6 +2861,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "capture_stopped") => "连续截图 — 已停止",
             (Self::SimplifiedChinese, "record_time") => "录制时间 00:00",
             (Self::SimplifiedChinese, "recording") => "正在录制",
+            (Self::SimplifiedChinese, "recording_section") => "●  屏幕录制 — 视频",
             (Self::SimplifiedChinese, "record_start") => "录制所选目标",
             (Self::SimplifiedChinese, "record_choose_mode") => "选择录制方式…",
             (Self::SimplifiedChinese, "record_shortcut_target") => "优先所选录制目标",
@@ -2869,6 +2882,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "quit") => "退出",
             (Self::TraditionalChinese, "show") => "開啟 MacShot",
             (Self::TraditionalChinese, "capture") => "螢幕截圖",
+            (Self::TraditionalChinese, "capture_section") => "◉  螢幕截圖 — 擷取",
             (Self::TraditionalChinese, "area") => "選取區域並截圖…",
             (Self::TraditionalChinese, "active") => "擷取作用中視窗",
             (Self::TraditionalChinese, "primary") => "擷取桌面（主要顯示器）",
@@ -2878,14 +2892,15 @@ impl AppLanguage {
             (Self::TraditionalChinese, "choose_mode") => "選擇截圖模式…",
             (Self::TraditionalChinese, "shortcut_target") => "優先所選目標",
             (Self::TraditionalChinese, "shortcut_mode") => "優先選擇截圖模式",
-            (Self::TraditionalChinese, "current_target") => "目前截圖方式",
-            (Self::TraditionalChinese, "target_menu") => "選擇截圖目標",
+            (Self::TraditionalChinese, "current_target") => "目前螢幕截圖目標",
+            (Self::TraditionalChinese, "target_menu") => "選擇螢幕截圖目標",
             (Self::TraditionalChinese, "continuous_start") => "開始連續截圖",
             (Self::TraditionalChinese, "continuous_stop") => "停止連續截圖",
             (Self::TraditionalChinese, "native") => "開啟 macOS 標準截圖…",
             (Self::TraditionalChinese, "capture_stopped") => "連續截圖 — 已停止",
             (Self::TraditionalChinese, "record_time") => "錄製時間 00:00",
             (Self::TraditionalChinese, "recording") => "正在錄製",
+            (Self::TraditionalChinese, "recording_section") => "●  螢幕錄影 — 影片",
             (Self::TraditionalChinese, "record_start") => "錄製所選目標",
             (Self::TraditionalChinese, "record_choose_mode") => "選擇錄影方式…",
             (Self::TraditionalChinese, "record_shortcut_target") => "優先所選錄影目標",
@@ -8973,6 +8988,12 @@ impl MacShot {
             true,
             None,
         );
+        let capture_section_item = MenuItem::with_id(
+            "macshot.capture.section",
+            self.language.tray_label("capture_section"),
+            false,
+            None,
+        );
         let capture_target_item = MenuItem::with_id(
             "macshot.capture.target",
             format!(
@@ -9011,6 +9032,12 @@ impl MacShot {
                     &self.windows,
                 )
             ),
+            false,
+            None,
+        );
+        let recording_section_item = MenuItem::with_id(
+            "macshot.recording.section",
+            self.language.tray_label("recording_section"),
             false,
             None,
         );
@@ -9333,6 +9360,7 @@ impl MacShot {
         let quit_separator = PredefinedMenuItem::separator();
         let menu = match Menu::with_items(&[
             &show_window_item,
+            &capture_section_item,
             &capture_target_item,
             &target_selection_submenu,
             &capture_separator,
@@ -9345,6 +9373,7 @@ impl MacShot {
             &shortcut_target_item,
             &shortcut_mode_item,
             &recording_separator,
+            &recording_section_item,
             &recording_target_item,
             &recording_target_submenu,
             &recording_region_item,
@@ -12990,7 +13019,7 @@ impl MacShot {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(self.language.text("撮影対象")).size(11.0).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(self.language.text("スクリーンショットの撮影対象")).size(11.0).color(TEXT_MUTED));
                         ui.add_space(4.0);
                         let target_popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
                         let combo_id = ui.make_persistent_id("capture_target");
@@ -14710,7 +14739,7 @@ impl MacShot {
             ui.horizontal_wrapped(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new(language.text("録画対象"))
+                        egui::RichText::new(language.text("画面録画の対象"))
                             .size(11.0)
                             .color(TEXT_MUTED),
                     );
