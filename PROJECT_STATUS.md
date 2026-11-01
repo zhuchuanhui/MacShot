@@ -8,7 +8,7 @@
 - 完成済み.appは`output/release/MacShot-v1.7.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.7.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルとrelease buildのUUIDが一致します。起動したアプリの録画設定画面で画質優先・滑らかさ優先・バランス・カスタムを確認しました。画面収録許可が未許可のため実録画は未確認です。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.7.0-macos-arm64.zip`（SHA-256 `bb1382d53a7a695856d6705aa8c12fbbf2393f43cffa66934b6276843a219fbd`）と`output/release/MacShot-v1.7.0-windows-x64.zip`（SHA-256 `bd0ebce4645eac85cafb005bf1591cea66e8a019d7cf2b473ccc90c60e1c5e85`）。両ZIPの整合性・チェックサムを確認し、macOS ZIPにFinder補助ファイルはありません。既存のWindowsパッケージは梱包スクリプトが上書きを拒否しましたが、ZIP内の実行ファイルが今回のrelease buildとbyte単位で一致し、ZIP・チェックサム検証も成功しました。PE32+ x86-64 GUI形式です。
 - macOS buildではvendor/xcapの非推奨API警告、Windows cross-buildでは`rust-objcopy`が`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、両release buildと配布物検証は成功しました。Windows実機動作は未確認です。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
-- GitHub Release公開後にタグ・4つの添付ファイル・再ダウンロード結果を追記します。production deploymentは行いません。
+- [GitHub Release v1.7.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.7.0)を公開しました。タグは機能コミット`f26ba376457d1caf14b30f8edaf65fe00a86773c`を指し、GitHub上でpublished・非prerelease・Latest、添付4ファイルを確認しました。Releaseから再ダウンロードした両ZIPのチェックサムは一致し、ZIP整合性とWindows実行ファイル形式（PE32+ x86-64）を確認しました。GitHub Actions workflow/CI runはありません。production deploymentは行いません。
 
 ## v1.6.1 Release — 2026-11-01
 
