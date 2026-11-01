@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1 — 2026-11-01
+
+- Maintenance release of the v1.5.0 feature set. No application code changes.
+- Corrected the lockfile to use the published compatible `byteorder` 1.5.0 release; the locked 1.5.1 version is absent from the crates.io index.
+
 ## 1.5.0 — 2026-11-01
 
 - Added a dedicated recording and editing page for recording settings, start/stop, playback, and renaming.

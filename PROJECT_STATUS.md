@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.5.1 Release — 2026-11-01
+
+- 最新公開版v1.5.0の製品コードに変更はありません。Cargo.tomlとREADMEのバージョン更新、およびcrates.ioに存在しない`byteorder 1.5.1`を公開済み互換版`1.5.0`へ修正したlockfileによる保守リリースです。
+- macOS/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。完成済み.appは`output/release/MacShot-v1.5.1-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.5.1`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.5.1-macos-arm64.zip`（SHA-256 `ea62cdc3d0ba45ad115eacd88488ee96a34f651e5f31b2e5407e9d3a47955a69`）と`output/release/MacShot-v1.5.1-windows-x64.zip`（SHA-256 `c6b11a5d836f75485d76eefddd3995d91e005d4e61cad2881105cb9f4ac9c307`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- 録画・編集の実操作、各形式の動画・音声出力、Windows実機動作は未確認です。MP4編集書き出しには`ffmpeg`が必要です。自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告、Windows buildではrust-objcopyの`libLLVM.dylib`不足によるdebug info除去警告がありましたが、両OSのビルドと梱包は成功しました。
+- GitHub Releaseへの公開結果を追記します。
+
 ## v1.5.0 Release — 2026-11-01
 
 - macOS/Windows両方で録画・編集ページ、録画設定（対象・解像度・形式別FPS・システム音声・マイク音声）、録画一覧の再生・名前変更を提供します。スクリーンショット編集では注釈を選択・移動できます。録画は時間範囲を切り抜き、赤枠・楕円・矢印・テキスト・タイムスタンプを付けた別MP4を書き出せます。元動画は保持され、音声も再エンコードして引き継ぎます。書き出しには`ffmpeg`が必要です。
