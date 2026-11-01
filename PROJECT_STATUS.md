@@ -6,7 +6,7 @@
 - macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、Windows x64 GNU向け`cargo check --all-targets`、`cargo fmt --all -- --check`、`git diff --check`も成功しました。完成済み.appは`output/release/MacShot-v1.4.7-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.7`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.4.7-macos-arm64.zip`（SHA-256 `6f092b84b97b5ab0969b764f1e5a1f4969910465825a8e9090cfeec6e851d054`）と`output/release/MacShot-v1.4.7-windows-x64.zip`（SHA-256 `7af8ff72a4fd841a671b0dd29b0a95634d18de931d794454cfcf87b1fa040524`）。両ZIPの整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
 - テストは実行していません。Windows実機でタスクマネージャーからの終了と、macOSのDock終了後の常駐動作は未確認です。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらの成果物も生成・検証できています。
-- GitHub Releaseへの公開結果をここに追記します。
+- Published as [GitHub Release v1.4.7](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.7), tagged at source commit `49b58d7f4a1b747813140a6597310ba96bb07422` (`fix(windows): honor task termination requests`). GitHub reports a published, non-prerelease release and v1.4.7 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No production deployment was made.
 
 ## v1.4.6 Release — 2026-11-01
 
