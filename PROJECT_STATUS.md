@@ -1,11 +1,20 @@
 # Project Status
 
+## v1.4.7 Release — 2026-11-01
+
+- Windowsではメインウィンドウの閉じる要求をキャンセルして隠していたため、タスクマネージャーの「タスクの終了」も常駐動作として処理され、プロセスが終了しない問題を修正しました。Windowsの閉じる要求は終了処理へ渡し、録画中は録画の保存後に終了します。macOSのDock終了後にメニューバーへ常駐する動作は維持します。互換性を保つ修正としてv1.4.7に反映しました。
+- macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、Windows x64 GNU向け`cargo check --all-targets`、`cargo fmt --all -- --check`、`git diff --check`も成功しました。完成済み.appは`output/release/MacShot-v1.4.7-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.7`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.4.7-macos-arm64.zip`（SHA-256 `6f092b84b97b5ab0969b764f1e5a1f4969910465825a8e9090cfeec6e851d054`）と`output/release/MacShot-v1.4.7-windows-x64.zip`（SHA-256 `7af8ff72a4fd841a671b0dd29b0a95634d18de931d794454cfcf87b1fa040524`）。両ZIPの整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- テストは実行していません。Windows実機でタスクマネージャーからの終了と、macOSのDock終了後の常駐動作は未確認です。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらの成果物も生成・検証できています。
+- GitHub Releaseへの公開結果をここに追記します。
+
 ## v1.4.6 Release — 2026-11-01
 
-- 最新公開版はv1.4.5です。Windowsでのアクティブ撮影・Notepad検索と既定ショートカット登録の問題を受け、Win32 APIから撮影候補・タイトル・サイズを取得し、前面HWNDを直接検証します。既定ショートカットが他プロセスで使用中なら代替キーを登録・保存します。互換性を保つ不具合修正のため次版はv1.4.6です。
+- 最新公開版v1.4.6のWindows実機確認が完了しました。指定SHA-256が一致した公式ZIPを専用フォルダーで確認し、Notepad/「メモ帳」の候補検索と選択撮影、アクティブ撮影、代替ショートカット撮影が成功しました。既定キー競合時に撮影`Ctrl+Alt+Shift+S`・録画`Ctrl+Alt+Shift+R`へ切り替わる表示も確認しています。
+- Windowsで確認した画像4枚は全てテスト用メモ帳で、黒画像・誤撮影はなく、誤保存画像の削除もありません。撮影画像は`evidence-20261101-142832-188-001.png`、`evidence-20261101-142913-380-002.png`、`evidence-20261101-142948-005-003.png`、`evidence-20261101-143006-130-004.png`です。対象不明時の撮影中止は安全に未確認状態を作れず、未確認です。Windows実機の確認後、v1.4.6は終了されました。
 - 正式版向けにmacOS arm64とWindows x64を`--release --locked`でビルドし、`cargo fmt --all -- --check`、`git diff --check`も成功しました。macOS完成品は`output/release/MacShot-v1.4.6-macos-arm64/MacShot.app`で、bundle ID `com.macshot.app`、version `1.4.6`、Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。Windows実行ファイルはPE32+ x86-64 GUI形式で、ZIPに必要DLLとライセンスを含みます。
-- 配布ZIPは`output/release/MacShot-v1.4.6-macos-arm64.zip`（SHA-256 `d71c91ed7baad735419ddcaaf3d1bf94814abc91bfb767248b3052dac00aef5a`）と`output/release/MacShot-v1.4.6-windows-x64.zip`（SHA-256 `8972f22e9e5a515f5aa3fb576fd952ba376c9160b60ccb6d2ea6b7f6bc1ceba6`）。両ZIPの整合性とチェックサムを検証し、macOS ZIPにFinder補助ファイルがないことを確認しました。テストは実行していません。Windows実機での修正確認は未実施です。
-- Windows実機での修正確認は未実施です。Windows release build時にrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告を出しましたが、実行ファイルとパッケージは生成され、配布物を検証済みです。
+- 配布ZIPは`output/release/MacShot-v1.4.6-macos-arm64.zip`（SHA-256 `d71c91ed7baad735419ddcaaf3d1bf94814abc91bfb767248b3052dac00aef5a`）と`output/release/MacShot-v1.4.6-windows-x64.zip`（SHA-256 `8972f22e9e5a515f5aa3fb576fd952ba376c9160b60ccb6d2ea6b7f6bc1ceba6`）。両ZIPの整合性とチェックサムを検証し、macOS ZIPにFinder補助ファイルがないことを確認しました。テストは実行していません。Windows実機での対象不明時の中止だけ未確認です。
+- Windows release build時にrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告を出しましたが、実行ファイルとパッケージは生成され、配布物を検証済みです。
 - Published as [GitHub Release v1.4.6](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.6), tagged at source commit `fdf466c66a0121887ead3e598f7ff0343e4e9e09` (`fix(windows): improve capture discovery and hotkey fallback`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No production deployment was made.
 
 ## v1.4.5 Release — 2026-11-01

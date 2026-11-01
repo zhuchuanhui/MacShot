@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.7 — 2026-11-01
+
+- Fixed Windows close requests so task termination reaches the app's quit handling; an active recording is saved before the app exits. macOS Dock quit behavior remains unchanged.
+
 ## 1.4.6 — 2026-11-01
 
 - Improved Windows window discovery and active-window selection using native window titles and bounds, independently of xcap's window list.
