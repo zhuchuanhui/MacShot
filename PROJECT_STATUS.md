@@ -1,5 +1,15 @@
 # Project Status
 
+## v1.6.0 Release — 2026-11-01
+
+- 録画のショートカット動作をスクリーンショットと別設定にし、「録画対象選択を優先」（保存済み対象をすぐ録画）と「録画方法優先」（対象選択画面を開く）をメニューバーと「録画・編集」画面から切り替えられるようにしました。設定は既存の設定ファイルへ保存し、起動時に読み込みます。
+- メニューバーから録画対象を直接選んで開始でき、範囲・アクティブウィンドウ・メイン画面・全ディスプレイ・ウィンドウ一覧を選べます。録画中は対象と方式の変更を無効にします。
+- v1.5.2公開後の新機能追加のため次版をminor更新のv1.6.0としました。macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。
+- 完成済み.appは`output/release/MacShot-v1.6.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.6.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.6.0-macos-arm64.zip`（SHA-256 `d0298612d42eacfa26da92542e5a451f3b2349941f47c1a14e29926315d28538`）と`output/release/MacShot-v1.6.0-windows-x64.zip`（SHA-256 `3daa9ef09a7fd4232787fce37f63d19b0af2c1ad78642c88fbe42fcdff7ac803`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- Windows cross-buildでは`rust-objcopy`が`libLLVM.dylib`不足でdebug infoを除去できない警告、macOS buildではvendor/xcapの非推奨API警告がありましたが、両release buildと梱包は成功しました。録画ショートカット設定の実操作、メニューバーからの録画、実際の画面収録、Windows実機動作は未確認です。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- GitHub Releaseは公開準備済みです。タグ・4つの添付ファイルを公開後に確認して結果を記録します。production deploymentは行いません。
+
 ## v1.5.2 Release — 2026-11-01
 
 - 「撮影・編集」画面のヘッダー右側に「更新」と「保存先を開く」を追加しました。更新は保存フォルダ内の画像・録画一覧を再読み込みし、録画の時間キャッシュも消去します。現在のプレビューと編集キューは維持します。録画完了の小窓は撮影完了の小窓と同じ上端位置に揃えました。初回配置が画面中央に見えたため、他の一覧画面と同じ見出し＋右側操作のヘッダー構成へ修正しました。

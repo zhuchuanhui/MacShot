@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0 — 2026-11-01
+
+- Added a recording shortcut behavior setting independent of screenshot shortcuts: start recording the saved target immediately or open the recording mode chooser.
+- Added direct menu bar actions for active-window, primary-display, all-display, and window-list recording, with the selected target shown and the preference persisted.
+
 ## 1.5.2 — 2026-11-01
 
 - Added refresh and open-folder actions to the capture and editing page; refreshing reloads image and recording lists while keeping the current preview and edit queue.

@@ -1,4 +1,4 @@
-# MacShot 1.5.2
+# MacShot 1.6.0
 
 [日本語](README.md) · [English](README.en.md)
 
@@ -6,11 +6,13 @@ MacShot 可用于截屏、编辑和比较图像，也可将屏幕录制为 GIF �
 
 录屏支持播放、重命名、裁剪，并可另存为带注释的 MP4。导出需要`ffmpeg`。
 
+录制快捷键可选择立即录制已保存的目标，或打开录制方式选择界面。此设置与截图快捷键行为分别保存。
+
 ## 下载
 
-- macOS Apple Silicon（arm64）：[MacShot-v1.5.2-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.5.2/MacShot-v1.5.2-macos-arm64.zip)
-- Windows x64：[MacShot-v1.5.2-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.5.2/MacShot-v1.5.2-windows-x64.zip)
-- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.5.2)
+- macOS Apple Silicon（arm64）：[MacShot-v1.6.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.6.0/MacShot-v1.6.0-macos-arm64.zip)
+- Windows x64：[MacShot-v1.6.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.6.0/MacShot-v1.6.0-windows-x64.zip)
+- [GitHub Release 页面](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.6.0)
 
 macOS：解压文件并将 `MacShot.app` 移到“应用程序”文件夹，便于以后启动。应用使用 Apple Development 签名，尚未公证。如果 macOS 阻止首次启动，请在 Finder 中按住 Control 键并点按应用，然后选择“打开”。从 Ad Hoc 签名版本升级后，如果屏幕录制未获许可，请在“系统设置 > 隐私与安全性 > 屏幕与系统音频录制”中将 MacShot 关闭再开启一次，然后重新启动应用。支持 macOS 14 或更高版本的 Apple Silicon Mac。
 
