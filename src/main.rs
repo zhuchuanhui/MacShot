@@ -44,6 +44,8 @@ use screencapturekit::{
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -229,8 +231,6 @@ struct MacShot {
     window_search_query: String,
     capture_target_popup_was_open: bool,
     capture_target: CaptureTarget,
-    #[cfg(target_os = "windows")]
-    last_observed_foreground_window_id: Option<u32>,
     #[cfg(target_os = "windows")]
     last_external_window_id: Option<u32>,
     capture_target_picker_open: bool,
@@ -666,6 +666,14 @@ impl AppLanguage {
                 "即使視窗被其他視窗遮住，也會擷取所選視窗內容。",
             ],
             "アクティブウィンドウ" => ["Active Window", "活动窗口", "作用中視窗"],
+            "ウィンドウ検索" => ["Find a Window", "搜索窗口", "搜尋視窗"],
+            "アクティブウィンドウを特定できません。対象アプリを前面にしてから再試行してください。" => {
+                [
+                    "Could not identify the active window. Bring the target app to the front and try again.",
+                    "无法识别活动窗口。请将目标应用置于前台后重试。",
+                    "無法識別作用中視窗。請將目標 App 移至最前方後再試一次。",
+                ]
+            }
             "メインディスプレイ" => ["Main Display", "主显示器", "主要顯示器"],
             "すべてのディスプレイ" => ["All Displays", "所有显示器", "所有顯示器"],
             "Display" => ["Display", "显示器", "顯示器"],
@@ -3472,12 +3480,18 @@ impl Default for MacShot {
             &serialize_settings_layout(&default_settings_layout()),
         ));
         #[cfg(target_os = "windows")]
+        initialize_foreground_window_tracking();
+        #[cfg(target_os = "windows")]
         let initial_foreground_window_id = foreground_window_id();
         #[cfg(target_os = "windows")]
         let initial_external_window_id = initial_foreground_window_id.filter(|id| {
             foreground_window_process_id() != Some(std::process::id())
                 && windows.iter().any(|window| window.id == *id)
         });
+        #[cfg(target_os = "windows")]
+        if let Some(window_id) = initial_external_window_id {
+            LAST_EXTERNAL_FOREGROUND_WINDOW_ID.store(window_id, Ordering::Relaxed);
+        }
         Self {
             language,
             monitors,
@@ -3485,8 +3499,6 @@ impl Default for MacShot {
             window_search_query: String::new(),
             capture_target_popup_was_open: false,
             capture_target,
-            #[cfg(target_os = "windows")]
-            last_observed_foreground_window_id: initial_foreground_window_id,
             #[cfg(target_os = "windows")]
             last_external_window_id: initial_external_window_id,
             capture_target_picker_open: false,
@@ -6004,12 +6016,55 @@ fn foreground_window_id() -> Option<u32> {
 }
 
 #[cfg(target_os = "windows")]
-fn find_captureable_window_id(window_id: u32) -> bool {
-    Window::all().is_ok_and(|windows| {
-        windows
-            .into_iter()
-            .any(|window| window.id().ok() == Some(window_id) && is_captureable_window(&window))
-    })
+static LAST_EXTERNAL_FOREGROUND_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(target_os = "windows")]
+static FOREGROUND_WINDOW_HOOK: OnceLock<usize> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn foreground_window_event_callback(
+    _hook: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _event: u32,
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _event_thread: u32,
+    _event_time: u32,
+) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    if hwnd.is_null() {
+        return;
+    }
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, &mut process_id) };
+    if process_id != 0 && process_id != std::process::id() {
+        LAST_EXTERNAL_FOREGROUND_WINDOW_ID.store(hwnd as usize as u32, Ordering::Relaxed);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_foreground_window_tracking() {
+    use std::ptr;
+    use windows_sys::Win32::UI::{
+        Accessibility::SetWinEventHook,
+        WindowsAndMessaging::{EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT},
+    };
+
+    FOREGROUND_WINDOW_HOOK.get_or_init(|| {
+        let hook = unsafe {
+            SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                ptr::null_mut(),
+                Some(foreground_window_event_callback),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            )
+        };
+        hook as usize
+    });
 }
 
 struct DisplayCapture {
@@ -9950,8 +10005,13 @@ impl MacShot {
         let active_window_request = matches!(target, CaptureTarget::ActiveWindow);
         #[cfg(target_os = "windows")]
         let target = if active_window_request {
-            self.resolve_active_window_target()
-                .unwrap_or(CaptureTarget::ActiveWindow)
+            let Some(target) = self.resolve_active_window_target() else {
+                self.report_capture_failure(
+                    "アクティブウィンドウを特定できません。対象アプリを前面にしてから再試行してください。",
+                );
+                return;
+            };
+            target
         } else {
             target
         };
@@ -11275,18 +11335,25 @@ impl MacShot {
                             }
                         }
                         self.capture_target_popup_was_open = popup_open;
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                egui::RichText::new(self.language.text("ウィンドウ検索"))
+                                    .size(11.0)
+                                    .color(TEXT_MUTED),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.window_search_query)
+                                    .desired_width(280.0)
+                                    .hint_text(self.language.text("アプリ名・ウィンドウ名を検索")),
+                            );
+                        });
                         egui::ComboBox::from_id_salt("capture_target")
                             .selected_text(self.target_caption())
                             .width(250.0)
                             .height(target_popup_height)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.window_search_query)
-                                        .desired_width(360.0)
-                                        .hint_text(self.language.text("アプリ名・ウィンドウ名を検索")),
-                                );
-                                ui.separator();
                                 selectable_capture_target(
                                     ui,
                                     &mut self.capture_target,
@@ -13928,17 +13995,10 @@ impl eframe::App for MacShot {
         remove_macshot_titlebar_separator();
         #[cfg(target_os = "windows")]
         {
-            if let Some(foreground_id) = foreground_window_id()
-                && self.last_observed_foreground_window_id != Some(foreground_id)
-            {
-                self.last_observed_foreground_window_id = Some(foreground_id);
-                let foreground_is_external =
-                    foreground_window_process_id() != Some(std::process::id());
-                if foreground_is_external && find_captureable_window_id(foreground_id) {
-                    self.last_external_window_id = Some(foreground_id);
-                }
+            let observed = LAST_EXTERNAL_FOREGROUND_WINDOW_ID.load(Ordering::Relaxed);
+            if observed != 0 {
+                self.last_external_window_id = Some(observed);
             }
-            ctx.request_repaint_after(Duration::from_millis(200));
         }
         self.apply_display_settings(ctx);
         self.advance_recording_playback(ctx);

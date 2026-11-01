@@ -1,8 +1,16 @@
 # Project Status
 
+## v1.4.4 Release candidate — 2026-11-01
+
+- 最新公開版はv1.4.3です。Windows実機でメモ帳のアクティブ撮影を指定した際にCodexの画面を保存する誤撮影が再現したため、前景ウィンドウ変更通知を追跡し、目的の対象を特定できない場合は撮影せず失敗を返すようにしました。撮影対象カードに常時表示する検索欄を加え、一覧を開く際に候補を再取得します。互換性を保つ不具合修正のため、次版はv1.4.4です。
+- Windows x64 GNUとmacOSの`cargo check --all-targets`、既存112テスト、書式・差分チェックは変更作業時に成功しています。`output/release/MacShot-v1.4.4-rc.1-windows-x64.zip`（SHA-256 `c4e87aa223fe28087aa2a1b432bc1bfa84caa251c3d61740d8183fa662f88ce4`）は確認用候補で、正式版向けには両OSを再ビルドします。Windows実機確認は未実施です。
+- macOS arm64/Windows x64 GNUのv1.4.4 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.4-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.4`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
+- `output/release/MacShot-v1.4.4-macos-arm64.zip`のSHA-256は`7b992e6d90d8c5f33ed76879b81649674679c0e89bfb7a9365476aee9085b46a`、`output/release/MacShot-v1.4.4-windows-x64.zip`は`42e8b1ef36388e6fab69defa49b4fbf6cff4b16aa5af630cdd789c4d1b2114b8`です。両ZIPの整合性・ローカルチェックサム検証が成功しました。Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。112件のテストとWindows cross-checkは機能修正作業時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。GitHub Actions等のCI workflowはありません。公開結果はアップロード検証後に追記します。
+
 ## v1.4.3 Release — 2026-11-01
 
-- 最新公開版はv1.4.2です。v1.4.2で残ったWindowsアクティブ撮影・メモ帳検索の問題を受け、撮影開始時にMacShotを隠す前の前景ウィンドウを特定し、撮影要求に固定するよう変更しました。撮影対象一覧を開いた時の候補再取得、連続撮影の範囲維持、注釈ドラッグ補完も含む互換性修正なのでv1.4.3とします。
+- v1.4.3が現在の公開版です。Windows実機再検証ではメイン画面とショートカットの両方で前面メモ帳ではなくCodex画面が保存され、対象一覧にも検索欄が見えない結果でした。メモ帳撮影と一覧検索は失敗です。
 - `cargo fmt --all -- --check`、macOSとWindows x64 GNUの`cargo check --all-targets`、既存112テスト、`git diff --check`、Windows ZIP検査は変更作業時に成功しています。Windows実機でのアクティブ撮影・メモ帳検索は未検証です。既存のRC ZIPは正式版作成用には使わず、両OSを改めてビルドします。
 - macOS arm64/Windows x64 GNUのv1.4.3 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.3-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.3`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.3-macos-arm64.zip`のSHA-256は`4b5287969fd22ce7ecc7a151a31f3c1a87743b51a4223067eadc1ef07c90d989`、`output/release/MacShot-v1.4.3-windows-x64.zip`は`678a69b2a49ee19ad589b0391b2a4851256b9ac5b40652b6617c87d846186299`です。両ZIPの整合性とローカルチェックサムが成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPは必要なruntime DLLとライセンスを含むPE32+ x86-64 GUIアプリです。
@@ -11,7 +19,7 @@
 
 ## v1.4.2 Release — 2026-11-01
 
-- 最新公開版はv1.4.2です。ユーザーのWindows x64 v1.4.2実機報告では全画面撮影は成功しましたが、メモ帳のアクティブ撮影と名前検索は失敗しました。背面ウィンドウ撮影、連続範囲維持、注釈操作、未保存編集保護は未確認です。全画面画像にはテスト対象外アプリも写っていました。
+- Windows x64 v1.4.2実機報告では全画面撮影は成功しましたが、メモ帳のアクティブ撮影と名前検索は失敗しました。背面ウィンドウ撮影、連続範囲維持、注釈操作、未保存編集保護は未確認です。全画面画像にはテスト対象外アプリも写っていました。
 - 旧記録のビルド・署名・ZIP・公開情報は下記のとおりです。
 
 - v1.4.2ではWindows実機報告を受け、前面ウィンドウ検出にプロセス照合と短時間の再試行、一般的なアプリ名の多言語検索、連続撮影時の範囲維持、ポインター解放を取りこぼした場合の注釈確定補完を加えました。

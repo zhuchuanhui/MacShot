@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.4 — 2026-11-01
+
+- Improved Windows active-window capture by tracking foreground-window changes and refusing to save a different window when the intended target cannot be identified.
+- Added a visible window-search field to the capture target controls and refreshes window choices when the controls are opened.
+
 ## 1.4.3 — 2026-11-01
 
 - Improved Windows active-window capture by preserving the foreground window before hiding MacShot, refreshing available window choices, and refining capture behavior during continuous sessions.
