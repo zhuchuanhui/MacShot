@@ -1,12 +1,13 @@
 # Project Status
 
-## v1.4.4 Release candidate — 2026-11-01
+## v1.4.4 Release — 2026-11-01
 
 - 最新公開版はv1.4.3です。Windows実機でメモ帳のアクティブ撮影を指定した際にCodexの画面を保存する誤撮影が再現したため、前景ウィンドウ変更通知を追跡し、目的の対象を特定できない場合は撮影せず失敗を返すようにしました。撮影対象カードに常時表示する検索欄を加え、一覧を開く際に候補を再取得します。互換性を保つ不具合修正のため、次版はv1.4.4です。
 - Windows x64 GNUとmacOSの`cargo check --all-targets`、既存112テスト、書式・差分チェックは変更作業時に成功しています。`output/release/MacShot-v1.4.4-rc.1-windows-x64.zip`（SHA-256 `c4e87aa223fe28087aa2a1b432bc1bfa84caa251c3d61740d8183fa662f88ce4`）は確認用候補で、正式版向けには両OSを再ビルドします。Windows実機確認は未実施です。
 - macOS arm64/Windows x64 GNUのv1.4.4 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.4-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.4`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.4-macos-arm64.zip`のSHA-256は`7b992e6d90d8c5f33ed76879b81649674679c0e89bfb7a9365476aee9085b46a`、`output/release/MacShot-v1.4.4-windows-x64.zip`は`42e8b1ef36388e6fab69defa49b4fbf6cff4b16aa5af630cdd789c4d1b2114b8`です。両ZIPの整合性・ローカルチェックサム検証が成功しました。Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。
-- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。112件のテストとWindows cross-checkは機能修正作業時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。GitHub Actions等のCI workflowはありません。公開結果はアップロード検証後に追記します。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。112件のテストとWindows cross-checkは機能修正作業時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。GitHub Actions等のCI workflowはありません。
+- Published as [GitHub Release v1.4.4](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.4), tagged at source commit `52b30907ee02331ea7b29dfafdb51ee58e0d7d20` (`fix(windows): reject mismatched active-window captures`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.3 Release — 2026-11-01
 
