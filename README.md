@@ -1,4 +1,4 @@
-# MacShot 1.7.0
+# MacShot 1.8.0
 
 [English](README.en.md) · [简体中文](README.zh-CN.md)
 
@@ -12,12 +12,12 @@ MacShotは、スクリーンショットの撮影・編集・比較と、GIF／M
 
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v1.7.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.7.0/MacShot-v1.7.0-macos-arm64.zip)
-- Windows x64: [MacShot-v1.7.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.7.0/MacShot-v1.7.0-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.7.0)
+- macOS Apple Silicon (arm64): [MacShot-v1.8.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.8.0/MacShot-v1.8.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.8.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.8.0/MacShot-v1.8.0-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.8.0)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
-macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Apple Development署名を使用し、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。Ad Hoc署名版から更新した後、画面収録が許可されない場合は、システム設定の「画面収録とシステムオーディオ録音」でMacShotを一度オフ／オンにして再起動してください。macOS 14以降のApple Siliconに対応します。
+macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Apple Development署名を使用し、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。画面収録を許可した後に「権限状態を更新」を押すと、MacShotから再起動確認が表示されます。「あとで」を選んだ場合は設定画面の「再起動して許可を反映…」から再度確認できます。macOS 14以降のApple Siliconに対応します。
 
 Windows版はZIPを展開して `MacShot.exe` を起動してください。ZIPには起動に必要なWindowsランタイムDLLも含まれます。MP4録画ではWindowsの既定の再生デバイス音声と既定のマイクを収録します。マイクが入らない場合はWindowsの「設定 > プライバシーとセキュリティ > マイク」でデスクトップアプリのアクセスを許可してください。
 
@@ -53,7 +53,7 @@ MP4はシステム音声を録音します。マイクが許可されている�
 
 設定画面の「権限とデバイス」で、画面収録・システム音声とマイクの状態を個別に確認し、「権限状態を更新」で再確認できます。macOSでは「マイク入力をテスト（5秒）」で入力レベルを確認できます。テスト中に話すと、周囲の環境音と区別して入力を判定します。macOSでは起動中アプリの版と場所も表示するため、複数コピーがある場合にどのMacShotを確認しているか判別できます。
 
-macOSで画面撮影が許可されていない場合は「macOSに画面収録を要求」を押し、システム設定でMacShotをオンにします。「画面・音声の設定を開く」から設定画面を開くこともできます。権限を変更したらMacShotを終了して再起動します。
+macOSで画面撮影が許可されていない場合は「macOSに画面収録を要求」を押し、システム設定でMacShotをオンにします。「画面・音声の設定を開く」から設定画面を開くこともできます。権限を変更した後は「権限状態を更新」を押してください。許可が検知されると再起動の確認が表示され、録画中の場合は保存してから再起動します。
 
 macOSのマイク設定にはアプリを手動追加する「＋」ボタンがありません。MacShotの「権限とデバイス」で状態を更新し、「macOSに許可を確認」を押すとmacOSの確認画面が表示されます。そこで許可するとMacShotが一覧に登録されます。確認画面が出ない場合は一覧へ手動追加できません。アプリケーションフォルダへの移動だけでも権限は付与されません。画面収録の一覧にある「＋」はマイク許可には使えません。マイクが拒否または未許可でも、MP4はマイクへのアクセスを求めずシステム音声のみで録画します。Windowsでは既定マイクの検出結果を表示し、マイクのプライバシー設定を開けます。Windowsのデスクトップアプリ権限はOS設定で確認してください。
 

@@ -378,6 +378,14 @@ struct MacShot {
     #[cfg(target_os = "macos")]
     microphone_permission_result: Arc<Mutex<Option<bool>>>,
     #[cfg(target_os = "macos")]
+    screen_permission_was_granted: bool,
+    #[cfg(target_os = "macos")]
+    restart_confirmation: bool,
+    #[cfg(target_os = "macos")]
+    screen_permission_restart_pending: bool,
+    #[cfg(target_os = "macos")]
+    restart_after_recording: bool,
+    #[cfg(target_os = "macos")]
     microphone_reset_confirmation: bool,
     #[cfg(target_os = "macos")]
     microphone_test_rx: Option<Receiver<recording_audio::MicrophoneTestEvent>>,
@@ -864,11 +872,11 @@ impl AppLanguage {
                 "截屏或录屏需要屏幕录制权限。",
                 "擷取或錄製螢幕需要螢幕錄製權限。",
             ],
-            "権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。" => {
+            "権限状態は設定画面で確認できます。オンでも撮影できない場合は権限状態を更新してください。再起動が必要な場合はMacShotが確認します。" => {
                 [
-                    "Check permission in Settings. If capture is still denied, add MacShot.app again and restart it.",
-                    "请在设置中查看权限。如果仍无法截图，请重新添加 MacShot.app 并重启。",
-                    "請在設定中查看權限。如果仍無法截圖，請重新加入 MacShot.app 並重新啟動。",
+                    "Check permission in Settings and refresh its status if capture still fails. MacShot will ask before restarting if needed.",
+                    "请在设置中查看权限；如果仍无法截图，请刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "請在設定中查看權限；如果仍無法截圖，請重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
                 ]
             }
             "画面収録設定を開く" => [
@@ -1233,6 +1241,73 @@ impl AppLanguage {
             "オン" => ["On", "开启", "開啟"],
             "オフ" => ["Off", "关闭", "關閉"],
             "録画解像度" => ["Recording Resolution", "录制分辨率", "錄製解析度"],
+            "画面収録の許可を反映するため、MacShotを再起動しますか？" => [
+                "Restart MacShot to apply Screen Recording permission?",
+                "要重新启动 MacShot 以应用屏幕录制权限吗？",
+                "要重新啟動 MacShot 以套用螢幕錄製權限嗎？",
+            ],
+            "録画中の場合は、保存してから再起動します。" => [
+                "If recording is active, MacShot will save it before restarting.",
+                "如果正在录制，MacShot 会先保存再重新启动。",
+                "如果正在錄影，MacShot 會先儲存再重新啟動。",
+            ],
+            "画面収録を許可した後に再起動すると、MacShotで撮影・録画できるようになります。" => {
+                [
+                    "After allowing Screen Recording, restart MacShot to enable capture and recording.",
+                    "允许屏幕录制后，重新启动 MacShot 即可截图和录屏。",
+                    "允許螢幕錄製後，重新啟動 MacShot 即可截圖與錄影。",
+                ]
+            }
+            "今すぐ再起動" => ["Restart Now", "立即重启", "立即重新啟動"],
+            "あとで" => ["Later", "稍后", "稍後"],
+            "再起動せずに続行します。必要なら後から再起動できます。" => {
+                [
+                    "Continue without restarting. You can restart later if needed.",
+                    "继续使用而不重启。需要时可以稍后重启。",
+                    "繼續使用而不重新啟動。需要時可以稍後重新啟動。",
+                ]
+            }
+            "再起動して許可を反映…" => [
+                "Restart to Apply Permission…",
+                "重新启动以应用权限…",
+                "重新啟動以套用權限…",
+            ],
+            "MacShot.appの場所を特定できず、再起動できませんでした。" => [
+                "Could not locate MacShot.app, so it could not be restarted.",
+                "找不到 MacShot.app，无法重新启动。",
+                "找不到 MacShot.app，無法重新啟動。",
+            ],
+            "MacShotを再起動できませんでした: " => [
+                "Could not restart MacShot: ",
+                "无法重新启动 MacShot：",
+                "無法重新啟動 MacShot：",
+            ],
+            "設定でMacShotをオンにして、権限状態を更新してください。再起動が必要な場合は確認します。" => {
+                [
+                    "Enable MacShot in Settings, then refresh permission status. MacShot will ask before restarting if needed.",
+                    "在设置中启用 MacShot，然后刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "在設定中啟用 MacShot，然後重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
+                ]
+            }
+            "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。再起動が必要な場合は確認します。" => {
+                [
+                    "Requested Screen Recording permission. Enable MacShot in Settings. MacShot will ask before restarting if needed.",
+                    "已请求屏幕录制权限。请在设置中启用 MacShot。如需重启，MacShot 会先征求确认。",
+                    "已要求螢幕錄製權限。請在設定中啟用 MacShot。如需重新啟動，MacShot 會先徵求確認。",
+                ]
+            }
+            "画面収録の許可を確認しました。" => [
+                "Screen Recording permission is available.",
+                "已获得屏幕录制权限。",
+                "已取得螢幕錄製權限。",
+            ],
+            "画面収録の許可が確認できません。設定でMacShotを有効にして権限状態を更新してください。再起動が必要な場合は確認します。" => {
+                [
+                    "Screen Recording permission is not available. Enable MacShot in Settings and refresh permission status. MacShot will ask before restarting if needed.",
+                    "无法确认屏幕录制权限。请在设置中启用 MacShot 并刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "無法確認螢幕錄製權限。請在設定中啟用 MacShot 並重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
+                ]
+            }
             "録画モード" => ["Recording Mode", "录制模式", "錄影模式"],
             "画質優先" => ["Quality Priority", "画质优先", "畫質優先"],
             "滑らかさ優先" => ["Smoothness Priority", "流畅度优先", "流暢度優先"],
@@ -1678,25 +1753,11 @@ impl AppLanguage {
                     "未偵測到麥克風輸入。請檢查輸入裝置和輸入音量。",
                 ]
             }
-            "設定でMacShotをオンにして再起動してください。オンでも許可されない場合は、一度オフ→オンして再起動します。" => {
+            "画面収録の許可設定を開きました。MacShotをオンにして権限状態を更新してください。再起動が必要な場合は確認します。" => {
                 [
-                    "Enable MacShot in Settings and restart. If access is still denied, turn it off and on, then restart.",
-                    "请在设置中启用 MacShot 并重新启动。如果仍未获允许，请先关闭再开启，然后重新启动。",
-                    "請在設定中啟用 MacShot 並重新啟動。如果仍未獲允許，請先關閉再開啟，然後重新啟動。",
-                ]
-            }
-            "画面収録の許可を確認しました。反映のためMacShotを再起動してください。" => {
-                [
-                    "Screen Recording permission is confirmed. Restart MacShot to apply it.",
-                    "已确认屏幕录制权限。请重新启动 MacShot 以应用更改。",
-                    "已確認螢幕錄製權限。請重新啟動 MacShot 以套用變更。",
-                ]
-            }
-            "画面収録の許可設定を開きました。MacShotをオンにして再起動してください。" => {
-                [
-                    "Opened Screen Recording settings. Enable MacShot and restart it.",
-                    "已打开屏幕录制设置。请启用 MacShot 并重新启动。",
-                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新啟動。",
+                    "Opened Screen Recording settings. Enable MacShot and refresh permission status. MacShot will ask before restarting if needed.",
+                    "已打开屏幕录制设置。请启用 MacShot 并刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
                 ]
             }
             "macOSにマイクの許可を確認しています。表示された画面で選択してください。" => {
@@ -2186,11 +2247,11 @@ impl AppLanguage {
 
         const FRAGMENTS: &[(&str, [&str; 3])] = &[
             (
-                "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。反映しない場合はメニューバーのMacShotから終了して再起動してください。",
+                "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにして権限状態を更新してください。再起動が必要な場合は確認します。",
                 [
-                    "Requested Screen Recording access. Enable MacShot in Settings, then quit from the menu-bar MacShot menu and reopen it if access does not update.",
-                    "已请求屏幕录制权限。请在设置中启用 MacShot；如果权限未更新，请从菜单栏 MacShot 菜单退出后重新打开。",
-                    "已要求螢幕錄製權限。請在設定中啟用 MacShot；如果權限未更新，請從選單列 MacShot 選單結束後重新開啟。",
+                    "Requested Screen Recording access. Enable MacShot in Settings and refresh permission status. MacShot will ask before restarting if needed.",
+                    "已请求屏幕录制权限。请在设置中启用 MacShot 并刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "已要求螢幕錄製權限。請在設定中啟用 MacShot 並重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
                 ],
             ),
             (
@@ -2210,19 +2271,19 @@ impl AppLanguage {
                 ],
             ),
             (
-                "画面収録の許可設定を開きました。MacShotをオンにして再起動してください。",
+                "画面収録の許可設定を開きました。MacShotをオンにして権限状態を更新してください。再起動が必要な場合は確認します。",
                 [
-                    "Opened Screen Recording settings. Enable MacShot and restart it.",
-                    "已打开屏幕录制设置。请启用 MacShot 并重新启动。",
-                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新啟動。",
+                    "Opened Screen Recording settings. Enable MacShot and refresh permission status. MacShot will ask before restarting if needed.",
+                    "已打开屏幕录制设置。请启用 MacShot 并刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "已開啟螢幕錄製設定。請啟用 MacShot 並重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
                 ],
             ),
             (
-                "画面収録の許可を確認しました。反映のためMacShotを再起動してください。",
+                "画面収録の許可を確認しました。",
                 [
-                    "Screen Recording permission is confirmed. Restart MacShot to apply it.",
-                    "已确认屏幕录制权限。请重新启动 MacShot 以应用更改。",
-                    "已確認螢幕錄製權限。請重新啟動 MacShot 以套用變更。",
+                    "Screen Recording permission is available.",
+                    "已获得屏幕录制权限。",
+                    "已取得螢幕錄製權限。",
                 ],
             ),
             (
@@ -2250,11 +2311,11 @@ impl AppLanguage {
                 ],
             ),
             (
-                "オンでも許可されない場合は、一度オフ→オンして再起動します。",
+                "オンでも許可されない場合は、一度オフ→オンして権限状態を更新してください。必要ならMacShotが再起動を確認します。",
                 [
-                    "If still denied, turn it off and on, then restart.",
-                    "如果仍未获允许，请先关闭再开启，然后重新启动。",
-                    "如果仍未獲允許，請先關閉再開啟，然後重新啟動。",
+                    "If still denied, turn it off and on, then refresh permission status. MacShot will ask before restarting if needed.",
+                    "如果仍未获允许，请先关闭再开启，然后刷新权限状态。如需重启，MacShot 会先征求确认。",
+                    "如果仍未獲允許，請先關閉再開啟，然後重新整理權限狀態。如需重新啟動，MacShot 會先徵求確認。",
                 ],
             ),
             (
@@ -4052,6 +4113,14 @@ impl Default for MacShot {
             recording_warning: None,
             #[cfg(target_os = "macos")]
             microphone_permission_result: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            screen_permission_was_granted: screen_recording_access_granted(),
+            #[cfg(target_os = "macos")]
+            restart_confirmation: false,
+            #[cfg(target_os = "macos")]
+            screen_permission_restart_pending: false,
+            #[cfg(target_os = "macos")]
+            restart_after_recording: false,
             #[cfg(target_os = "macos")]
             microphone_reset_confirmation: false,
             #[cfg(target_os = "macos")]
@@ -6500,7 +6569,7 @@ fn capture_failure_message(error: &str) -> String {
 
     if cfg!(target_os = "macos") {
         if error.contains("TCC") && error.contains("拒否") {
-            return "macOSから画面収録を拒否されました。「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」でMacShotを許可してください。一覧にない場合は「＋」からMacShot.appを追加してオンにし、MacShotを再起動します。既にオンの場合は一度オフ→オンしてから再起動してください。".into();
+            return "macOSから画面収録を拒否されました。「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」でMacShotを許可し、権限状態を更新してください。一覧にない場合は「＋」からMacShot.appを追加してオンにします。再起動が必要な場合はMacShotが確認します。".into();
         }
         format!(
             "撮影できませんでした: {error}。画面が撮れない場合は「画面収録」の許可を確認してください。"
@@ -10247,6 +10316,14 @@ impl MacShot {
                 _ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
         } else {
+            #[cfg(target_os = "macos")]
+            if self.restart_after_recording {
+                if !self.launch_macos_app_for_restart() {
+                    self.restart_after_recording = false;
+                    return;
+                }
+                self.screen_permission_restart_pending = false;
+            }
             std::process::exit(0);
         }
     }
@@ -10393,7 +10470,7 @@ impl MacShot {
             let settings_url = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture";
             match Command::new("open").arg(settings_url).status() {
                 Ok(status) if status.success() => {
-                    self.status = "設定でMacShotをオンにして再起動してください。オンでも許可されない場合は、一度オフ→オンして再起動します。".into();
+                    self.status = "設定でMacShotをオンにして、権限状態を更新してください。再起動が必要な場合は確認します。".into();
                 }
                 Ok(status) => {
                     self.status = format!("画面収録の許可設定を開けませんでした ({status})");
@@ -10415,8 +10492,72 @@ impl MacShot {
         self.status = if granted {
             "画面収録の許可を確認しました。".into()
         } else {
-            "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。反映しない場合はメニューバーのMacShotから終了して再起動してください。".into()
+            "画面収録の許可をmacOSに要求しました。設定でMacShotをオンにしてください。再起動が必要な場合は確認します。".into()
         };
+    }
+
+    #[cfg(target_os = "macos")]
+    fn launch_macos_app_for_restart(&mut self) -> bool {
+        let Some(app_path) = current_macos_app_bundle_path() else {
+            self.status = "MacShot.appの場所を特定できず、再起動できませんでした。".into();
+            return false;
+        };
+        match Command::new("open").arg("-n").arg(&app_path).spawn() {
+            Ok(_) => true,
+            Err(error) => {
+                self.status = format!("MacShotを再起動できませんでした: {error}");
+                false
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn show_screen_permission_restart_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.restart_confirmation {
+            return;
+        }
+        let mut open = true;
+        let mut restart_now = false;
+        let mut restart_later = false;
+        egui::Window::new(
+            self.language
+                .text("画面収録の許可を反映するため、MacShotを再起動しますか？"),
+        )
+        .id(egui::Id::new("screen_permission_restart_confirmation"))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(self.language.text(
+                "画面収録を許可した後に再起動すると、MacShotで撮影・録画できるようになります。",
+            ));
+            ui.label(
+                self.language
+                    .text("録画中の場合は、保存してから再起動します。"),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(primary_button(self.language.text("今すぐ再起動")))
+                    .clicked()
+                {
+                    restart_now = true;
+                }
+                if ui.button(self.language.text("あとで")).clicked() {
+                    restart_later = true;
+                }
+            });
+        });
+        if restart_later || !open {
+            self.restart_confirmation = false;
+            self.status = "再起動せずに続行します。必要なら後から再起動できます。".into();
+        }
+        if restart_now {
+            self.restart_confirmation = false;
+            self.screen_permission_restart_pending = true;
+            self.restart_after_recording = true;
+            self.request_quit(ctx);
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -10799,6 +10940,15 @@ impl MacShot {
                         Err(error) => self.status = recording_failure_message(&error),
                     }
                     if self.quit_after_recording {
+                        #[cfg(target_os = "macos")]
+                        if self.restart_after_recording {
+                            if !self.launch_macos_app_for_restart() {
+                                self.restart_after_recording = false;
+                                self.quit_after_recording = false;
+                                continue;
+                            }
+                            self.screen_permission_restart_pending = false;
+                        }
                         std::process::exit(0);
                     }
                 }
@@ -13436,7 +13586,7 @@ impl MacShot {
                             .strong(),
                     );
                     ui.label(
-                        egui::RichText::new(self.language.text("権限状態は設定画面で確認できます。オンでも撮影が拒否される場合はMacShot.appを登録し直して再起動してください。"))
+                        egui::RichText::new(self.language.text("権限状態は設定画面で確認できます。オンでも撮影できない場合は権限状態を更新してください。再起動が必要な場合はMacShotが確認します。"))
                             .size(12.0)
                             .color(TEXT_MUTED),
                     );
@@ -15570,27 +15720,26 @@ impl MacShot {
         for card in layout {
             if card.width == SettingsCardWidth::Half {
                 half_cards.push(card);
-                if half_cards.len() == 2 {
-                    let row = std::mem::take(&mut half_cards);
-                    self.show_settings_card_row(ui, &row);
-                }
             } else {
                 if !half_cards.is_empty() {
                     let row = std::mem::take(&mut half_cards);
-                    self.show_settings_card_row(ui, &row);
+                    self.show_settings_card_columns(ui, &row);
                 }
                 self.show_settings_card(ui, card);
             }
         }
         if !half_cards.is_empty() {
-            self.show_settings_card_row(ui, &half_cards);
+            self.show_settings_card_columns(ui, &half_cards);
         }
     }
 
-    fn show_settings_card_row(&mut self, ui: &mut egui::Ui, cards: &[SettingsCardLayout]) {
+    fn show_settings_card_columns(&mut self, ui: &mut egui::Ui, cards: &[SettingsCardLayout]) {
         ui.columns(2, |columns| {
-            for (index, card) in cards.iter().copied().enumerate() {
-                self.show_settings_card(&mut columns[index], card);
+            for card in cards.iter().copied() {
+                let left_y = columns[0].cursor().min.y;
+                let right_y = columns[1].cursor().min.y;
+                let target = usize::from(right_y < left_y);
+                self.show_settings_card(&mut columns[target], card);
             }
         });
         ui.add_space(12.0);
@@ -16396,6 +16545,12 @@ impl MacShot {
                         if ui.button(language.text("画面・音声の設定を開く")).clicked() {
                             self.open_screen_recording_settings();
                         }
+                        if (!screen_granted || self.screen_permission_restart_pending)
+                            && ui.button(language.text("再起動して許可を反映…")).clicked()
+                        {
+                            self.restart_confirmation = true;
+                            self.screen_permission_restart_pending = true;
+                        }
                         if ui.button(language.text("FinderでMacShotを表示")).clicked() {
                             self.reveal_macshot_app();
                         }
@@ -16562,15 +16717,15 @@ impl eframe::App for MacShot {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
         }
-        if cfg!(target_os = "macos")
-            && screen_recording_access_granted()
-            && (self.status.starts_with("画面収録の許可を設定してください")
-                || self.status.starts_with("macOSから画面収録を拒否されました")
-                || self.status.starts_with("画面収録の許可設定を開きました")
-                || self.status.starts_with("設定でMacShotをオンにしてください"))
+        #[cfg(target_os = "macos")]
         {
-            self.status =
-                "画面収録の許可を確認しました。反映のためMacShotを再起動してください。".into();
+            let screen_access_granted = screen_recording_access_granted();
+            if screen_access_granted && !self.screen_permission_was_granted {
+                self.restart_confirmation = true;
+                self.screen_permission_restart_pending = true;
+                self.status = "画面収録の許可を確認しました。".into();
+            }
+            self.screen_permission_was_granted = screen_access_granted;
         }
         self.initialize_hotkey(ctx);
         self.initialize_tray(ctx);
@@ -16675,6 +16830,8 @@ impl eframe::App for MacShot {
         self.show_recording_rename_dialog(ctx);
         self.show_capture_target_picker(ctx);
         self.show_recording_target_picker(ctx);
+        #[cfg(target_os = "macos")]
+        self.show_screen_permission_restart_confirmation(ctx);
 
         if should_show_completion_notice(self.page) {
             if let Some(notice) = &self.capture_notice {
@@ -18689,7 +18846,7 @@ mod tests {
         );
         assert_eq!(
             capture_failure_message("ScreenCaptureKit: TCCを拒否しました。"),
-            "macOSから画面収録を拒否されました。「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」でMacShotを許可してください。一覧にない場合は「＋」からMacShot.appを追加してオンにし、MacShotを再起動します。既にオンの場合は一度オフ→オンしてから再起動してください。"
+            "macOSから画面収録を拒否されました。「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」でMacShotを許可し、権限状態を更新してください。一覧にない場合は「＋」からMacShot.appを追加してオンにします。再起動が必要な場合はMacShotが確認します。"
         );
     }
 

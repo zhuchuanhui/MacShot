@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0 — 2026-11-01
+
+- Added a localized restart confirmation when Screen Recording permission becomes available. Users can restart immediately or later; an active recording is saved before restart.
+- Added a Settings action to reopen the restart confirmation and revised the permission guidance.
+- Reflowed half-width Settings cards into two columns that fill vertical gaps while preserving the configured card order.
+
 ## 1.7.0 — 2026-11-01
 
 - Added saved recording profiles for Quality Priority (1440p / 24 Mbps / 30 fps), Smoothness Priority (720p / 8 Mbps / 60 fps), Balanced (1080p / 12 Mbps / 30 fps), and Custom.

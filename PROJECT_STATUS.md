@@ -1,5 +1,15 @@
 # Project Status
 
+## v1.8.0 Release — 2026-11-01
+
+- 画面収録の許可が実行中に有効になったことを検知すると、MacShotの再起動確認を表示します。「あとで」を選んだ場合は設定画面から再表示できます。録画中は停止・保存を待ってから再起動します。権限案内も確認後に再起動する説明へ統一しました。
+- 半幅設定カードを高さに応じて左右の短い列へ振り分け、カード順を保ったまま段組みの縦の空白を減らしました。
+- v1.7.0公開後の権限反映ワークフロー追加のため次版をminor更新のv1.8.0としました。macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。
+- 完成済み.appは`output/release/MacShot-v1.8.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.8.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルとrelease buildのUUIDが一致します。起動して設定画面の配置を確認しました。画面収録は起動時点で許可済みだったため、許可変更後の再起動確認ダイアログは未確認です。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.8.0-macos-arm64.zip`（SHA-256 `d72c2c80c9cbefd5400c7e37f03b8105fea08c2168415400970d830647d85021`）と`output/release/MacShot-v1.8.0-windows-x64.zip`（SHA-256 `8bca6f3eebb9b6abc8f644bf519449457287e8c0649a1e689739a2c8fdd4b3fa`）。両ZIPの整合性とチェックサムを検証し、macOS ZIPにFinder補助ファイルはありません。Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- macOS buildではvendor/xcapの非推奨API警告、Windows cross-buildでは`rust-objcopy`が`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、両release buildと梱包は成功しました。Windows実機動作は未確認です。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- GitHub Release公開後にタグ・4つの添付ファイル・再ダウンロード結果を追記します。production deploymentは行いません。
+
 ## v1.7.0 Release — 2026-11-01
 
 - 録画設定に「画質優先（1440p / 24 Mbps / 30 fps）」「滑らかさ優先（720p / 8 Mbps / 60 fps）」「バランス（1080p / 12 Mbps / 30 fps）」「カスタム」を追加しました。解像度・ビットレート・FPSの既存個別設定は維持し、手動調整するとカスタムに切り替わります。選択は設定ファイルへ保存されます。
