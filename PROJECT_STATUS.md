@@ -8,7 +8,7 @@
 - macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、macOS/Windows x64 GNUの`cargo check --all-targets`、`cargo fmt --all -- --check`、`git diff --check`が成功しました。完成済み.appは`output/release/MacShot-v1.4.8-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.8`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.4.8-macos-arm64.zip`（SHA-256 `3d2ae2a6818f9211b0f629ae1e06f693440448866ad2bd2508936fa3ef967fa7`）と`output/release/MacShot-v1.4.8-windows-x64.zip`（SHA-256 `23d870529da9b429e8164f780cf7f5f2001a907cf78959d3a978133405a91e9a`）。両ZIPの整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
 - 実画面を使う録画操作、複数ディスプレイ・ウィンドウ・範囲ごとの動画内容と再生、macOS/Windows実機は未確認です。自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらもrelease buildと梱包は成功しました。
-- GitHub Releaseへの公開結果を追記します。
+- Published as [GitHub Release v1.4.8](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.8), tagged at source commit `5d7ea2b6011e860429387911ee4cf3a1056d6b52` (`feat(recording): select targets before recording`). GitHub reports a published, non-prerelease release and v1.4.8 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No GitHub Actions workflows or recent CI runs exist. No production deployment was made.
 
 ## v1.4.7 Release — 2026-11-01
 
