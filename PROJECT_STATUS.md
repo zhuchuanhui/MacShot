@@ -1,11 +1,21 @@
 # Project Status
 
+## v1.4.8 Release — 2026-11-01
+
+- 録画開始前に対象を選べるようにしました。メイン画面の録画ボタンと録画ショートカットは録画モード選択を開き、メニューバーにはスクリーンショット項目と分けた録画専用サブメニューを追加しました。デスクトップ（メイン画面）、すべてのディスプレイ、一覧から選ぶウィンドウ、ドラッグで指定する範囲から選べます。スクリーンショット用のメニューバー項目と設定は分離したままです。
+- 範囲録画は選択範囲だけをフレームごとに切り抜きます。全ディスプレイ録画は各画面の位置・倍率に合わせて合成してから録画します。
+- Cargo.tomlの`1.4.8-rc.1`と最新公開版v1.4.7を確認し、RCの正式版としてv1.4.8を選びました。録画先をメインディスプレイ、全ディスプレイ、選択ウィンドウ、選択範囲から選べます。範囲録画は各フレームを切り抜き、全画面録画はモニターの位置・倍率に合わせて合成します。スクリーンショットの対象設定とは分離しています。
+- macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、macOS/Windows x64 GNUの`cargo check --all-targets`、`cargo fmt --all -- --check`、`git diff --check`が成功しました。完成済み.appは`output/release/MacShot-v1.4.8-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.8`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.4.8-macos-arm64.zip`（SHA-256 `3d2ae2a6818f9211b0f629ae1e06f693440448866ad2bd2508936fa3ef967fa7`）と`output/release/MacShot-v1.4.8-windows-x64.zip`（SHA-256 `23d870529da9b429e8164f780cf7f5f2001a907cf78959d3a978133405a91e9a`）。両ZIPの整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- 実画面を使う録画操作、複数ディスプレイ・ウィンドウ・範囲ごとの動画内容と再生、macOS/Windows実機は未確認です。自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらもrelease buildと梱包は成功しました。
+- GitHub Releaseへの公開結果を追記します。
+
 ## v1.4.7 Release — 2026-11-01
 
 - Windowsではメインウィンドウの閉じる要求をキャンセルして隠していたため、タスクマネージャーの「タスクの終了」も常駐動作として処理され、プロセスが終了しない問題を修正しました。Windowsの閉じる要求は終了処理へ渡し、録画中は録画の保存後に終了します。macOSのDock終了後にメニューバーへ常駐する動作は維持します。互換性を保つ修正としてv1.4.7に反映しました。
 - macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、Windows x64 GNU向け`cargo check --all-targets`、`cargo fmt --all -- --check`、`git diff --check`も成功しました。完成済み.appは`output/release/MacShot-v1.4.7-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.7`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.4.7-macos-arm64.zip`（SHA-256 `6f092b84b97b5ab0969b764f1e5a1f4969910465825a8e9090cfeec6e851d054`）と`output/release/MacShot-v1.4.7-windows-x64.zip`（SHA-256 `7af8ff72a4fd841a671b0dd29b0a95634d18de931d794454cfcf87b1fa040524`）。両ZIPの整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
-- テストは実行していません。Windows実機でタスクマネージャーからの終了と、macOSのDock終了後の常駐動作は未確認です。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらの成果物も生成・検証できています。
+- ユーザーからWindows実機でタスクマネージャーから終了できることを確認したとの報告がありました。録画中終了時の保存完了と、macOSのDock終了後の常駐動作は未確認です。自動テストは実行していません。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありました。どちらの成果物も生成・検証できています。
 - Published as [GitHub Release v1.4.7](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.7), tagged at source commit `49b58d7f4a1b747813140a6597310ba96bb07422` (`fix(windows): honor task termination requests`). GitHub reports a published, non-prerelease release and v1.4.7 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No production deployment was made.
 
 ## v1.4.6 Release — 2026-11-01

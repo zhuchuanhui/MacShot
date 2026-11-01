@@ -231,6 +231,8 @@ struct MacShot {
     window_search_query: String,
     capture_target_popup_was_open: bool,
     capture_target: CaptureTarget,
+    recording_target_picker_open: bool,
+    region_select_for_recording: bool,
     #[cfg(target_os = "windows")]
     last_external_window_id: Option<u32>,
     capture_target_picker_open: bool,
@@ -640,6 +642,30 @@ impl AppLanguage {
             ],
             "Esc  キャンセル" => ["Esc  Cancel", "Esc  取消", "Esc  取消"],
             "撮影方法を選択" => ["Choose Capture Mode", "选择截图方式", "選擇截圖方式"],
+            "録画方法を選択" => ["Choose Recording Mode", "选择录制方式", "選擇錄製方式"],
+            "録画する画面・ウィンドウ・範囲を選んでください" => [
+                "Choose a display, window, or region to record.",
+                "请选择要录制的显示器、窗口或区域。",
+                "請選擇要錄製的顯示器、視窗或區域。",
+            ],
+            "デスクトップ（メイン画面）を録画" => [
+                "Record Desktop (Main Display)",
+                "录制桌面（主显示器）",
+                "錄製桌面（主要顯示器）",
+            ],
+            "すべてのディスプレイを録画" => {
+                ["Record All Displays", "录制所有显示器", "錄製所有顯示器"]
+            }
+            "範囲を選んで録画…" => [
+                "Select a Region to Record…",
+                "选择区域并录制…",
+                "選取區域並錄製…",
+            ],
+            "ウィンドウを選んで録画" => [
+                "Choose a Window to Record",
+                "选择窗口并录制",
+                "選擇視窗並錄製",
+            ],
             "撮影対象を選んでから撮影してください" => [
                 "Choose what to capture, then take the screenshot.",
                 "选择截图目标后再进行截图。",
@@ -1408,6 +1434,16 @@ impl AppLanguage {
                 "Drag to select a capture region · Esc to cancel",
                 "拖动以选择截图区域 · 按 Esc 取消",
                 "拖曳以選取截圖範圍 · 按 Esc 取消",
+            ],
+            "ドラッグして録画範囲を選択　·　Escでキャンセル" => [
+                "Drag to select a recording region · Esc to cancel",
+                "拖动以选择录制区域 · 按 Esc 取消",
+                "拖曳以選取錄製範圍 · 按 Esc 取消",
+            ],
+            "範囲録画をキャンセルしました。" => [
+                "Region recording canceled.",
+                "已取消区域录制。",
+                "已取消區域錄製。",
             ],
             "ドラッグして撮影範囲を選択してください。Escでキャンセルできます。" => {
                 [
@@ -2591,6 +2627,11 @@ impl AppLanguage {
             (Self::Japanese, "recording") => "録画中",
             (Self::Japanese, "record_start") => "録画を開始",
             (Self::Japanese, "record_stop") => "録画を停止",
+            (Self::Japanese, "record_target") => "録画方法を選択",
+            (Self::Japanese, "record_primary") => "デスクトップ（メイン画面）を録画",
+            (Self::Japanese, "record_all") => "すべてのディスプレイを録画",
+            (Self::Japanese, "record_window") => "ウィンドウを選んで録画…",
+            (Self::Japanese, "record_region") => "範囲を選択して録画…",
             (Self::Japanese, "quit") => "終了",
             (Self::English, "show") => "Open MacShot",
             (Self::English, "capture") => "Screenshot",
@@ -2613,6 +2654,11 @@ impl AppLanguage {
             (Self::English, "recording") => "Recording",
             (Self::English, "record_start") => "Start Recording",
             (Self::English, "record_stop") => "Stop Recording",
+            (Self::English, "record_target") => "Choose Recording Mode",
+            (Self::English, "record_primary") => "Record Desktop (Main Display)",
+            (Self::English, "record_all") => "Record All Displays",
+            (Self::English, "record_window") => "Choose a Window to Record…",
+            (Self::English, "record_region") => "Select a Region to Record…",
             (Self::English, "quit") => "Quit",
             (Self::SimplifiedChinese, "show") => "打开 MacShot",
             (Self::SimplifiedChinese, "capture") => "屏幕截图",
@@ -2635,6 +2681,11 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "recording") => "正在录制",
             (Self::SimplifiedChinese, "record_start") => "开始录制",
             (Self::SimplifiedChinese, "record_stop") => "停止录制",
+            (Self::SimplifiedChinese, "record_target") => "选择录制方式",
+            (Self::SimplifiedChinese, "record_primary") => "录制桌面（主显示器）",
+            (Self::SimplifiedChinese, "record_all") => "录制所有显示器",
+            (Self::SimplifiedChinese, "record_window") => "选择窗口并录制…",
+            (Self::SimplifiedChinese, "record_region") => "选择区域并录制…",
             (Self::SimplifiedChinese, "quit") => "退出",
             (Self::TraditionalChinese, "show") => "開啟 MacShot",
             (Self::TraditionalChinese, "capture") => "螢幕截圖",
@@ -2657,6 +2708,11 @@ impl AppLanguage {
             (Self::TraditionalChinese, "recording") => "正在錄製",
             (Self::TraditionalChinese, "record_start") => "開始錄製",
             (Self::TraditionalChinese, "record_stop") => "停止錄製",
+            (Self::TraditionalChinese, "record_target") => "選擇錄製方式",
+            (Self::TraditionalChinese, "record_primary") => "錄製桌面（主要顯示器）",
+            (Self::TraditionalChinese, "record_all") => "錄製所有顯示器",
+            (Self::TraditionalChinese, "record_window") => "選擇視窗並錄製…",
+            (Self::TraditionalChinese, "record_region") => "選取區域並錄製…",
             (Self::TraditionalChinese, "quit") => "結束",
             _ => "MacShot",
         }
@@ -2724,6 +2780,9 @@ enum TrayAction {
     OpenNativeScreenshot,
     ToggleContinuousCapture,
     ToggleRecording,
+    RecordTarget(CaptureTarget),
+    ChooseRecordingWindow,
+    RecordRegion,
     Quit,
 }
 
@@ -3501,6 +3560,8 @@ impl Default for MacShot {
             window_search_query: String::new(),
             capture_target_popup_was_open: false,
             capture_target,
+            recording_target_picker_open: false,
+            region_select_for_recording: false,
             #[cfg(target_os = "windows")]
             last_external_window_id: initial_external_window_id,
             capture_target_picker_open: false,
@@ -6315,6 +6376,8 @@ fn recording_target_uses_window_capture(target: CaptureTarget) -> bool {
 
 struct RecordingCapture {
     display: Option<DisplayCapture>,
+    displays: Option<Vec<(i32, i32, u32, u32, f32, DisplayCapture)>>,
+    region: Option<[f32; 4]>,
     #[cfg(target_os = "macos")]
     window: Option<WindowRecordingCapture>,
     #[cfg(not(target_os = "macos"))]
@@ -6328,7 +6391,7 @@ struct WindowRecordingCapture {
 }
 
 impl RecordingCapture {
-    fn new(target: CaptureTarget) -> Result<Self, String> {
+    fn new(target: CaptureTarget, region: Option<[f32; 4]>) -> Result<Self, String> {
         if recording_target_uses_window_capture(target) {
             #[cfg(target_os = "macos")]
             {
@@ -6358,6 +6421,8 @@ impl RecordingCapture {
                     .with_height(height);
                 Ok(Self {
                     display: None,
+                    displays: None,
+                    region,
                     window: Some(WindowRecordingCapture {
                         filter,
                         configuration,
@@ -6387,43 +6452,98 @@ impl RecordingCapture {
                 };
                 Ok(Self {
                     display: None,
+                    displays: None,
+                    region,
                     window: Some(window),
                 })
             }
+        } else if target == CaptureTarget::AllDisplays {
+            let monitors = Monitor::all().map_err(|error| error.to_string())?;
+            if monitors.is_empty() {
+                return Err("録画できる画面が見つかりません。".into());
+            }
+            let displays = monitors
+                .iter()
+                .map(|monitor| {
+                    Ok((
+                        monitor.x().map_err(|error| error.to_string())?,
+                        monitor.y().map_err(|error| error.to_string())?,
+                        monitor.width().map_err(|error| error.to_string())?,
+                        monitor.height().map_err(|error| error.to_string())?,
+                        monitor.scale_factor().unwrap_or(1.0).max(1.0),
+                        DisplayCapture::new(monitor)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(Self {
+                display: None,
+                displays: Some(displays),
+                region,
+                window: None,
+            })
         } else {
             let monitor = monitor_for_recording(target)?;
             Ok(Self {
                 display: Some(DisplayCapture::new(&monitor)?),
+                displays: None,
+                region,
                 window: None,
             })
         }
     }
 
     fn capture_image(&self) -> Result<image::RgbaImage, String> {
-        #[cfg(target_os = "macos")]
-        if let Some(window) = &self.window {
-            let captured =
-                SCScreenshotManager::capture_image(&window.filter, &window.configuration).map_err(
-                    |error| format!("ScreenCaptureKitでウィンドウを録画できません: {error}"),
-                )?;
-            let width = u32::try_from(captured.width())
-                .map_err(|_| "録画画像の幅が上限を超えています。".to_string())?;
-            let height = u32::try_from(captured.height())
-                .map_err(|_| "録画画像の高さが上限を超えています。".to_string())?;
-            let pixels = captured
-                .rgba_data()
-                .map_err(|error| format!("録画画像を読み取れません: {error}"))?;
-            return image::RgbaImage::from_raw(width, height, pixels)
-                .ok_or_else(|| "録画画像のサイズとピクセルデータが一致しません。".to_string());
+        let image = if let Some(displays) = &self.displays {
+            let captures = displays
+                .iter()
+                .map(|(x, y, width, height, scale, display)| {
+                    Ok((*x, *y, *width, *height, *scale, display.capture_image()?))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            combine_display_images(captures)?
+        } else {
+            {
+                #[cfg(target_os = "macos")]
+                if let Some(window) = &self.window {
+                    let captured =
+                        SCScreenshotManager::capture_image(&window.filter, &window.configuration)
+                            .map_err(|error| {
+                            format!("ScreenCaptureKitでウィンドウを録画できません: {error}")
+                        })?;
+                    let width = u32::try_from(captured.width())
+                        .map_err(|_| "録画画像の幅が上限を超えています。".to_string())?;
+                    let height = u32::try_from(captured.height())
+                        .map_err(|_| "録画画像の高さが上限を超えています。".to_string())?;
+                    let pixels = captured
+                        .rgba_data()
+                        .map_err(|error| format!("録画画像を読み取れません: {error}"))?;
+                    image::RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
+                        "録画画像のサイズとピクセルデータが一致しません。".to_string()
+                    })?
+                } else {
+                    self.display
+                        .as_ref()
+                        .ok_or_else(|| "録画する画面が見つかりません。".to_string())?
+                        .capture_image()?
+                }
+                #[cfg(not(target_os = "macos"))]
+                if let Some(window) = &self.window {
+                    window.capture_image().map_err(|error| error.to_string())?
+                } else {
+                    self.display
+                        .as_ref()
+                        .ok_or_else(|| "録画する画面が見つかりません。".to_string())?
+                        .capture_image()?
+                }
+            }
+        };
+        if let Some(region) = self.region {
+            crop_normalized(&image, region).ok_or_else(|| {
+                "選択した録画範囲が小さすぎます。範囲を選び直してください。".to_string()
+            })
+        } else {
+            Ok(image)
         }
-        #[cfg(not(target_os = "macos"))]
-        if let Some(window) = &self.window {
-            return window.capture_image().map_err(|error| error.to_string());
-        }
-        self.display
-            .as_ref()
-            .ok_or_else(|| "録画する画面が見つかりません。".to_string())?
-            .capture_image()
     }
 }
 
@@ -7730,6 +7850,7 @@ fn record_screen(
     sequence: u64,
     format: RecordingFormat,
     quality: RecordingQuality,
+    region: Option<[f32; 4]>,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
@@ -7741,6 +7862,7 @@ fn record_screen(
             file_timestamp,
             sequence,
             quality,
+            region,
             stop_rx,
             event_tx.clone(),
             ctx.clone(),
@@ -7751,6 +7873,7 @@ fn record_screen(
             file_timestamp,
             sequence,
             quality,
+            region,
             stop_rx,
             event_tx.clone(),
             ctx.clone(),
@@ -7767,12 +7890,13 @@ fn record_screen_to_gif(
     file_timestamp: String,
     sequence: u64,
     quality: RecordingQuality,
+    region: Option<[f32; 4]>,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let recording_capture = RecordingCapture::new(target)?;
+    let recording_capture = RecordingCapture::new(target, region)?;
     let first = quality
         .resolution
         .resize(recording_capture.capture_image()?, false);
@@ -7939,12 +8063,13 @@ fn record_screen_to_mp4(
     file_timestamp: String,
     sequence: u64,
     quality: RecordingQuality,
+    region: Option<[f32; 4]>,
     stop_rx: Receiver<()>,
     event_tx: Sender<RecordingEvent>,
     ctx: egui::Context,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let recording_capture = RecordingCapture::new(target)?;
+    let recording_capture = RecordingCapture::new(target, region)?;
     let first = quality
         .resolution
         .resize(recording_capture.capture_image()?, true);
@@ -8555,6 +8680,46 @@ impl MacShot {
             true,
             None,
         );
+        let recording_primary_item = MenuItem::with_id(
+            "macshot.record.primary",
+            self.language.tray_label("record_primary"),
+            true,
+            None,
+        );
+        let recording_all_item = MenuItem::with_id(
+            "macshot.record.all",
+            self.language.tray_label("record_all"),
+            true,
+            None,
+        );
+        let recording_window_item = MenuItem::with_id(
+            "macshot.record.window",
+            self.language.tray_label("record_window"),
+            true,
+            None,
+        );
+        let recording_region_item = MenuItem::with_id(
+            "macshot.record.region",
+            self.language.tray_label("record_region"),
+            true,
+            None,
+        );
+        let recording_mode_submenu = match Submenu::with_items(
+            self.language.tray_label("record_target"),
+            true,
+            &[
+                &recording_primary_item,
+                &recording_all_item,
+                &recording_window_item,
+                &recording_region_item,
+            ],
+        ) {
+            Ok(menu) => menu,
+            Err(error) => {
+                self.status = format!("録画方法メニューを作成できません: {error}");
+                return;
+            }
+        };
         let quit_item =
             MenuItem::with_id("macshot.quit", self.language.tray_label("quit"), true, None);
         let capture_separator = PredefinedMenuItem::separator();
@@ -8578,6 +8743,7 @@ impl MacShot {
             &continuous_capture_item,
             &capture_status_item,
             &quit_separator,
+            &recording_mode_submenu,
             &recording_item,
             &recording_status_item,
             &PredefinedMenuItem::separator(),
@@ -8605,6 +8771,10 @@ impl MacShot {
         let native_screenshot_id = native_screenshot_item.id().0.clone();
         let continuous_capture_id = continuous_capture_item.id().0.clone();
         let record_id = recording_item.id().0.clone();
+        let recording_primary_id = recording_primary_item.id().0.clone();
+        let recording_all_id = recording_all_item.id().0.clone();
+        let recording_window_id = recording_window_item.id().0.clone();
+        let recording_region_id = recording_region_item.id().0.clone();
         let quit_id = quit_item.id().0.clone();
         let target_actions: HashMap<_, _> = target_selection_items
             .iter()
@@ -8633,6 +8803,14 @@ impl MacShot {
                 id if id == native_screenshot_id => Some(TrayAction::OpenNativeScreenshot),
                 id if id == continuous_capture_id => Some(TrayAction::ToggleContinuousCapture),
                 id if id == record_id => Some(TrayAction::ToggleRecording),
+                id if id == recording_primary_id => {
+                    Some(TrayAction::RecordTarget(CaptureTarget::PrimaryDisplay))
+                }
+                id if id == recording_all_id => {
+                    Some(TrayAction::RecordTarget(CaptureTarget::AllDisplays))
+                }
+                id if id == recording_window_id => Some(TrayAction::ChooseRecordingWindow),
+                id if id == recording_region_id => Some(TrayAction::RecordRegion),
                 id if id == quit_id => Some(TrayAction::Quit),
                 id => target_actions
                     .get(id)
@@ -8928,6 +9106,14 @@ impl MacShot {
                 TrayAction::OpenNativeScreenshot => self.open_native_screenshot(),
                 TrayAction::ToggleContinuousCapture => self.toggle_continuous_capture(ctx),
                 TrayAction::ToggleRecording => self.toggle_recording(ctx),
+                TrayAction::RecordTarget(target) => {
+                    self.begin_recording_for_target(ctx, target, None);
+                }
+                TrayAction::ChooseRecordingWindow => self.open_recording_target_picker(ctx),
+                TrayAction::RecordRegion => {
+                    self.region_select_for_recording = true;
+                    self.begin_region_selection(ctx);
+                }
                 TrayAction::Quit => self.request_quit(ctx),
             }
         }
@@ -9294,17 +9480,130 @@ impl MacShot {
         if self.recording || self.recording_starting {
             self.stop_recording();
         } else {
-            self.begin_recording(ctx);
+            self.open_recording_target_picker(ctx);
         }
     }
 
-    fn begin_recording(&mut self, ctx: &egui::Context) {
+    fn open_recording_target_picker(&mut self, ctx: &egui::Context) {
+        if self.capture_in_progress || self.recording || self.recording_starting {
+            return;
+        }
+        self.page = Page::Capture;
+        self.recording_target_picker_open = true;
+        #[cfg(target_os = "macos")]
+        set_macos_activation_policy(objc2_app_kit::NSApplicationActivationPolicy::Regular);
+        restore_main_window(ctx);
+    }
+
+    fn show_recording_target_picker(&mut self, ctx: &egui::Context) {
+        if !self.recording_target_picker_open {
+            return;
+        }
+        let mut open = true;
+        let mut cancel = false;
+        let mut selected_target = None;
+        let mut select_region = false;
+        let language = self.language;
+        egui::Window::new(language.text("録画方法を選択"))
+            .id(egui::Id::new("recording_target_picker"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(640.0)
+            .default_height(540.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(language.text("録画する画面・ウィンドウ・範囲を選んでください"));
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(language.text("デスクトップ（メイン画面）を録画"))
+                        .clicked()
+                    {
+                        selected_target = Some(CaptureTarget::PrimaryDisplay);
+                    }
+                    if ui
+                        .button(language.text("すべてのディスプレイを録画"))
+                        .clicked()
+                    {
+                        selected_target = Some(CaptureTarget::AllDisplays);
+                    }
+                    if ui.button(language.text("範囲を選んで録画…")).clicked() {
+                        select_region = true;
+                    }
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(language.text("ウィンドウを選んで録画")).strong());
+                    if ui
+                        .button(language.text("↻  ウィンドウ一覧を更新"))
+                        .clicked()
+                    {
+                        match discover_windows() {
+                            Ok(windows) => {
+                                self.windows = windows;
+                                self.reset_tray_menu();
+                            }
+                            Err(error) => self.status = capture_failure_message(&error),
+                        }
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("recording_target_windows")
+                    .max_height(340.0)
+                    .show(ui, |ui| {
+                        for window in &self.windows {
+                            let target = CaptureTarget::Window(window.id);
+                            let label = format!(
+                                "{} — {}  ·  {} × {} px",
+                                window.app_name, window.title, window.width, window.height
+                            );
+                            if ui.selectable_label(false, label).clicked() {
+                                selected_target = Some(target);
+                            }
+                        }
+                        if self.windows.is_empty() {
+                            ui.label(
+                                language
+                                    .text("ウィンドウ候補がありません。一覧を更新してください。"),
+                            );
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(language.text("Escでキャンセルできます"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(language.text("キャンセル")).clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+        self.recording_target_picker_open = open;
+        if cancel || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.recording_target_picker_open = false;
+        }
+        if let Some(target) = selected_target {
+            self.recording_target_picker_open = false;
+            self.begin_recording_for_target(ctx, target, None);
+        } else if select_region {
+            self.recording_target_picker_open = false;
+            self.region_select_for_recording = true;
+            self.begin_region_selection(ctx);
+        }
+    }
+
+    fn begin_recording_for_target(
+        &mut self,
+        ctx: &egui::Context,
+        target: CaptureTarget,
+        region: Option<[f32; 4]>,
+    ) {
         if self.capture_in_progress || self.recording || self.recording_starting {
             return;
         }
         self.recording_sequence += 1;
         let sequence = self.recording_sequence;
-        let target = self.capture_target;
         let format = self.recording_format;
         let quality = self.recording_quality;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
@@ -9332,6 +9631,7 @@ impl MacShot {
                 sequence,
                 format,
                 quality,
+                region,
                 stop_rx,
                 sender,
                 context,
@@ -9797,6 +10097,7 @@ impl MacShot {
     fn begin_region_selection(&mut self, ctx: &egui::Context) {
         self.commit_live_annotation();
         if self.has_pending_edit() {
+            self.region_select_for_recording = false;
             self.status = self
                 .language
                 .text("編集内容を保存するか消去してから撮影してください。")
@@ -9804,6 +10105,7 @@ impl MacShot {
             return;
         }
         if self.recording || self.recording_starting || self.capture_in_progress {
+            self.region_select_for_recording = false;
             self.report_capture_failure("録画または撮影が終わってから範囲撮影を開始してください。");
             return;
         }
@@ -9814,6 +10116,7 @@ impl MacShot {
             let monitors = match Monitor::all() {
                 Ok(monitors) => monitors,
                 Err(error) => {
+                    self.region_select_for_recording = false;
                     self.report_capture_failure(format!("画面を確認できません: {error}"));
                     return;
                 }
@@ -9823,14 +10126,17 @@ impl MacShot {
                 .find(|monitor| monitor.is_primary().unwrap_or(false))
                 .or_else(|| monitors.first())
             else {
+                self.region_select_for_recording = false;
                 self.report_capture_failure("撮影できる画面が見つかりません。");
                 return;
             };
             let Ok(width) = monitor.width() else {
+                self.region_select_for_recording = false;
                 self.report_capture_failure("画面サイズを確認できません。");
                 return;
             };
             let Ok(height) = monitor.height() else {
+                self.region_select_for_recording = false;
                 self.report_capture_failure("画面サイズを確認できません。");
                 return;
             };
@@ -9897,6 +10203,7 @@ impl MacShot {
                 }
                 Err(error) => {
                     self.region_selection_deadline = None;
+                    self.region_select_for_recording = false;
                     self.status = format!("画面を確認できません: {error}");
                     restore_main_window(ctx);
                 }
@@ -9907,6 +10214,7 @@ impl MacShot {
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
             self.region_selection_deadline = None;
+            self.region_select_for_recording = false;
             #[cfg(target_os = "windows")]
             {
                 self.region_geometry_pending = false;
@@ -9933,6 +10241,7 @@ impl MacShot {
                     self.region_selecting = true;
                 }
                 Err(error) => {
+                    self.region_select_for_recording = false;
                     self.status = format!("範囲選択の背景を撮影できません: {error}");
                     restore_main_window(ctx);
                 }
@@ -9978,6 +10287,7 @@ impl MacShot {
 
     fn show_region_overlay(&mut self, ctx: &egui::Context) {
         let language = self.language;
+        let recording_selection = self.region_select_for_recording;
         let title = language.text("MacShot 範囲選択");
         let viewport_id = egui::ViewportId::from_hash_of("macshot-region-selector");
         let builder = egui::ViewportBuilder::default()
@@ -10118,7 +10428,11 @@ impl MacShot {
                         painter.text(
                             screen.center_top() + egui::vec2(0.0, 30.0),
                             egui::Align2::CENTER_TOP,
-                            language.text("ドラッグして撮影範囲を選択　·　Escでキャンセル"),
+                            language.text(if recording_selection {
+                                "ドラッグして録画範囲を選択　·　Escでキャンセル"
+                            } else {
+                                "ドラッグして撮影範囲を選択　·　Escでキャンセル"
+                            }),
                             egui::FontId::proportional(22.0),
                             egui::Color32::WHITE,
                         );
@@ -10155,6 +10469,15 @@ impl MacShot {
             self.region_background_texture = None;
             restore_main_window(ctx);
             if let Some(bounds) = selection {
+                if self.region_select_for_recording {
+                    self.region_select_for_recording = false;
+                    self.begin_recording_for_target(
+                        ctx,
+                        CaptureTarget::PrimaryDisplay,
+                        Some(bounds),
+                    );
+                    return;
+                }
                 if self.keep_region_in_continuous {
                     self.continuous_region = Some(bounds);
                 } else {
@@ -10162,7 +10485,13 @@ impl MacShot {
                 }
                 self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(bounds));
             } else {
-                self.status = "範囲撮影をキャンセルしました。".into();
+                let recording_selection = self.region_select_for_recording;
+                self.region_select_for_recording = false;
+                self.status = if recording_selection {
+                    "範囲録画をキャンセルしました。".into()
+                } else {
+                    "範囲撮影をキャンセルしました。".into()
+                };
             }
         }
         if self.region_selecting {
@@ -14341,6 +14670,7 @@ impl eframe::App for MacShot {
         self.show_recording_player_viewport(ctx);
         self.show_recording_rename_dialog(ctx);
         self.show_capture_target_picker(ctx);
+        self.show_recording_target_picker(ctx);
 
         if should_show_completion_notice(self.page) {
             if let Some(notice) = &self.capture_notice {

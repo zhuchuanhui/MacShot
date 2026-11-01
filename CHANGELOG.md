@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.8 — 2026-11-01
+
+- Added recording target selection for the primary display, all displays, an individual window, or a selected screen region. Region recordings are cropped per frame, and all-display recordings are composed across monitor positions and scales.
+
 ## 1.4.7 — 2026-11-01
 
 - Fixed Windows close requests so task termination reaches the app's quit handling; an active recording is saved before the app exits. macOS Dock quit behavior remains unchanged.
