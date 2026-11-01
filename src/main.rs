@@ -227,7 +227,12 @@ struct MacShot {
     monitors: Vec<Monitor>,
     windows: Vec<WindowChoice>,
     window_search_query: String,
+    capture_target_popup_was_open: bool,
     capture_target: CaptureTarget,
+    #[cfg(target_os = "windows")]
+    last_observed_foreground_window_id: Option<u32>,
+    #[cfg(target_os = "windows")]
+    last_external_window_id: Option<u32>,
     capture_target_picker_open: bool,
     capture_shortcut_behavior: CaptureShortcutBehavior,
     continuous_capture: bool,
@@ -3466,12 +3471,24 @@ impl Default for MacShot {
             "settings_layout",
             &serialize_settings_layout(&default_settings_layout()),
         ));
+        #[cfg(target_os = "windows")]
+        let initial_foreground_window_id = foreground_window_id();
+        #[cfg(target_os = "windows")]
+        let initial_external_window_id = initial_foreground_window_id.filter(|id| {
+            foreground_window_process_id() != Some(std::process::id())
+                && windows.iter().any(|window| window.id == *id)
+        });
         Self {
             language,
             monitors,
             windows,
             window_search_query: String::new(),
+            capture_target_popup_was_open: false,
             capture_target,
+            #[cfg(target_os = "windows")]
+            last_observed_foreground_window_id: initial_foreground_window_id,
+            #[cfg(target_os = "windows")]
+            last_external_window_id: initial_external_window_id,
             capture_target_picker_open: false,
             capture_shortcut_behavior,
             continuous_capture: false,
@@ -5978,6 +5995,23 @@ fn foreground_window_process_id() -> Option<u32> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn foreground_window_id() -> Option<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    (!hwnd.is_null()).then_some(hwnd as usize as u32)
+}
+
+#[cfg(target_os = "windows")]
+fn find_captureable_window_id(window_id: u32) -> bool {
+    Window::all().is_ok_and(|windows| {
+        windows
+            .into_iter()
+            .any(|window| window.id().ok() == Some(window_id) && is_captureable_window(&window))
+    })
+}
+
 struct DisplayCapture {
     #[cfg(target_os = "macos")]
     filter: SCContentFilter,
@@ -7984,6 +8018,29 @@ fn write_gif_frame_with_speed<W: Write>(
 }
 
 impl MacShot {
+    #[cfg(target_os = "windows")]
+    fn resolve_active_window_target(&self) -> Option<CaptureTarget> {
+        let windows = Window::all().ok()?;
+        let is_external_captureable = |window: &Window| {
+            is_captureable_window(window) && window.pid().ok() != Some(std::process::id())
+        };
+        let foreground_id = foreground_window_id();
+        let selected = foreground_id
+            .filter(|id| {
+                windows
+                    .iter()
+                    .any(|window| window.id().ok() == Some(*id) && is_external_captureable(window))
+            })
+            .or_else(|| {
+                self.last_external_window_id.filter(|id| {
+                    windows.iter().any(|window| {
+                        window.id().ok() == Some(*id) && is_external_captureable(window)
+                    })
+                })
+            });
+        selected.map(CaptureTarget::Window)
+    }
+
     fn initialize_hotkey(&mut self, ctx: &egui::Context) {
         if self.hotkey_initialized {
             return;
@@ -9890,6 +9947,14 @@ impl MacShot {
                 .into();
             return;
         }
+        let active_window_request = matches!(target, CaptureTarget::ActiveWindow);
+        #[cfg(target_os = "windows")]
+        let target = if active_window_request {
+            self.resolve_active_window_target()
+                .unwrap_or(CaptureTarget::ActiveWindow)
+        } else {
+            target
+        };
         if self.capture_in_progress {
             self.capture_queue
                 .push_back(CaptureRequest { target, region });
@@ -9899,7 +9964,7 @@ impl MacShot {
             );
             return;
         }
-        if !interactive_window_selection {
+        if !interactive_window_selection && !active_window_request {
             if let Some(message) = capture_target_preflight_error(
                 target,
                 self.recording,
@@ -11202,6 +11267,14 @@ impl MacShot {
                         ui.label(egui::RichText::new(self.language.text("撮影対象")).size(11.0).color(TEXT_MUTED));
                         ui.add_space(4.0);
                         let target_popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
+                        let combo_id = ui.make_persistent_id("capture_target");
+                        let popup_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+                        if popup_open && !self.capture_target_popup_was_open {
+                            if let Ok(windows) = discover_windows() {
+                                self.windows = windows;
+                            }
+                        }
+                        self.capture_target_popup_was_open = popup_open;
                         egui::ComboBox::from_id_salt("capture_target")
                             .selected_text(self.target_caption())
                             .width(250.0)
@@ -13853,6 +13926,20 @@ impl eframe::App for MacShot {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         remove_macshot_titlebar_separator();
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(foreground_id) = foreground_window_id()
+                && self.last_observed_foreground_window_id != Some(foreground_id)
+            {
+                self.last_observed_foreground_window_id = Some(foreground_id);
+                let foreground_is_external =
+                    foreground_window_process_id() != Some(std::process::id());
+                if foreground_is_external && find_captureable_window_id(foreground_id) {
+                    self.last_external_window_id = Some(foreground_id);
+                }
+            }
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
         self.apply_display_settings(ctx);
         self.advance_recording_playback(ctx);
         #[cfg(target_os = "macos")]

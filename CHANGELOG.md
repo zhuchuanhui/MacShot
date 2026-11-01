@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3 — 2026-11-01
+
+- Improved Windows active-window capture by preserving the foreground window before hiding MacShot, refreshing available window choices, and refining capture behavior during continuous sessions.
+- Improved annotation completion when pointer-release events are missed.
+
 ## 1.4.2 — 2026-11-01
 
 - Improved Windows foreground-window detection with process matching and retries, localized search aliases for common apps, continuous capture of a retained region, and annotation completion when pointer-release events are missed.

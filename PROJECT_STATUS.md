@@ -1,8 +1,19 @@
 # Project Status
 
+## v1.4.3 Release candidate — 2026-11-01
+
+- 最新公開版はv1.4.2です。v1.4.2で残ったWindowsアクティブ撮影・メモ帳検索の問題を受け、撮影開始時にMacShotを隠す前の前景ウィンドウを特定し、撮影要求に固定するよう変更しました。撮影対象一覧を開いた時の候補再取得、連続撮影の範囲維持、注釈ドラッグ補完も含む互換性修正なのでv1.4.3とします。
+- `cargo fmt --all -- --check`、macOSとWindows x64 GNUの`cargo check --all-targets`、既存112テスト、`git diff --check`、Windows ZIP検査は変更作業時に成功しています。Windows実機でのアクティブ撮影・メモ帳検索は未検証です。既存のRC ZIPは正式版作成用には使わず、両OSを改めてビルドします。
+- macOS arm64/Windows x64 GNUのv1.4.3 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.3-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.3`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
+- `output/release/MacShot-v1.4.3-macos-arm64.zip`のSHA-256は`4b5287969fd22ce7ecc7a151a31f3c1a87743b51a4223067eadc1ef07c90d989`、`output/release/MacShot-v1.4.3-windows-x64.zip`は`678a69b2a49ee19ad589b0391b2a4851256b9ac5b40652b6617c87d846186299`です。両ZIPの整合性とローカルチェックサムが成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPは必要なruntime DLLとライセンスを含むPE32+ x86-64 GUIアプリです。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease buildとmacOS bundle検証が成功しました。112件のテストとWindowsクロスチェックは機能修正時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。GitHub Release v1.4.3は公開後、アセット検証結果とともに追記します。
+
 ## v1.4.2 Release — 2026-11-01
 
-- 最新公開版はv1.4.1です。Windows実機報告を受け、前面ウィンドウ検出にプロセス照合と短時間の再試行、一般的なアプリ名の多言語検索、連続撮影時の範囲維持、ポインター解放を取りこぼした場合の注釈確定補完を加えました。互換性を保つ不具合修正のため、次版をv1.4.2とします。
+- 最新公開版はv1.4.2です。ユーザーのWindows x64 v1.4.2実機報告では全画面撮影は成功しましたが、メモ帳のアクティブ撮影と名前検索は失敗しました。背面ウィンドウ撮影、連続範囲維持、注釈操作、未保存編集保護は未確認です。全画面画像にはテスト対象外アプリも写っていました。
+- 旧記録のビルド・署名・ZIP・公開情報は下記のとおりです。
+
+- v1.4.2ではWindows実機報告を受け、前面ウィンドウ検出にプロセス照合と短時間の再試行、一般的なアプリ名の多言語検索、連続撮影時の範囲維持、ポインター解放を取りこぼした場合の注釈確定補完を加えました。
 - Built macOS arm64 and Windows x64 GNU from the current source. The completed app is `output/release/MacShot-v1.4.2-macos-arm64/MacShot.app`, bundle ID `com.macshot.app`, version `1.4.2`, arm64; Apple Development signature, privacy descriptions, audio-input entitlement, and deep/strict verification pass. Its executable UUID matches the macOS release build. It is not notarized.
 - Prepared `output/release/MacShot-v1.4.2-macos-arm64.zip` (SHA-256 `d8b608c0e74ae9814a8e669b1cd46c95fde3d2d3d5b645141336cfd44a010a45`) and `output/release/MacShot-v1.4.2-windows-x64.zip` (SHA-256 `e71ff1b6c414eb8b4915da626a23ab50d787b952eb9bab73f36e3e59b8995376`). Both ZIP integrity and local checksum checks pass. The macOS archive has no AppleDouble/Finder metadata; the Windows archive contains a PE32+ x86-64 GUI executable, required runtime DLLs, and notices.
 - `cargo fmt --all -- --check`, `git diff --check`, macOS and Windows x64 GNU release builds, and bundle verification passed. The 112-test suite and Windows cross-check passed during the latest fix work; tests were not rerun for this packaging pass. The reported Windows workflows have not yet been rechecked on a Windows device.
