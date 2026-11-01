@@ -12703,6 +12703,39 @@ impl MacShot {
     }
 
     fn show_capture_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let language = self.language;
+        let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(language.page_heading(Page::Capture))
+                        .size(24.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        language.text("撮影した画面は、ここで切り出しや注釈を追加できます。"),
+                    )
+                    .color(TEXT_MUTED),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(language.text("▣  保存先を開く")).clicked() {
+                    #[cfg(target_os = "macos")]
+                    let command = "open";
+                    #[cfg(target_os = "windows")]
+                    let command = "explorer";
+                    let _ = std::process::Command::new(command).arg(&folder).spawn();
+                }
+                if ui.button(language.text("↻  更新")).clicked() {
+                    self.evidence_files = evidence_images(&folder);
+                    self.recording_files = recording_files(&folder);
+                    self.recording_duration_cache.clear();
+                    self.status = language.text("証跡一覧を更新しました");
+                }
+            });
+        });
+        ui.add_space(14.0);
         if cfg!(target_os = "macos")
             && should_show_screen_permission_banner(
                 screen_recording_access_granted(),
@@ -15893,7 +15926,7 @@ impl eframe::App for MacShot {
                 let mut open = true;
                 egui::Window::new(self.language.text("録画を保存しました"))
                     .id(egui::Id::new("recording_complete_notice"))
-                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 236.0))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 74.0))
                     .collapsible(false)
                     .resizable(false)
                     .open(&mut open)

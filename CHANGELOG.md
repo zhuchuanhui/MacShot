@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2 — 2026-11-01
+
+- Added refresh and open-folder actions to the capture and editing page; refreshing reloads image and recording lists while keeping the current preview and edit queue.
+- Aligned the recording-complete notice with the screenshot-complete notice near the top of the window.
+- Corrected Cargo.lock entries for `byteorder` and `autocfg` to versions published on crates.io so locked builds resolve.
+
 ## 1.5.1 — 2026-11-01
 
 - Maintenance release of the v1.5.0 feature set. No application code changes.

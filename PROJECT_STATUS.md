@@ -1,5 +1,14 @@
 # Project Status
 
+## v1.5.2 Release — 2026-11-01
+
+- 「撮影・編集」画面のヘッダー右側に「更新」と「保存先を開く」を追加しました。更新は保存フォルダ内の画像・録画一覧を再読み込みし、録画の時間キャッシュも消去します。現在のプレビューと編集キューは維持します。録画完了の小窓は撮影完了の小窓と同じ上端位置に揃えました。初回配置が画面中央に見えたため、他の一覧画面と同じ見出し＋右側操作のヘッダー構成へ修正しました。
+- 最新公開版v1.5.1の次版として、互換性を保つ操作追加のためv1.5.2を選びました。ビルド時にCargo.lockの`byteorder 1.5.1`と`autocfg 1.5.2`がcrates.ioに存在しないことが判明し、公開済み互換版へ合わせました。ボタンの実画面操作は未確認です。
+- macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。完成済み.appは`output/release/MacShot-v1.5.2-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.5.2`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.5.2-macos-arm64.zip`（SHA-256 `fa1204510ed3a4d3c3cb1c59655c1c7cebcd118a07aa9237929afb07b07d4c1b`）と`output/release/MacShot-v1.5.2-windows-x64.zip`（SHA-256 `cefcc9b860008b5b662f351282b78322a453c6468e3b9fafb0a873b88c7e6675`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
+- ボタンの実画面操作は未確認で、自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告、Windows buildではrust-objcopyの`libLLVM.dylib`不足によるdebug info除去警告がありましたが、両OSのビルドと梱包は成功しました。
+- GitHub Releaseへの公開結果を追記します。
+
 ## v1.5.1 Release — 2026-11-01
 
 - 最新公開版v1.5.0の製品コードに変更はありません。Cargo.tomlとREADMEのバージョン更新、およびcrates.ioに存在しない`byteorder 1.5.1`を公開済み互換版`1.5.0`へ修正したlockfileによる保守リリースです。
