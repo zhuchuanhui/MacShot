@@ -7,7 +7,7 @@
 - 完成済み.appは`output/release/MacShot-v1.5.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.5.0`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.5.0-macos-arm64.zip`（SHA-256 `26e83671e23ebed77418f6f95af75ad1a27af16f7418fe2c2153608270ee0b26`）と`output/release/MacShot-v1.5.0-windows-x64.zip`（SHA-256 `6359826f17783111d4dbe3efbd76d8e5c63fdcc8c01f0a80fc802d5ad2bda8ee`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
 - 録画設定・編集操作、各形式の実映像・音声、macOS/Windows実機とWindows FFmpeg経路は未確認です。自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、両OSのビルドと梱包は成功しました。
-- GitHub Releaseへの公開結果を追記します。
+- Published as [GitHub Release v1.5.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.5.0), tagged at source commit `5f0813b0cc726ef3a1034d8b6a3d6ad45e0ad443` (`feat(video): add recording editor and annotated export`). GitHub reports a published, non-prerelease release and v1.5.0 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No GitHub Actions workflows or recent CI runs exist. No production deployment was made.
 
 ## v1.4.8 Release — 2026-11-01
 
