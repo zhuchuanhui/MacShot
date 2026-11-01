@@ -6,7 +6,7 @@
 - macOS arm64とWindows x64 GNUを`--release --locked`でビルドし、`cargo fmt --all -- --check`、`git diff --check`が成功しました。変更確認時にはmacOS/Windows x64 GNUの`cargo check --all-targets`も成功しています。完成済み.appは`output/release/MacShot-v1.4.9-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.9`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.4.9-macos-arm64.zip`（SHA-256 `122c5529d252ef79511b1a23c92e125b24c6b02b5e3d9d5a1045ceaa9c44bd52`）と`output/release/MacShot-v1.4.9-windows-x64.zip`（SHA-256 `b472b4aafa5e93eb6d126046dfa0a3174e775fdca8edafb030b0c484cd3854b7`）。ZIP整合性とチェックサムが成功し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
 - メニューバーの実表示は未確認です。自動テストは実行していません。macOS release buildではvendor/xcapの非推奨API警告があり、Windows buildではrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、ビルドと梱包は成功しました。
-- GitHub Releaseへの公開結果を追記します。
+- Published as [GitHub Release v1.4.9](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.9), tagged at source commit `ed4921fe5ca391903983b02ee836dac6866d2afb` (`refactor(menubar): reorganize menu actions`). GitHub reports a published, non-prerelease release and v1.4.9 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No GitHub Actions workflows or recent CI runs exist. No production deployment was made.
 
 ## v1.4.8 Release — 2026-11-01
 
