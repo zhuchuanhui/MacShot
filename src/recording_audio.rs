@@ -44,8 +44,8 @@ struct PcmChunk {
 }
 
 pub struct AudioCaptureSession {
-    system_capture: scrcap::CaptureDesc,
-    system_rx: crossbeam_channel::Receiver<AudioFrame>,
+    system_capture: Option<scrcap::CaptureDesc>,
+    system_rx: Option<crossbeam_channel::Receiver<AudioFrame>>,
     mic_stream: Option<MicrophoneStream>,
     mic_rx: Option<Receiver<PcmChunk>>,
     mic_error_rx: Option<Receiver<String>>,
@@ -91,24 +91,29 @@ impl MicrophoneStream {
 }
 
 impl AudioCaptureSession {
-    pub fn start(include_microphone: bool) -> Result<Self, String> {
-        let system_capture = CaptureConfig {
-            video: VideoConfig {
-                channel_capacity: 1,
-                hide: Vec::new(),
-                target: Target::Primary,
-                fps: Some(1),
-            },
-            audio: Some(AudioConfig {
-                channel_capacity: CHANNEL_CAPACITY,
-            }),
-        }
-        .create()
-        .map_err(|error| format!("システム音声を開始できません: {error}"))?;
-        let system_rx = system_capture
-            .audio()
-            .cloned()
-            .ok_or_else(|| "システム音声の入力を開始できません。".to_string())?;
+    pub fn start(include_system_audio: bool, include_microphone: bool) -> Result<Self, String> {
+        let (system_capture, system_rx) = if include_system_audio {
+            let capture = CaptureConfig {
+                video: VideoConfig {
+                    channel_capacity: 1,
+                    hide: Vec::new(),
+                    target: Target::Primary,
+                    fps: Some(1),
+                },
+                audio: Some(AudioConfig {
+                    channel_capacity: CHANNEL_CAPACITY,
+                }),
+            }
+            .create()
+            .map_err(|error| format!("システム音声を開始できません: {error}"))?;
+            let receiver = capture
+                .audio()
+                .cloned()
+                .ok_or_else(|| "システム音声の入力を開始できません。".to_string())?;
+            (Some(capture), Some(receiver))
+        } else {
+            (None, None)
+        };
 
         let (microphone, microphone_warning) = if include_microphone {
             match start_microphone() {
@@ -116,15 +121,17 @@ impl AudioCaptureSession {
                 Err(error) => (
                     None,
                     Some(format!(
-                        "{error}。システム音声のみを録音しています。マイク設定を確認してください。"
+                        "{error}。{}を録音しています。マイク設定を確認してください。",
+                        if include_system_audio {
+                            "システム音声のみ"
+                        } else {
+                            "映像のみ"
+                        }
                     )),
                 ),
             }
         } else {
-            (
-                None,
-                Some("マイク未許可のため、システム音声のみを録音しています。".into()),
-            )
+            (None, None)
         };
 
         let mic_started_at = microphone.as_ref().map(|_| Instant::now());
@@ -187,8 +194,10 @@ impl AudioCaptureSession {
 
     pub fn drain_into(&mut self, mixer: &mut AudioMixer) -> Result<(), String> {
         self.check_health();
-        while let Ok(frame) = self.system_rx.try_recv() {
-            mixer.push_system(frame)?;
+        if let Some(system_rx) = &self.system_rx {
+            while let Ok(frame) = system_rx.try_recv() {
+                mixer.push_system(frame)?;
+            }
         }
         while let Some(chunk) = self
             .mic_rx
@@ -231,7 +240,9 @@ impl AudioCaptureSession {
         if let Some(stream) = &self.mic_stream {
             stream.pause();
         }
-        self.system_capture.terminate();
+        if let Some(system_capture) = &self.system_capture {
+            system_capture.terminate();
+        }
     }
 }
 
@@ -668,13 +679,15 @@ impl AudioMixer {
         capture.stop();
         capture.drain_into(self)?;
         capture.report_silent_microphone();
-        let end_ns = self
+        let Some(latest_ns) = self
             .latest_system_ns
             .into_iter()
             .chain(self.latest_microphone_ns)
             .max()
-            .ok_or_else(|| "録音した音声データがありません。".to_string())?
-            .min(max_elapsed_ns.max(0));
+        else {
+            return Ok(Vec::new());
+        };
+        let end_ns = latest_ns.min(max_elapsed_ns.max(0));
         let mut blocks = self.take_through(end_ns);
         let remaining = end_ns;
         {

@@ -1,14 +1,16 @@
-# MacShot 1.4.9
+# MacShot 1.5.0
 
 [English](README.en.md) · [简体中文](README.zh-CN.md)
 
 MacShotは、スクリーンショットの撮影・編集・比較と、GIF／MP4の画面録画を行うアプリです。撮影したPNG/JPEGと録画を一覧から確認できます。
 
+録画を再生・名前変更でき、時間範囲の切り抜きや注釈を加えた別MP4の書き出しにも対応します。書き出しには`ffmpeg`が必要です。
+
 ## ダウンロード
 
-- macOS Apple Silicon (arm64): [MacShot-v1.4.9-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.9/MacShot-v1.4.9-macos-arm64.zip)
-- Windows x64: [MacShot-v1.4.9-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.4.9/MacShot-v1.4.9-windows-x64.zip)
-- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.9)
+- macOS Apple Silicon (arm64): [MacShot-v1.5.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.5.0/MacShot-v1.5.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.5.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.5.0/MacShot-v1.5.0-windows-x64.zip)
+- [GitHub Releaseページ](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.5.0)
 - 各ZIPのSHA-256: Release添付のチェックサムファイルを参照してください。
 
 macOS版はZIPを展開して `MacShot.app` をアプリケーションフォルダへ移動すると、以後起動しやすくなります。マイク権限の付与自体にアプリケーションフォルダへの移動は必要ありません。Apple Development署名を使用し、公証はしていません。初回起動時に開けない場合はFinderでアプリをControlキーを押しながらクリックし、「開く」を選んでください。Ad Hoc署名版から更新した後、画面収録が許可されない場合は、システム設定の「画面収録とシステムオーディオ録音」でMacShotを一度オフ／オンにして再起動してください。macOS 14以降のApple Siliconに対応します。

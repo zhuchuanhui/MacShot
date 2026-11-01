@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0 — 2026-11-01
+
+- Added a dedicated recording and editing page for recording settings, start/stop, playback, and renaming.
+- Added annotation selection and movement, plus video trimming and annotation export to a separate MP4 with audio preserved. Export requires `ffmpeg`.
+- Added independent system-audio and microphone recording options.
+
 ## 1.4.9 — 2026-11-01
 
 - Reorganized menu bar actions into screenshot, recording, utility, and quit sections, keeping the quit action at the bottom.
