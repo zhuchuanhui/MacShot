@@ -1,12 +1,13 @@
 # Project Status
 
-## v1.4.3 Release candidate — 2026-11-01
+## v1.4.3 Release — 2026-11-01
 
 - 最新公開版はv1.4.2です。v1.4.2で残ったWindowsアクティブ撮影・メモ帳検索の問題を受け、撮影開始時にMacShotを隠す前の前景ウィンドウを特定し、撮影要求に固定するよう変更しました。撮影対象一覧を開いた時の候補再取得、連続撮影の範囲維持、注釈ドラッグ補完も含む互換性修正なのでv1.4.3とします。
 - `cargo fmt --all -- --check`、macOSとWindows x64 GNUの`cargo check --all-targets`、既存112テスト、`git diff --check`、Windows ZIP検査は変更作業時に成功しています。Windows実機でのアクティブ撮影・メモ帳検索は未検証です。既存のRC ZIPは正式版作成用には使わず、両OSを改めてビルドします。
 - macOS arm64/Windows x64 GNUのv1.4.3 release buildが成功しました。完成済み.appは`output/release/MacShot-v1.4.3-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.3`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOSビルド実行ファイルのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.3-macos-arm64.zip`のSHA-256は`4b5287969fd22ce7ecc7a151a31f3c1a87743b51a4223067eadc1ef07c90d989`、`output/release/MacShot-v1.4.3-windows-x64.zip`は`678a69b2a49ee19ad589b0391b2a4851256b9ac5b40652b6617c87d846186299`です。両ZIPの整合性とローカルチェックサムが成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPは必要なruntime DLLとライセンスを含むPE32+ x86-64 GUIアプリです。
-- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease buildとmacOS bundle検証が成功しました。112件のテストとWindowsクロスチェックは機能修正時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。GitHub Release v1.4.3は公開後、アセット検証結果とともに追記します。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease buildとmacOS bundle検証が成功しました。112件のテストとWindowsクロスチェックは機能修正時に成功済みで、今回の梱包では再実行していません。Windows実機での修正確認は未完了です。
+- Published as [GitHub Release v1.4.3](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.3), tagged at source commit `f9e67b51235ae5ca14b086561d76e90c0dd9ba51` (`fix(windows): capture the intended foreground window`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.2 Release — 2026-11-01
 
