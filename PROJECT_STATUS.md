@@ -1,12 +1,13 @@
 # Project Status
 
-## v1.4.5 Release candidate — 2026-11-01
+## v1.4.5 Release — 2026-11-01
 
-- 最新公開版はv1.4.4です。Windowsで撮影対象一覧にメモ帳がなく、アクティブ撮影が「開く」ダイアログになる問題に対し、表示中のネイティブHWND列挙とHWND直接撮影・録画を導入しました。標準ダイアログは所有元ウィンドウへ解決します。互換性を保つ修正のため次版はv1.4.5です。
+- 最新公開版v1.4.4の後にWindowsの撮影対象一覧にメモ帳がなく、アクティブ撮影が「開く」ダイアログになる問題が確認されました。表示中のネイティブHWND列挙とHWND直接撮影・録画を導入し、標準ダイアログは所有元ウィンドウへ解決します。互換性を保つ修正としてv1.4.5を公開しました。
 - Windows x64 GNUとmacOS arm64のv1.4.5 release buildが成功しました。xcap 0.9.8はネイティブHWND連携用に`vendor/xcap`でローカル改修し、プロジェクトから参照するためvendorソースもリポジトリに含めます。Windowsビルドではrust-objcopyのlibLLVM.dylib不足でデバッグ情報を除去できない警告が出ましたが、ビルドは成功しました。macOS buildではvendor/xcap内の2つの非推奨API警告が出ましたが、ビルドは成功しました。
 - 完成済み.appは`output/release/MacShot-v1.4.5-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.5`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOS buildのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.5-macos-arm64.zip`のSHA-256は`1ebac3971b4278054503c282abcfd0ef179e8488e08f95ca512e6a93976f8db0`、`output/release/MacShot-v1.4.5-windows-x64.zip`は`158a1f97dd9e05f83279f368644bc4e72bbdc1e6574f4161219f631df8889ce9`です。両ZIPの整合性とローカルチェックサム検証が成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。
-- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。テストは今回実行していません。Windows実機でのメモ帳一覧、アクティブ撮影、ショートカット撮影は未確認です。GitHub CI workflowはありません。公開結果はアップロード検証後に追記します。
+- `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。テストは今回実行していません。Windows実機でのメモ帳一覧、アクティブ撮影、ショートカット撮影は未確認です。GitHub CI workflowはありません。
+- Published as [GitHub Release v1.4.5](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.5), tagged at source commit `3a4191c0bc6a57e7e3479fb54533b2140dff516c` (`fix(windows): capture native top-level windows`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.4 Release — 2026-11-01
 
