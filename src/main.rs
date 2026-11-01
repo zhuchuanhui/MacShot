@@ -3252,6 +3252,8 @@ impl RecordingFormat {
 
 const DEFAULT_CAPTURE_HOTKEY: &str = "Alt+Shift+KeyS";
 const DEFAULT_RECORDING_HOTKEY: &str = "Alt+Shift+KeyR";
+const WINDOWS_CAPTURE_HOTKEY_FALLBACK: &str = "Ctrl+Alt+Shift+KeyS";
+const WINDOWS_RECORDING_HOTKEY_FALLBACK: &str = "Ctrl+Alt+Shift+KeyR";
 
 fn recording_time_label(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
@@ -3691,39 +3693,84 @@ fn discover_windows() -> Result<Vec<WindowChoice>, String> {
     #[cfg(not(target_os = "macos"))]
     {
         #[cfg(target_os = "windows")]
-        let windows = enumerate_native_windows()?
-            .into_iter()
-            .filter_map(|id| Window::from_native_id(id).ok())
-            .collect::<Vec<_>>();
+        {
+            discover_native_windows()
+        }
         #[cfg(not(target_os = "windows"))]
-        let windows = Window::all().map_err(|error| error.to_string())?;
-        Ok(windows
-            .into_iter()
-            .filter_map(|window| {
-                let id = window.id().ok()?;
-                let app_name = window
-                    .app_name()
-                    .ok()
-                    .map(|name| name.trim().to_owned())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "Window".to_owned());
-                let native_title = window.title().ok();
-                let title = window_title_or_app_name(native_title.as_deref(), &app_name);
-                let width = window.width().unwrap_or_default();
-                let height = window.height().unwrap_or_default();
-                if title.is_empty() || !is_captureable_window(&window) {
-                    return None;
-                }
-                Some(WindowChoice {
-                    id,
-                    app_name,
-                    title,
-                    width,
-                    height,
+        {
+            let windows = Window::all().map_err(|error| error.to_string())?;
+            Ok(windows
+                .into_iter()
+                .filter_map(|window| {
+                    let id = window.id().ok()?;
+                    let app_name = window
+                        .app_name()
+                        .ok()
+                        .map(|name| name.trim().to_owned())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| "Window".to_owned());
+                    let native_title = window.title().ok();
+                    let title = window_title_or_app_name(native_title.as_deref(), &app_name);
+                    let width = window.width().unwrap_or_default();
+                    let height = window.height().unwrap_or_default();
+                    if title.is_empty() || !is_captureable_window(&window) {
+                        return None;
+                    }
+                    Some(WindowChoice {
+                        id,
+                        app_name,
+                        title,
+                        width,
+                        height,
+                    })
                 })
-            })
-            .collect())
+                .collect())
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn discover_native_windows() -> Result<Vec<WindowChoice>, String> {
+    let mut choices = Vec::new();
+    for id in enumerate_native_windows()? {
+        let Ok(window) = Window::from_native_id(id) else {
+            continue;
+        };
+        let app_name = window
+            .app_name()
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_default();
+        if app_name.eq_ignore_ascii_case("MacShot")
+            || app_name.eq_ignore_ascii_case("Window Server")
+        {
+            continue;
+        }
+        let native_title = native_window_title(id).or_else(|| window.title().ok());
+        let title = window_title_or_app_name(native_title.as_deref(), &app_name);
+        let (width, height) = native_window_bounds(id).unwrap_or_else(|| {
+            (
+                window.width().unwrap_or_default(),
+                window.height().unwrap_or_default(),
+            )
+        });
+        if title.is_empty() || width < 80 || height < 60 {
+            continue;
+        }
+        choices.push(WindowChoice {
+            id,
+            app_name: if app_name.is_empty() {
+                "Window".into()
+            } else {
+                app_name
+            },
+            title,
+            width,
+            height,
+        });
+    }
+    Ok(choices)
 }
 
 #[cfg(target_os = "windows")]
@@ -3751,6 +3798,52 @@ fn enumerate_native_windows() -> Result<Vec<u32>, String> {
     } else {
         Ok(windows)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn native_window_title(id: u32) -> Option<String> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
+
+    let hwnd = id as usize as *mut c_void;
+    let length = unsafe { GetWindowTextLengthW(hwnd) };
+    if length <= 0 {
+        return None;
+    }
+    let mut buffer = vec![0u16; length as usize + 1];
+    let copied = unsafe { GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32) };
+    (copied > 0).then(|| String::from_utf16_lossy(&buffer[..copied as usize]))
+}
+
+#[cfg(target_os = "windows")]
+fn native_window_bounds(id: u32) -> Option<(u32, u32)> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::{Foundation::RECT, UI::WindowsAndMessaging::GetWindowRect};
+
+    let mut rect = RECT::default();
+    let ok = unsafe { GetWindowRect(id as usize as *mut c_void, &mut rect) };
+    (ok != 0).then(|| {
+        (
+            rect.right.saturating_sub(rect.left).max(0) as u32,
+            rect.bottom.saturating_sub(rect.top).max(0) as u32,
+        )
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn native_window_is_captureable(id: u32) -> bool {
+    use std::ffi::c_void;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible};
+
+    let hwnd = id as usize as *mut c_void;
+    if unsafe { IsWindowVisible(hwnd) } == 0 {
+        return false;
+    }
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, &mut process_id) };
+    process_id != 0
+        && process_id != std::process::id()
+        && native_window_bounds(id).is_some_and(|(width, height)| width >= 80 && height >= 60)
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -5910,13 +6003,13 @@ fn should_defer_quit_until_recording_finishes(recording: bool, recording_startin
     recording || recording_starting
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn is_macshot_window(window: &Window) -> bool {
     window.app_name().is_ok_and(|name| name == "MacShot")
         || window.title().is_ok_and(|title| title.contains("MacShot"))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn is_captureable_window(window: &Window) -> bool {
     if is_macshot_window(window) || window.app_name().is_ok_and(|name| name == "Window Server") {
         return false;
@@ -5931,7 +6024,7 @@ fn is_captureable_window(window: &Window) -> bool {
         .is_some_and(|(width, height)| has_captureable_window_size(width, height))
 }
 
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(all(not(target_os = "macos"), not(target_os = "windows")), test))]
 fn has_captureable_window_size(width: u32, height: u32) -> bool {
     width >= 120 && height >= 80
 }
@@ -5984,15 +6077,12 @@ fn microphone_permission_failure_message(error: &str, denied: bool) -> Option<St
 fn find_active_window() -> Result<Window, String> {
     #[cfg(not(target_os = "macos"))]
     {
+        #[cfg(not(target_os = "windows"))]
         let is_candidate = |window: &Window| is_captureable_window(window);
 
         #[cfg(target_os = "windows")]
         {
             for _ in 0..10 {
-                let windows = enumerate_native_windows()?
-                    .into_iter()
-                    .filter_map(|id| Window::from_native_id(id).ok())
-                    .collect::<Vec<_>>();
                 let foreground_id = foreground_window_id().map(|id| {
                     foreground_capture_window(id as usize as *mut std::ffi::c_void) as usize as u32
                 });
@@ -6001,11 +6091,10 @@ fn find_active_window() -> Result<Window, String> {
                     .into_iter()
                     .flatten()
                 {
-                    if let Some(window) = windows
-                        .iter()
-                        .find(|window| window.id().ok() == Some(id) && is_candidate(window))
+                    if native_window_is_captureable(id)
+                        && let Ok(window) = Window::from_native_id(id)
                     {
-                        return Ok(window.clone());
+                        return Ok(window);
                     }
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -8147,30 +8236,18 @@ fn write_gif_frame_with_speed<W: Write>(
 impl MacShot {
     #[cfg(target_os = "windows")]
     fn resolve_active_window_target(&self) -> Option<CaptureTarget> {
-        let windows = enumerate_native_windows()
-            .ok()?
-            .into_iter()
-            .filter_map(|id| Window::from_native_id(id).ok())
-            .collect::<Vec<_>>();
-        let is_external_captureable = |window: &Window| {
-            is_captureable_window(window) && window.pid().ok() != Some(std::process::id())
-        };
         let foreground_id = foreground_window_id().map(|id| {
             foreground_capture_window(id as usize as *mut std::ffi::c_void) as usize as u32
         });
-        let selected = foreground_id
-            .filter(|id| {
-                windows
-                    .iter()
-                    .any(|window| window.id().ok() == Some(*id) && is_external_captureable(window))
-            })
-            .or_else(|| {
-                self.last_external_window_id.filter(|id| {
-                    windows.iter().any(|window| {
-                        window.id().ok() == Some(*id) && is_external_captureable(window)
-                    })
-                })
-            });
+        let tracked_id = LAST_EXTERNAL_FOREGROUND_WINDOW_ID.load(Ordering::Relaxed);
+        let selected = [
+            foreground_id,
+            self.last_external_window_id,
+            (tracked_id != 0).then_some(tracked_id),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|id| native_window_is_captureable(*id));
         selected.map(CaptureTarget::Window)
     }
 
@@ -8188,21 +8265,73 @@ impl MacShot {
             }
         };
         let mut registration_errors = Vec::new();
+        let mut fallback_changes: Vec<String> = Vec::new();
         if let Some(manager) = manager.as_ref() {
-            for (name, hotkey) in [
+            let defaults = [
+                DEFAULT_CAPTURE_HOTKEY.parse::<HotKey>().ok(),
+                DEFAULT_RECORDING_HOTKEY.parse::<HotKey>().ok(),
+            ];
+            let fallbacks = [
+                WINDOWS_CAPTURE_HOTKEY_FALLBACK.parse::<HotKey>().ok(),
+                WINDOWS_RECORDING_HOTKEY_FALLBACK.parse::<HotKey>().ok(),
+            ];
+            for (index, (name, hotkey)) in [
                 ("撮影", self.capture_hotkey),
                 ("録画", self.recording_hotkey),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 match manager.register(hotkey) {
                     Ok(()) => self.registered_hotkeys.push(hotkey),
-                    Err(error) => registration_errors.push(format!("{name}: {error}")),
+                    Err(error) => {
+                        if cfg!(target_os = "windows")
+                            && matches!(error, global_hotkey::Error::AlreadyRegistered(_))
+                            && Some(hotkey) == defaults[index]
+                            && let Some(fallback) = fallbacks[index]
+                            && manager.register(fallback).is_ok()
+                        {
+                            self.registered_hotkeys.push(fallback);
+                            let actual = canonical_hotkey_text(&fallback.to_string());
+                            if index == 0 {
+                                self.capture_hotkey = fallback;
+                                self.capture_hotkey_text = actual.clone();
+                            } else {
+                                self.recording_hotkey = fallback;
+                                self.recording_hotkey_text = actual.clone();
+                            }
+                            fallback_changes.push(format!("{name}: {actual}"));
+                            continue;
+                        }
+                        registration_errors.push(format!("{name}: {error}"));
+                    }
                 }
             }
         }
         self._hotkey_manager = manager;
+        if !fallback_changes.is_empty() {
+            let details = fallback_changes.join("、");
+            self.status = match self.language {
+                AppLanguage::Japanese => format!(
+                    "既定のショートカットが使用中のため、代替キーに切り替えました（{details}）。設定から変更できます。"
+                ),
+                AppLanguage::English => format!(
+                    "The default shortcut was already in use, so MacShot switched to an alternate key ({details}). You can change it in Settings."
+                ),
+                AppLanguage::SimplifiedChinese => format!(
+                    "默认快捷键已被占用，MacShot已切换到备用按键（{details}）。可在设置中更改。"
+                ),
+                AppLanguage::TraditionalChinese => format!(
+                    "預設快速鍵已被使用，MacShot已切換至備用按鍵（{details}）。可在設定中變更。"
+                ),
+            };
+            if let Err(error) = self.save_preferences() {
+                self.settings_error = Some(format!("ショートカットを保存できません: {error}"));
+            }
+        }
         if !registration_errors.is_empty() {
             self.status = format!(
-                "一部のショートカットを登録できません（{}）。設定画面で別のキーを選べます。ボタンからの操作は使えます。",
+                "一部のショートカットを登録できません（{}）。以前のMacShotを終了するか、設定画面で別のキーを選んでください。ボタンからの操作は使えます。",
                 registration_errors.join("、")
             );
         }

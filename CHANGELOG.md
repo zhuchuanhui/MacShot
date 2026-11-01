@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.6 — 2026-11-01
+
+- Improved Windows window discovery and active-window selection using native window titles and bounds, independently of xcap's window list.
+- Added fallback screenshot and recording shortcuts when the default Windows shortcuts are already registered by another app, and saved the chosen alternatives.
+
 ## 1.4.5 — 2026-11-01
 
 - Fixed Windows window discovery and capture by enumerating visible native windows and capturing the selected HWND directly, including standard dialogs through their owner window.

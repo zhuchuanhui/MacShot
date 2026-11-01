@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.4.6 Release candidate — 2026-11-01
+
+- 最新公開版はv1.4.5です。Windowsでのアクティブ撮影・Notepad検索と既定ショートカット登録の問題を受け、Win32 APIから撮影候補・タイトル・サイズを取得し、前面HWNDを直接検証します。既定ショートカットが他プロセスで使用中なら代替キーを登録・保存します。互換性を保つ不具合修正のため次版はv1.4.6です。
+- 正式版向けにmacOS arm64とWindows x64を`--release --locked`でビルドし、`cargo fmt --all -- --check`、`git diff --check`も成功しました。macOS完成品は`output/release/MacShot-v1.4.6-macos-arm64/MacShot.app`で、bundle ID `com.macshot.app`、version `1.4.6`、Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。Windows実行ファイルはPE32+ x86-64 GUI形式で、ZIPに必要DLLとライセンスを含みます。
+- 配布ZIPは`output/release/MacShot-v1.4.6-macos-arm64.zip`（SHA-256 `d71c91ed7baad735419ddcaaf3d1bf94814abc91bfb767248b3052dac00aef5a`）と`output/release/MacShot-v1.4.6-windows-x64.zip`（SHA-256 `8972f22e9e5a515f5aa3fb576fd952ba376c9160b60ccb6d2ea6b7f6bc1ceba6`）。両ZIPの整合性とチェックサムを検証し、macOS ZIPにFinder補助ファイルがないことを確認しました。テストは実行していません。Windows実機での修正確認は未実施です。
+- Windows実機での修正確認は未実施です。release build時にrust-objcopyのlibLLVM.dylib不足警告が出ましたが、実行ファイルとパッケージは生成されています。
+- GitHub Releaseへの公開状況をここに追記します。Windowsのrust-objcopyが`libLLVM.dylib`不足によりdebug info除去の警告を出しましたが、両OSのrelease buildとパッケージ作成は成功しました。
+
 ## v1.4.5 Release — 2026-11-01
 
 - 最新公開版v1.4.4の後にWindowsの撮影対象一覧にメモ帳がなく、アクティブ撮影が「開く」ダイアログになる問題が確認されました。表示中のネイティブHWND列挙とHWND直接撮影・録画を導入し、標準ダイアログは所有元ウィンドウへ解決します。互換性を保つ修正としてv1.4.5を公開しました。
@@ -7,6 +15,7 @@
 - 完成済み.appは`output/release/MacShot-v1.4.5-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.4.5`、arm64）です。Apple Development署名、プライバシー説明、音声入力entitlement、deep/strict検証が成功し、アプリ実行ファイルとmacOS buildのUUIDが一致します。公証はしていません。
 - `output/release/MacShot-v1.4.5-macos-arm64.zip`のSHA-256は`1ebac3971b4278054503c282abcfd0ef179e8488e08f95ca512e6a93976f8db0`、`output/release/MacShot-v1.4.5-windows-x64.zip`は`158a1f97dd9e05f83279f368644bc4e72bbdc1e6574f4161219f631df8889ce9`です。両ZIPの整合性とローカルチェックサム検証が成功しました。macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUIアプリ、必要DLL、ライセンスを含みます。
 - `cargo fmt --all -- --check`、`git diff --check`、両OSのrelease build、macOS bundle検証が成功しました。テストは今回実行していません。Windows実機でのメモ帳一覧、アクティブ撮影、ショートカット撮影は未確認です。GitHub CI workflowはありません。
+- 公開後のWindows実機再検証ではアクティブ撮影とNotepad検索、ショートカットが失敗し、`HotKey already registered`警告も出ました。対象不明時の誤保存はなく、画像は生成されませんでした。この結果を受け、次の修正版をv1.4.6とします。
 - Published as [GitHub Release v1.4.5](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.5), tagged at source commit `3a4191c0bc6a57e7e3479fb54533b2140dff516c` (`fix(windows): capture native top-level windows`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded all assets; both ZIP hashes matched their sidecars and both archives passed integrity checks. No production deployment was made.
 
 ## v1.4.4 Release — 2026-11-01
