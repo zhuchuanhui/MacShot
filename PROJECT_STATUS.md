@@ -1,12 +1,12 @@
 # Project Status
 
-## v1.4.6 Release candidate — 2026-11-01
+## v1.4.6 Release — 2026-11-01
 
 - 最新公開版はv1.4.5です。Windowsでのアクティブ撮影・Notepad検索と既定ショートカット登録の問題を受け、Win32 APIから撮影候補・タイトル・サイズを取得し、前面HWNDを直接検証します。既定ショートカットが他プロセスで使用中なら代替キーを登録・保存します。互換性を保つ不具合修正のため次版はv1.4.6です。
 - 正式版向けにmacOS arm64とWindows x64を`--release --locked`でビルドし、`cargo fmt --all -- --check`、`git diff --check`も成功しました。macOS完成品は`output/release/MacShot-v1.4.6-macos-arm64/MacShot.app`で、bundle ID `com.macshot.app`、version `1.4.6`、Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとビルド成果物のUUIDが一致します。公証はしていません。Windows実行ファイルはPE32+ x86-64 GUI形式で、ZIPに必要DLLとライセンスを含みます。
 - 配布ZIPは`output/release/MacShot-v1.4.6-macos-arm64.zip`（SHA-256 `d71c91ed7baad735419ddcaaf3d1bf94814abc91bfb767248b3052dac00aef5a`）と`output/release/MacShot-v1.4.6-windows-x64.zip`（SHA-256 `8972f22e9e5a515f5aa3fb576fd952ba376c9160b60ccb6d2ea6b7f6bc1ceba6`）。両ZIPの整合性とチェックサムを検証し、macOS ZIPにFinder補助ファイルがないことを確認しました。テストは実行していません。Windows実機での修正確認は未実施です。
-- Windows実機での修正確認は未実施です。release build時にrust-objcopyのlibLLVM.dylib不足警告が出ましたが、実行ファイルとパッケージは生成されています。
-- GitHub Releaseへの公開状況をここに追記します。Windowsのrust-objcopyが`libLLVM.dylib`不足によりdebug info除去の警告を出しましたが、両OSのrelease buildとパッケージ作成は成功しました。
+- Windows実機での修正確認は未実施です。Windows release build時にrust-objcopyが`libLLVM.dylib`不足でdebug infoを除去できない警告を出しましたが、実行ファイルとパッケージは生成され、配布物を検証済みです。
+- Published as [GitHub Release v1.4.6](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.4.6), tagged at source commit `fdf466c66a0121887ead3e598f7ff0343e4e9e09` (`fix(windows): improve capture discovery and hotkey fallback`). GitHub reports a published, non-prerelease release with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No production deployment was made.
 
 ## v1.4.5 Release — 2026-11-01
 
