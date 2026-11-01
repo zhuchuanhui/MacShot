@@ -7,7 +7,7 @@
 - macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。完成済み.appは`output/release/MacShot-v1.5.2-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.5.2`、arm64）。Apple Development署名、権限説明、deep/strict検証が成功し、アプリ実行ファイルとrelease buildのUUIDが一致します。公証はしていません。
 - 配布ZIPは`output/release/MacShot-v1.5.2-macos-arm64.zip`（SHA-256 `fa1204510ed3a4d3c3cb1c59655c1c7cebcd118a07aa9237929afb07b07d4c1b`）と`output/release/MacShot-v1.5.2-windows-x64.zip`（SHA-256 `cefcc9b860008b5b662f351282b78322a453c6468e3b9fafb0a873b88c7e6675`）。ローカルでZIP整合性・チェックサムを検証し、macOS ZIPにFinder補助ファイルはなく、Windows ZIPはPE32+ x86-64 GUI実行ファイルと必要DLL、ライセンスを含みます。
 - ボタンの実画面操作は未確認で、自動テストは実行していません。macOS buildではvendor/xcapの非推奨API警告、Windows buildではrust-objcopyの`libLLVM.dylib`不足によるdebug info除去警告がありましたが、両OSのビルドと梱包は成功しました。
-- GitHub Releaseへの公開結果を追記します。
+- Published as [GitHub Release v1.5.2](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.5.2), tagged at source commit `e7a0e5ea761e10c1a7ed35d984a82d645dd3f825` (`feat(capture): add refresh and open-folder actions`). GitHub reports a published, non-prerelease release and v1.5.2 is Latest, with all four assets uploaded. Re-downloaded both ZIPs; hashes matched their sidecars, both archives passed integrity checks, and the Windows executable was PE32+ x86-64. No GitHub Actions workflows or recent CI runs exist. No production deployment was made.
 
 ## v1.5.1 Release — 2026-11-01
 
