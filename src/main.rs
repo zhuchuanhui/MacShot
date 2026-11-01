@@ -337,6 +337,7 @@ struct MacShot {
     tray_recording_shortcut_target_item: Option<MenuItem>,
     tray_recording_shortcut_mode_item: Option<MenuItem>,
     tray_recording_settings_submenu: Option<Submenu>,
+    tray_recording_profile_items: Vec<(MenuItem, RecordingProfile)>,
     tray_recording_resolution_items: Vec<(MenuItem, RecordingResolution)>,
     tray_recording_frame_rate_items: Vec<(MenuItem, u32)>,
     tray_recording_system_audio_item: Option<MenuItem>,
@@ -1232,6 +1233,35 @@ impl AppLanguage {
             "オン" => ["On", "开启", "開啟"],
             "オフ" => ["Off", "关闭", "關閉"],
             "録画解像度" => ["Recording Resolution", "录制分辨率", "錄製解析度"],
+            "録画モード" => ["Recording Mode", "录制模式", "錄影模式"],
+            "画質優先" => ["Quality Priority", "画质优先", "畫質優先"],
+            "滑らかさ優先" => ["Smoothness Priority", "流畅度优先", "流暢度優先"],
+            "バランス" => ["Balanced", "平衡", "平衡"],
+            "カスタム" => ["Custom", "自定义", "自訂"],
+            "2K / 1440p・24 Mbps・30 fps。細部を優先します。" => [
+                "2K / 1440p · 24 Mbps · 30 fps. Prioritizes detail.",
+                "2K / 1440p · 24 Mbps · 30 fps。优先保留细节。",
+                "2K / 1440p · 24 Mbps · 30 fps。優先保留細節。",
+            ],
+            "720p・8 Mbps・60 fps。実際のfpsは画面やMacの負荷で変わります。" => {
+                [
+                    "720p · 8 Mbps · 60 fps. Actual fps depends on screen activity and system load.",
+                    "720p · 8 Mbps · 60 fps。实际帧率取决于画面内容和系统负载。",
+                    "720p · 8 Mbps · 60 fps。實際影格率取決於畫面內容與系統負載。",
+                ]
+            }
+            "1080p・12 Mbps・30 fps。画質と滑らかさのバランスを取ります。" => {
+                [
+                    "1080p · 12 Mbps · 30 fps. Balances image quality and smoothness.",
+                    "1080p · 12 Mbps · 30 fps。兼顾画质和流畅度。",
+                    "1080p · 12 Mbps · 30 fps。兼顧畫質與流暢度。",
+                ]
+            }
+            "解像度・ビットレート・fpsを個別に調整します。" => [
+                "Adjust resolution, bitrate, and fps individually.",
+                "分别调整分辨率、码率和帧率。",
+                "分別調整解析度、位元率與影格率。",
+            ],
             "選んだ高さを上限にして縮小します。元の画面より大きくはしません。" => {
                 [
                     "The selected height is a maximum; output will not exceed the source display size.",
@@ -2793,6 +2823,7 @@ impl AppLanguage {
             (Self::Japanese, "record_current_target") => "現在の録画対象",
             (Self::Japanese, "record_active") => "アクティブウィンドウを録画",
             (Self::Japanese, "recording_settings") => "録画設定",
+            (Self::Japanese, "recording_profile") => "画質・流暢さモード",
             (Self::Japanese, "recording_resolution") => "解像度",
             (Self::Japanese, "recording_frame_rate") => "フレームレート",
             (Self::Japanese, "record_system_audio") => "システム音声を録音",
@@ -2832,6 +2863,7 @@ impl AppLanguage {
             (Self::English, "record_current_target") => "Current Recording Target",
             (Self::English, "record_active") => "Record Active Window",
             (Self::English, "recording_settings") => "Recording Settings",
+            (Self::English, "recording_profile") => "Quality / Smoothness Mode",
             (Self::English, "recording_resolution") => "Resolution",
             (Self::English, "recording_frame_rate") => "Frame Rate",
             (Self::English, "record_system_audio") => "Record System Audio",
@@ -2871,6 +2903,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "record_current_target") => "当前录制目标",
             (Self::SimplifiedChinese, "record_active") => "录制活动窗口",
             (Self::SimplifiedChinese, "recording_settings") => "录制设置",
+            (Self::SimplifiedChinese, "recording_profile") => "画质／流畅度模式",
             (Self::SimplifiedChinese, "recording_resolution") => "分辨率",
             (Self::SimplifiedChinese, "recording_frame_rate") => "帧率",
             (Self::SimplifiedChinese, "record_system_audio") => "录制系统声音",
@@ -2910,6 +2943,7 @@ impl AppLanguage {
             (Self::TraditionalChinese, "record_current_target") => "目前錄影目標",
             (Self::TraditionalChinese, "record_active") => "錄製作用中視窗",
             (Self::TraditionalChinese, "recording_settings") => "錄影設定",
+            (Self::TraditionalChinese, "recording_profile") => "畫質／流暢度模式",
             (Self::TraditionalChinese, "recording_resolution") => "解析度",
             (Self::TraditionalChinese, "recording_frame_rate") => "影格率",
             (Self::TraditionalChinese, "record_system_audio") => "錄製系統音訊",
@@ -2993,6 +3027,7 @@ enum TrayAction {
     SetRecordingShortcutBehavior(CaptureShortcutBehavior),
     RecordRegion,
     SetRecordingResolution(RecordingResolution),
+    SetRecordingProfile(RecordingProfile),
     SetRecordingFrameRate(u32),
     SetRecordingSystemAudio(bool),
     SetRecordingMicrophoneAudio(bool),
@@ -3333,11 +3368,66 @@ impl VideoQuality {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RecordingQuality {
+    profile: RecordingProfile,
     mp4_bitrate_mbps: u32,
     mp4_frame_rate: u32,
     gif_quality_percent: u32,
     gif_frame_rate: u32,
     resolution: RecordingResolution,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RecordingProfile {
+    Quality,
+    Smoothness,
+    #[default]
+    Balanced,
+    Custom,
+}
+
+impl RecordingProfile {
+    const ALL: [Self; 4] = [
+        Self::Quality,
+        Self::Smoothness,
+        Self::Balanced,
+        Self::Custom,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Quality => "画質優先",
+            Self::Smoothness => "滑らかさ優先",
+            Self::Balanced => "バランス",
+            Self::Custom => "カスタム",
+        }
+    }
+
+    fn setting(self) -> &'static str {
+        match self {
+            Self::Quality => "quality",
+            Self::Smoothness => "smoothness",
+            Self::Balanced => "balanced",
+            Self::Custom => "custom",
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "quality" => Self::Quality,
+            "smoothness" => Self::Smoothness,
+            "balanced" => Self::Balanced,
+            _ => Self::Custom,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Quality => "2K / 1440p・24 Mbps・30 fps。細部を優先します。",
+            Self::Smoothness => "720p・8 Mbps・60 fps。実際のfpsは画面やMacの負荷で変わります。",
+            Self::Balanced => "1080p・12 Mbps・30 fps。画質と滑らかさのバランスを取ります。",
+            Self::Custom => "解像度・ビットレート・fpsを個別に調整します。",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -3429,8 +3519,10 @@ impl RecordingQuality {
         gif_quality_percent: &str,
         gif_frame_rate: &str,
         resolution: &str,
+        profile: &str,
     ) -> Self {
         Self {
+            profile: RecordingProfile::from_setting(profile),
             mp4_bitrate_mbps: mp4_bitrate_mbps
                 .parse()
                 .unwrap_or(legacy_video_quality.bitrate() / 1_000_000)
@@ -3442,6 +3534,28 @@ impl RecordingQuality {
             gif_quality_percent: gif_quality_percent.parse().unwrap_or(70).clamp(10, 100),
             gif_frame_rate: gif_frame_rate.parse().unwrap_or(10).clamp(1, 30),
             resolution: RecordingResolution::from_setting(resolution),
+        }
+    }
+
+    fn apply_profile(&mut self, profile: RecordingProfile) {
+        self.profile = profile;
+        match profile {
+            RecordingProfile::Quality => {
+                self.resolution = RecordingResolution::P1440;
+                self.mp4_bitrate_mbps = 24;
+                self.mp4_frame_rate = 30;
+            }
+            RecordingProfile::Smoothness => {
+                self.resolution = RecordingResolution::P720;
+                self.mp4_bitrate_mbps = 8;
+                self.mp4_frame_rate = 60;
+            }
+            RecordingProfile::Balanced => {
+                self.resolution = RecordingResolution::P1080;
+                self.mp4_bitrate_mbps = 12;
+                self.mp4_frame_rate = 30;
+            }
+            RecordingProfile::Custom => {}
         }
     }
 
@@ -3760,6 +3874,7 @@ impl Default for MacShot {
             &load_setting("gif_quality_percent", "70"),
             &load_setting("gif_frame_rate", "10"),
             &load_setting("recording_resolution", "original"),
+            &load_setting("recording_profile", "custom"),
         );
         let record_system_audio = load_setting("record_system_audio", "true") != "false";
         let record_microphone_audio = load_setting("record_microphone_audio", "true") != "false";
@@ -3897,6 +4012,7 @@ impl Default for MacShot {
             tray_recording_shortcut_target_item: None,
             tray_recording_shortcut_mode_item: None,
             tray_recording_settings_submenu: None,
+            tray_recording_profile_items: Vec::new(),
             tray_recording_resolution_items: Vec::new(),
             tray_recording_frame_rate_items: Vec::new(),
             tray_recording_system_audio_item: None,
@@ -4573,6 +4689,12 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         file,
         "recording_resolution={}",
         preferences.recording_quality.resolution.setting()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "recording_profile={}",
+        preferences.recording_quality.profile.setting()
     )
     .map_err(|error| error.to_string())?;
     writeln!(
@@ -8967,6 +9089,7 @@ impl MacShot {
         self.tray_recording_shortcut_target_item = None;
         self.tray_recording_shortcut_mode_item = None;
         self.tray_recording_settings_submenu = None;
+        self.tray_recording_profile_items.clear();
         self.tray_recording_resolution_items.clear();
         self.tray_recording_frame_rate_items.clear();
         self.tray_recording_system_audio_item = None;
@@ -9254,6 +9377,33 @@ impl MacShot {
             recording_target_enabled,
             None,
         );
+        let profile_submenu = Submenu::with_id(
+            "macshot.recording.settings.profile",
+            self.language.tray_label("recording_profile"),
+            recording_target_enabled,
+        );
+        let mut profile_items = Vec::new();
+        for profile in RecordingProfile::ALL {
+            let item = MenuItem::with_id(
+                format!("macshot.recording.profile.{}", profile.setting()),
+                format!(
+                    "{}{}",
+                    if self.recording_quality.profile == profile {
+                        "✓  "
+                    } else {
+                        "    "
+                    },
+                    self.language.text(profile.label())
+                ),
+                recording_target_enabled,
+                None,
+            );
+            if let Err(error) = profile_submenu.append(&item) {
+                self.status = format!("録画モードメニューを作成できません: {error}");
+                return;
+            }
+            profile_items.push((item, profile));
+        }
         let resolution_submenu = Submenu::with_id(
             "macshot.recording.settings.resolution",
             self.language.tray_label("recording_resolution"),
@@ -9342,6 +9492,7 @@ impl MacShot {
             true,
         );
         for result in [
+            recording_settings_submenu.append(&profile_submenu),
             recording_settings_submenu.append(&resolution_submenu),
             recording_settings_submenu.append(&frame_rate_submenu),
             recording_settings_submenu.append(&system_audio_item),
@@ -9432,6 +9583,12 @@ impl MacShot {
             .map(|(item, target)| (item.id().0.clone(), *target))
             .collect();
         let mut recording_setting_actions = HashMap::new();
+        for (item, profile) in &profile_items {
+            recording_setting_actions.insert(
+                item.id().0.clone(),
+                TrayAction::SetRecordingProfile(*profile),
+            );
+        }
         for (item, resolution) in &resolution_items {
             recording_setting_actions.insert(
                 item.id().0.clone(),
@@ -9530,6 +9687,7 @@ impl MacShot {
                 self.tray_recording_shortcut_target_item = Some(recording_shortcut_target_item);
                 self.tray_recording_shortcut_mode_item = Some(recording_shortcut_mode_item);
                 self.tray_recording_settings_submenu = Some(recording_settings_submenu);
+                self.tray_recording_profile_items = profile_items;
                 self.tray_recording_resolution_items = resolution_items;
                 self.tray_recording_frame_rate_items = frame_rate_items;
                 self.tray_recording_system_audio_item = Some(system_audio_item);
@@ -9660,10 +9818,12 @@ impl MacShot {
             RecordingFormat::Mp4 => self.recording_quality.mp4_frame_rate,
         };
         let choices_key = format!(
-            "{}:{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}",
             capture_target_setting(self.recording_target),
             self.recording_format.extension(),
+            self.recording_quality.profile.setting(),
             self.recording_quality.resolution.setting(),
+            self.recording_quality.mp4_bitrate_mbps,
             selected_frame_rate,
             self.record_system_audio,
             self.record_microphone_audio,
@@ -9723,6 +9883,18 @@ impl MacShot {
         }
         if let Some(submenu) = &self.tray_recording_settings_submenu {
             submenu.set_enabled(!active);
+        }
+        for (item, profile) in &self.tray_recording_profile_items {
+            item.set_text(format!(
+                "{}{}",
+                if self.recording_quality.profile == *profile {
+                    "✓  "
+                } else {
+                    "    "
+                },
+                self.language.text(profile.label())
+            ));
+            item.set_enabled(!active);
         }
         for (item, target) in &self.tray_recording_target_items {
             item.set_text(tray_target_choice_label(
@@ -9978,7 +10150,15 @@ impl MacShot {
                 TrayAction::SetRecordingResolution(resolution) => {
                     let previous = self.recording_quality;
                     self.recording_quality.resolution = resolution;
+                    if self.recording_format == RecordingFormat::Mp4 {
+                        self.recording_quality.profile = RecordingProfile::Custom;
+                    }
                     self.save_recording_tray_setting(previous, "録画解像度");
+                }
+                TrayAction::SetRecordingProfile(profile) => {
+                    let previous = self.recording_quality;
+                    self.recording_quality.apply_profile(profile);
+                    self.save_recording_tray_setting(previous, "録画モード");
                 }
                 TrayAction::SetRecordingFrameRate(frame_rate) => {
                     let previous = self.recording_quality;
@@ -9988,6 +10168,7 @@ impl MacShot {
                         }
                         RecordingFormat::Mp4 => {
                             self.recording_quality.mp4_frame_rate = frame_rate;
+                            self.recording_quality.profile = RecordingProfile::Custom;
                         }
                     }
                     self.save_recording_tray_setting(previous, "録画フレームレート");
@@ -15284,6 +15465,7 @@ impl MacShot {
             self.tray_recording_shortcut_target_item = None;
             self.tray_recording_shortcut_mode_item = None;
             self.tray_recording_settings_submenu = None;
+            self.tray_recording_profile_items.clear();
             self.tray_recording_resolution_items.clear();
             self.tray_recording_frame_rate_items.clear();
             self.tray_recording_system_audio_item = None;
@@ -15325,6 +15507,7 @@ impl MacShot {
                 self.tray_recording_shortcut_target_item = None;
                 self.tray_recording_shortcut_mode_item = None;
                 self.tray_recording_settings_submenu = None;
+                self.tray_recording_profile_items.clear();
                 self.tray_recording_resolution_items.clear();
                 self.tray_recording_frame_rate_items.clear();
                 self.tray_recording_system_audio_item = None;
@@ -15787,9 +15970,48 @@ impl MacShot {
                 }
             }
         });
+        if self.recording_format == RecordingFormat::Mp4 {
+            ui.horizontal(|ui| {
+                ui.label(self.language.text("録画モード"));
+                let previous = self.recording_quality;
+                egui::ComboBox::from_id_salt("recording_profile")
+                    .selected_text(self.language.text(self.recording_quality.profile.label()))
+                    .show_ui(ui, |ui| {
+                        for profile in RecordingProfile::ALL {
+                            ui.selectable_value(
+                                &mut self.recording_quality.profile,
+                                profile,
+                                self.language.text(profile.label()),
+                            );
+                        }
+                    });
+                if self.recording_quality.profile != previous.profile {
+                    self.recording_quality
+                        .apply_profile(self.recording_quality.profile);
+                    if let Err(error) = self.save_preferences() {
+                        self.settings_error = Some(format!("録画モードを保存できません: {error}"));
+                        self.recording_quality = previous;
+                    } else {
+                        self.settings_error = None;
+                        self.status = format!(
+                            "録画モードを「{}」に変更しました。",
+                            self.language.text(self.recording_quality.profile.label())
+                        );
+                    }
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    self.language
+                        .text(self.recording_quality.profile.description()),
+                )
+                .size(11.0)
+                .color(TEXT_MUTED),
+            );
+        }
         ui.horizontal(|ui| {
             ui.label(self.language.text("録画解像度"));
-            let previous = self.recording_quality.resolution;
+            let previous = self.recording_quality;
             egui::ComboBox::from_id_salt("recording_resolution")
                 .selected_text(
                     self.language
@@ -15804,10 +16026,13 @@ impl MacShot {
                         );
                     }
                 });
-            if self.recording_quality.resolution != previous {
+            if self.recording_quality.resolution != previous.resolution {
+                if self.recording_format == RecordingFormat::Mp4 {
+                    self.recording_quality.profile = RecordingProfile::Custom;
+                }
                 if let Err(error) = self.save_preferences() {
                     self.settings_error = Some(format!("録画解像度を保存できません: {error}"));
-                    self.recording_quality.resolution = previous;
+                    self.recording_quality = previous;
                 } else {
                     self.settings_error = None;
                     self.status = format!(
@@ -15863,12 +16088,18 @@ impl MacShot {
                         .suffix(" Mbps")
                         .text(self.language.text("画質・容量")),
                 );
+                if bitrate.changed() {
+                    self.recording_quality.profile = RecordingProfile::Custom;
+                }
                 self.save_settings_after_slider_change(&bitrate, ui, "録画設定を保存しました。");
                 let frame_rate = ui.add(
                     egui::Slider::new(&mut self.recording_quality.mp4_frame_rate, 5..=60)
                         .suffix(" fps")
                         .text(self.language.text("なめらかさ")),
                 );
+                if frame_rate.changed() {
+                    self.recording_quality.profile = RecordingProfile::Custom;
+                }
                 self.save_settings_after_slider_change(&frame_rate, ui, "録画設定を保存しました。");
                 ui.label(
                     egui::RichText::new(
@@ -17019,8 +17250,15 @@ mod tests {
 
     #[test]
     fn recording_quality_loads_independent_values_and_migrates_old_presets() {
-        let quality =
-            RecordingQuality::from_settings(VideoQuality::High, "18", "48", "92", "24", "720p");
+        let quality = RecordingQuality::from_settings(
+            VideoQuality::High,
+            "18",
+            "48",
+            "92",
+            "24",
+            "720p",
+            "custom",
+        );
         assert_eq!(quality.mp4_bitrate_mbps, 18);
         assert_eq!(quality.mp4_frame_rate, 48);
         assert_eq!(quality.gif_quality_percent, 92);
@@ -17031,8 +17269,15 @@ mod tests {
         assert_eq!(quality.gif_frame_interval().as_millis(), 41);
         assert_eq!(quality.gif_quantizer_speed(), 4);
 
-        let migrated =
-            RecordingQuality::from_settings(VideoQuality::High, "", "bad", "", "", "unknown");
+        let migrated = RecordingQuality::from_settings(
+            VideoQuality::High,
+            "",
+            "bad",
+            "",
+            "",
+            "unknown",
+            "custom",
+        );
         assert_eq!(migrated.mp4_bitrate_mbps, 12);
         assert_eq!(migrated.mp4_frame_rate, 15);
         assert_eq!(migrated.gif_quality_percent, 70);
@@ -17046,8 +17291,10 @@ mod tests {
                 "0",
                 "90",
                 "original",
+                "custom",
             ),
             RecordingQuality {
+                profile: RecordingProfile::Custom,
                 mp4_bitrate_mbps: 30,
                 mp4_frame_rate: 5,
                 gif_quality_percent: 10,
@@ -17066,6 +17313,7 @@ mod tests {
             "70",
             "10",
             "original",
+            "custom",
         );
         let mp4 = estimate_recording_size_per_minute(RecordingFormat::Mp4, quality, 1920, 1080);
         assert_eq!(mp4.low_bytes, mp4.high_bytes);
@@ -17441,6 +17689,7 @@ mod tests {
             auto_import_native_captures: true,
             recording_format: RecordingFormat::Mp4,
             recording_quality: RecordingQuality {
+                profile: RecordingProfile::Custom,
                 mp4_bitrate_mbps: 18,
                 mp4_frame_rate: 48,
                 gif_quality_percent: 92,
@@ -17522,6 +17771,10 @@ mod tests {
         assert_eq!(parse_setting(&serialized, "recording_format", "gif"), "mp4");
         assert_eq!(parse_setting(&serialized, "mp4_bitrate_mbps", ""), "18");
         assert_eq!(parse_setting(&serialized, "mp4_frame_rate", ""), "48");
+        assert_eq!(
+            parse_setting(&serialized, "recording_profile", ""),
+            "custom"
+        );
         assert_eq!(parse_setting(&serialized, "gif_quality_percent", ""), "92");
         assert_eq!(parse_setting(&serialized, "gif_frame_rate", ""), "24");
         assert_eq!(

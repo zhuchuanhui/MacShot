@@ -1,4 +1,4 @@
-# MacShot 1.6.1
+# MacShot 1.7.0
 
 [日本語](README.md) · [简体中文](README.zh-CN.md)
 
@@ -8,11 +8,13 @@ Recordings can be played, renamed, trimmed, and exported as a separate annotated
 
 The recording shortcut can either start recording the saved target immediately or open the recording mode chooser. This preference is saved separately from screenshot shortcut behavior.
 
+Recording offers Quality Priority (1440p / 24 Mbps / 30 fps), Smoothness Priority (720p / 8 Mbps / 60 fps), Balanced (1080p / 12 Mbps / 30 fps), and Custom profiles. Changing resolution, bitrate, or frame rate manually switches to Custom. 60 fps is a target, not a guarantee under all workloads.
+
 ## Download
 
-- macOS Apple Silicon (arm64): [MacShot-v1.6.1-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.6.1/MacShot-v1.6.1-macos-arm64.zip)
-- Windows x64: [MacShot-v1.6.1-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.6.1/MacShot-v1.6.1-windows-x64.zip)
-- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.6.1)
+- macOS Apple Silicon (arm64): [MacShot-v1.7.0-macos-arm64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.7.0/MacShot-v1.7.0-macos-arm64.zip)
+- Windows x64: [MacShot-v1.7.0-windows-x64.zip](https://github.com/zhuchuanhui/MacShot/releases/download/v1.7.0/MacShot-v1.7.0-windows-x64.zip)
+- [GitHub release page](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.7.0)
 
 On macOS, unzip the archive and move `MacShot.app` to Applications for convenient access. The app uses an Apple Development signature and is not notarized. If macOS blocks the first launch, Control-click the app in Finder and choose **Open**. After updating from an ad hoc signed version, if screen recording is not allowed, toggle MacShot off and on once in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart it. macOS 14 or later on Apple Silicon is supported.
 

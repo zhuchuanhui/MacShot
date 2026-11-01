@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0 — 2026-11-01
+
+- Added saved recording profiles for Quality Priority (1440p / 24 Mbps / 30 fps), Smoothness Priority (720p / 8 Mbps / 60 fps), Balanced (1080p / 12 Mbps / 30 fps), and Custom.
+- Added profile selection to the recording settings page and menu bar. Manually changing resolution, bitrate, or frame rate switches to Custom; 60 fps is a target and is not guaranteed under all workloads.
+
 ## 1.6.1 — 2026-11-01
 
 - Clarified screenshot and screen recording labels across page tabs, page headings, target selectors, and grouped menu bar actions in all four languages.

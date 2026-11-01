@@ -1,5 +1,15 @@
 # Project Status
 
+## v1.7.0 Release — 2026-11-01
+
+- 録画設定に「画質優先（1440p / 24 Mbps / 30 fps）」「滑らかさ優先（720p / 8 Mbps / 60 fps）」「バランス（1080p / 12 Mbps / 30 fps）」「カスタム」を追加しました。解像度・ビットレート・FPSの既存個別設定は維持し、手動調整するとカスタムに切り替わります。選択は設定ファイルへ保存されます。
+- メニューバーの「録画設定」にも同じ4モードを追加しました。画面録画の設定でモードの値と説明を表示します。60fpsは目標値であり実効fps保証ではありません。
+- v1.6.1公開後の録画モード追加のため次版をminor更新のv1.7.0としました。macOS arm64/Windows x64 GNUの`cargo check --all-targets`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。
+- 完成済み.appは`output/release/MacShot-v1.7.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.7.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルとrelease buildのUUIDが一致します。起動したアプリの録画設定画面で画質優先・滑らかさ優先・バランス・カスタムを確認しました。画面収録許可が未許可のため実録画は未確認です。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.7.0-macos-arm64.zip`（SHA-256 `bb1382d53a7a695856d6705aa8c12fbbf2393f43cffa66934b6276843a219fbd`）と`output/release/MacShot-v1.7.0-windows-x64.zip`（SHA-256 `bd0ebce4645eac85cafb005bf1591cea66e8a019d7cf2b473ccc90c60e1c5e85`）。両ZIPの整合性・チェックサムを確認し、macOS ZIPにFinder補助ファイルはありません。既存のWindowsパッケージは梱包スクリプトが上書きを拒否しましたが、ZIP内の実行ファイルが今回のrelease buildとbyte単位で一致し、ZIP・チェックサム検証も成功しました。PE32+ x86-64 GUI形式です。
+- macOS buildではvendor/xcapの非推奨API警告、Windows cross-buildでは`rust-objcopy`が`libLLVM.dylib`不足でdebug infoを除去できない警告がありましたが、両release buildと配布物検証は成功しました。Windows実機動作は未確認です。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- GitHub Release公開後にタグ・4つの添付ファイル・再ダウンロード結果を追記します。production deploymentは行いません。
+
 ## v1.6.1 Release — 2026-11-01
 
 - メイン画面のタブとページ見出しを「◉ スクリーンショット」「● 画面録画」に分け、対象欄にも対応するアイコンと用途を表示します。メニューバーにも同じアイコン付きのスクリーンショット／画面録画見出しを置き、項目をグループ化します。4言語に反映しました。
