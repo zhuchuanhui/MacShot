@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.9.1 Release — 2026-11-02
+
+- 設定カードに淡い紫灰色の境界線と控えめな影を加え、カード間隔を広げました。表示の見分けやすさを改善するためpatch更新としました。
+- `Cargo.toml` と `Cargo.lock` を1.9.1へ更新しました。macOS arm64/Windows x64 GNUの`cargo check --all-targets --locked`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- 完成済み.appは`output/release/MacShot-v1.9.1-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.9.1`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルUUIDはmacOS release buildと一致します。正確なReleaseバンドルを起動し、設定画面のカード境界・影・間隔を確認しました。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.9.1-macos-arm64.zip`（SHA-256 `0a7617473478599af3c720f7b584511767a74a55bd8daecfd34205c9e9222bb2`）と`output/release/MacShot-v1.9.1-windows-x64.zip`（SHA-256 `1387bcb9b1c2a845e796595fc58fb84fdd7abb8ce0dc5c5f386cb0a66d2e15af`）。GitHub Releaseから両ZIPとチェックサムを再取得して照合し、ZIP整合性とWindows実行ファイル形式（PE32+ x86-64 GUI）を確認しました。
+- [GitHub Release v1.9.1](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.9.1)を公開し、タグを機能コミット`74381b052999b6758366becd19b39bd16080e668`に付けました。GitHub上でpublished・非prereleaseと添付4ファイルを確認しました。xcapの既存非推奨API警告3件、Windows cross-buildで`rust-objcopy`の`libLLVM.dylib`不足によるデバッグ情報除去の警告がありますが、ビルドと配布は成功しました。Windows実機動作は未確認です。production deploymentは行いません。
+
 ## 設定カードの境界を見やすく調整 — 2026-11-02
 
 - 設定カードの外周に淡い紫灰色の線を追加し、控えめな影と左右のカード間隔を設けました。設定カード同士や背景との境目を見分けやすくしています。
