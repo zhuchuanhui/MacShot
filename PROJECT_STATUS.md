@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.9.0 Release — 2026-11-02
+
+- 録画ページの対象操作をスクリーンショットページに揃え、録画対象ごとの検索、範囲・選択対象・ウィンドウ録画、対象一覧の更新を提供します。録画対象検索はスクリーンショット検索から独立しています。メイン画面とメニューバーの対象・ショートカット表示も整理しました。
+- `Cargo.toml` と `Cargo.lock` のversionを1.9.0へ更新し、次版をminorと判断しました。macOS arm64/Windows x64 GNUの`cargo check --all-targets --locked`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- 完成済み.appは`output/release/MacShot-v1.9.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.9.0`、arm64）です。Apple Development署名、マイク・画面収録の権限説明、deep/strict署名検証が成功し、バンドル内実行ファイルとrelease buildのUUIDが一致します。正確なReleaseバンドルを起動し、録画対象、検索、対象選択、録画開始・更新、ショートカット表示を確認しました。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.9.0-macos-arm64.zip`（SHA-256 `c4a34e47ebbb7ed63662974002bd416881bad1a543a24859c853bdf6c36039b5`）と`output/release/MacShot-v1.9.0-windows-x64.zip`（SHA-256 `be60b51ca5d5b091867b33379c54212ba75977170dca354886b7680b02f1d8f1`）。各ZIPとチェックサムをGitHub Releaseから再取得して照合し、ZIP整合性を検証しました。Windows実行ファイルはPE32+ x86-64 GUIです。
+- [GitHub Release v1.9.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.9.0)を公開し、タグを機能コミット`13ae6a105653b4a670c0985161e3e1f2d1b9a1ce`に付けました。GitHub上でpublished・非prereleaseと添付4ファイルを確認しました。xcapの既存非推奨API警告3件があり、Windows cross-buildでは`rust-objcopy`の`libLLVM.dylib`不足によりデバッグ情報の除去ができませんでしたが、ビルドと配布は成功しました。Windows実機動作は未確認です。production deploymentは行いません。
+
 ## 録画ページの対象UIをスクリーンショット画面に統一 — 2026-11-02
 
 - メイン画面の対象見出しを「選択中のスクショ対象」「選択中の録画対象」に変更しました。録画ページをスクリーンショット画面と同じ流れにし、検索、対象一覧、範囲録画、選択対象の録画、ウィンドウ選択、一覧更新、ショートカット動作、録画設定を並べました。録画対象検索はスクリーンショット検索と別に保持します。
