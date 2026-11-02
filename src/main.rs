@@ -425,6 +425,13 @@ struct MacShot {
     diff_count: u64,
     compare_mode: CompareMode,
     settings_error: Option<String>,
+    shortcut_capture_target: Option<ShortcutCaptureTarget>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShortcutCaptureTarget {
+    Screenshot,
+    Recording,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -692,6 +699,51 @@ impl AppLanguage {
                 "● 目前錄影目標",
             ],
             "ショートカットの動作" => ["Shortcut Behavior", "快捷键行为", "快速鍵行為"],
+            "簡単登録" => ["Quick setup", "快速设置", "快速設定"],
+            "詳細入力" => ["Manual setup", "手动设置", "手動設定"],
+            "キーを押して登録" => ["Press a key to assign", "按键设置", "按鍵設定"],
+            "おすすめを入力" => [
+                "Use recommended shortcuts",
+                "填入推荐快捷键",
+                "填入推薦快速鍵",
+            ],
+            "登録するキーを押してください…" => {
+                ["Press the shortcut now…", "请按下快捷键…", "請按下快速鍵…"]
+            }
+            "Escで登録をキャンセルできます。" => [
+                "Press Esc to cancel.",
+                "按 Esc 取消设置。",
+                "按 Esc 取消設定。",
+            ],
+            "おすすめの組み合わせを入力しました。内容を確認して保存してください。" => {
+                [
+                    "Recommended shortcuts filled in. Review and save them.",
+                    "已填入推荐快捷键，请确认后保存。",
+                    "已填入推薦快速鍵，請確認後儲存。",
+                ]
+            }
+            "ショートカットの重複を解消してください。" => [
+                "Resolve the duplicate shortcut before saving.",
+                "请先解决重复的快捷键。",
+                "請先解決重複的快速鍵。",
+            ],
+            "キー入力登録をキャンセルしました。" => [
+                "Shortcut assignment canceled.",
+                "已取消快捷键设置。",
+                "已取消快速鍵設定。",
+            ],
+            "撮影と録画のキーは別々に登録してください。OSや他のアプリとの競合は保存時に確認します。" => {
+                [
+                    "Assign different keys for screenshots and recording. OS and app conflicts are checked when saved.",
+                    "截图和录制请使用不同按键。保存时会检查系统或其他应用的冲突。",
+                    "螢幕截圖與錄影請使用不同按鍵。儲存時會檢查系統或其他應用程式的衝突。",
+                ]
+            }
+            "撮影と録画に同じショートカットは使えません。" => [
+                "Screenshot and recording shortcuts must be different.",
+                "截图和录制快捷键不能相同。",
+                "螢幕截圖與錄影快速鍵不能相同。",
+            ],
             "この対象を撮影" => ["Capture This Target", "截取此目标", "擷取此目標"],
             "選択モード即スクショ" => [
                 "Capture Selected Target Immediately",
@@ -4185,6 +4237,7 @@ impl Default for MacShot {
             diff_count: 0,
             compare_mode: CompareMode::SideBySide,
             settings_error: None,
+            shortcut_capture_target: None,
         }
     }
 }
@@ -8402,6 +8455,61 @@ fn canonical_hotkey_text(value: &str) -> String {
         .join("+")
 }
 
+fn shortcut_text_from_key_event(key: egui::Key, modifiers: egui::Modifiers) -> Option<String> {
+    let debug_key = format!("{key:?}");
+    let key_name = match debug_key.as_str() {
+        value if value.len() == 1 && value.as_bytes()[0].is_ascii_uppercase() => {
+            format!("Key{debug_key}")
+        }
+        value
+            if value.starts_with("Num")
+                && value.as_bytes().last().is_some_and(u8::is_ascii_digit) =>
+        {
+            format!("Digit{}", &debug_key[3..])
+        }
+        value
+            if value.starts_with('F')
+                && value[1..]
+                    .parse::<u8>()
+                    .is_ok_and(|number| (1..=24).contains(&number)) =>
+        {
+            debug_key
+        }
+        "Space" => "Space".into(),
+        "Enter" => "Enter".into(),
+        "Tab" => "Tab".into(),
+        "Backspace" => "Backspace".into(),
+        "Delete" => "Delete".into(),
+        "Insert" => "Insert".into(),
+        "Home" => "Home".into(),
+        "End" => "End".into(),
+        "PageUp" => "PageUp".into(),
+        "PageDown" => "PageDown".into(),
+        "ArrowUp" => "ArrowUp".into(),
+        "ArrowDown" => "ArrowDown".into(),
+        "ArrowLeft" => "ArrowLeft".into(),
+        "ArrowRight" => "ArrowRight".into(),
+        _ => return None,
+    };
+    let mut parts = Vec::new();
+    if modifiers.ctrl {
+        parts.push("Control");
+    }
+    if modifiers.alt {
+        parts.push("Alt");
+    }
+    if modifiers.mac_cmd {
+        parts.push("Super");
+    }
+    if modifiers.shift {
+        parts.push("Shift");
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{}+{key_name}", parts.join("+")))
+}
+
 fn parse_hotkey_pair(capture_text: &str, recording_text: &str) -> Result<(HotKey, HotKey), String> {
     let capture = match capture_text.parse::<HotKey>() {
         Ok(hotkey) if !hotkey.mods.is_empty() => hotkey,
@@ -10999,6 +11107,10 @@ impl MacShot {
                 }
             },
         };
+        let previous_capture = self.capture_hotkey;
+        let previous_recording = self.recording_hotkey;
+        let previous_capture_text = canonical_hotkey_text(&previous_capture.to_string());
+        let previous_recording_text = canonical_hotkey_text(&previous_recording.to_string());
         if !self.registered_hotkeys.is_empty()
             && let Err(error) = manager.unregister_all(&self.registered_hotkeys)
         {
@@ -11014,6 +11126,27 @@ impl MacShot {
                 Err(error) => registration_errors.push(format!("{name}: {error}")),
             }
         }
+        if !registration_errors.is_empty() {
+            if !self.registered_hotkeys.is_empty() {
+                let _ = manager.unregister_all(&self.registered_hotkeys);
+            }
+            self.registered_hotkeys.clear();
+            for previous in [previous_capture, previous_recording] {
+                if manager.register(previous).is_ok() {
+                    self.registered_hotkeys.push(previous);
+                }
+            }
+            self.capture_hotkey_text = previous_capture_text;
+            self.recording_hotkey_text = previous_recording_text;
+            self._hotkey_manager = Some(manager);
+            let message = format!(
+                "ショートカットが他のアプリまたはmacOSと競合しています（{}）。以前の設定を維持しました。別のキーを選んでください。",
+                registration_errors.join("、")
+            );
+            self.settings_error = Some(message.clone());
+            self.status = message;
+            return;
+        }
         self._hotkey_manager = Some(manager);
         self.capture_hotkey = capture;
         self.recording_hotkey = recording;
@@ -11024,17 +11157,9 @@ impl MacShot {
         self.tray_recording_state = None;
         self.update_tray_recording_status();
         match self.save_preferences() {
-            Ok(()) if registration_errors.is_empty() => {
+            Ok(()) => {
                 self.settings_error = None;
                 self.status = "ショートカットを保存しました。".into();
-            }
-            Ok(()) => {
-                let message = format!(
-                    "設定は保存しましたが、一部のキーは他のアプリと競合して使えません（{}）。別のキーを選んでください。",
-                    registration_errors.join("、")
-                );
-                self.settings_error = Some(message.clone());
-                self.status = message;
             }
             Err(error) => self.settings_error = Some(format!("設定を保存できません: {error}")),
         }
@@ -13456,26 +13581,25 @@ impl MacShot {
                         self.open_native_screenshot();
                     }
                     ui.separator();
-                    for (title, value) in [
-                        (self.language.text("撮影"), self.capture_hotkey_text.as_str()),
-                        (self.language.text("録画"), self.recording_hotkey_text.as_str()),
-                    ] {
-                        egui::Frame::new()
-                            .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 145))
-                            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(22)))
-                            .corner_radius(egui::CornerRadius::same(10))
-                            .inner_margin(egui::Margin::symmetric(10, 7))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(&title).size(10.0).color(TEXT_MUTED));
-                                    ui.label(
-                                        egui::RichText::new(hotkey_badge_text(value))
-                                            .size(11.0)
-                                            .strong(),
-                                    );
-                                });
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 145))
+                        .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(22)))
+                        .corner_radius(egui::CornerRadius::same(10))
+                        .inner_margin(egui::Margin::symmetric(10, 7))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(self.language.text("撮影"))
+                                        .size(10.0)
+                                        .color(TEXT_MUTED),
+                                );
+                                ui.label(
+                                    egui::RichText::new(hotkey_badge_text(&self.capture_hotkey_text))
+                                        .size(11.0)
+                                        .strong(),
+                                );
                             });
-                    }
+                        });
                     if ui.button(self.language.text("▣  保存先を変更")).clicked() {
                         self.choose_folder();
                     }
@@ -15203,7 +15327,8 @@ impl MacShot {
                 });
             });
         });
-        self.show_recordings_panel(ui, 560.0);
+        let recordings_height = (ui.available_height() - 86.0).max(360.0);
+        self.show_recordings_panel(ui, recordings_height);
     }
 
     fn show_recordings_panel(&mut self, ui: &mut egui::Ui, list_height: f32) {
@@ -15212,19 +15337,39 @@ impl MacShot {
         self.request_recording_metadata(ui.ctx());
         ui.add_space(14.0);
         glass_frame().show(ui, |ui| {
+            if list_height >= 300.0 {
+                ui.set_min_height(list_height + 94.0);
+            }
             ui.label(egui::RichText::new(folder.display().to_string()).size(11.0).color(TEXT_MUTED));
-            ui.separator();
             ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("▤").size(18.0).color(ACCENT_BRIGHT));
                 ui.label(egui::RichText::new(language.text("録画一覧")).size(19.0).strong());
                 ui.label(egui::RichText::new(format!("{} {}", self.recording_files.len(), language.text("録画件数（GIF / MP4 / MOV）"))).color(TEXT_MUTED));
             });
             ui.label(egui::RichText::new(language.text("GIF・MP4・対応MOVを別ウィンドウで再生できます。対応外の形式は外部プレイヤーを使います。録画名も変更できます。")).size(11.0).color(TEXT_MUTED));
-            ui.add_space(8.0);
+            ui.add_space(12.0);
             if self.recording_files.is_empty() {
-                ui.label(egui::RichText::new(language.text("録画が見つかりません。保存先を確認するか「更新」を押してください。")).color(TEXT_MUTED));
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), list_height),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.centered_and_justified(|ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new("●").size(54.0).color(egui::Color32::from_rgb(206, 74, 100)));
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new(language.text("録画一覧")).size(22.0).strong());
+                                ui.label(
+                                    egui::RichText::new(language.text("録画が見つかりません。保存先を確認するか「更新」を押してください。"))
+                                        .color(TEXT_MUTED),
+                                );
+                            });
+                        });
+                    },
+                );
             } else {
                 egui::ScrollArea::vertical()
                     .id_salt("evidence_recording_list")
+                    .min_scrolled_height(list_height)
                     .max_height(list_height)
                     .show(ui, |ui| {
                     let files = self.recording_files.clone();
@@ -15914,6 +16059,98 @@ impl MacShot {
             .color(TEXT_MUTED),
         );
         ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(self.language.text("簡単登録"))
+                .size(14.0)
+                .strong(),
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.label(self.language.text("スクリーンショット"));
+            let capture_pending =
+                self.shortcut_capture_target == Some(ShortcutCaptureTarget::Screenshot);
+            if ui
+                .add(primary_button(if capture_pending {
+                    self.language.text("登録するキーを押してください…")
+                } else {
+                    self.language.text("キーを押して登録")
+                }))
+                .clicked()
+            {
+                self.shortcut_capture_target = Some(ShortcutCaptureTarget::Screenshot);
+                self.settings_error = None;
+            }
+            ui.label(hotkey_badge_text(&self.capture_hotkey_text));
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label(self.language.text("録画の開始／終了"));
+            let recording_pending =
+                self.shortcut_capture_target == Some(ShortcutCaptureTarget::Recording);
+            if ui
+                .add(primary_button(if recording_pending {
+                    self.language.text("登録するキーを押してください…")
+                } else {
+                    self.language.text("キーを押して登録")
+                }))
+                .clicked()
+            {
+                self.shortcut_capture_target = Some(ShortcutCaptureTarget::Recording);
+                self.settings_error = None;
+            }
+            ui.label(hotkey_badge_text(&self.recording_hotkey_text));
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(self.language.text("おすすめを入力")).clicked() {
+                self.shortcut_capture_target = None;
+                self.capture_hotkey_text = "Alt+Shift+KeyS".into();
+                self.recording_hotkey_text = "Alt+Shift+KeyR".into();
+                self.settings_error = None;
+                self.status = self
+                    .language
+                    .text("おすすめの組み合わせを入力しました。内容を確認して保存してください。");
+            }
+            ui.label(
+                egui::RichText::new("Option + Shift + S  /  Option + Shift + R")
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+        });
+        if self.shortcut_capture_target.is_some() {
+            ui.label(
+                egui::RichText::new(self.language.text("Escで登録をキャンセルできます。"))
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+        }
+        let shortcuts_match = self
+            .capture_hotkey_text
+            .parse::<HotKey>()
+            .ok()
+            .zip(self.recording_hotkey_text.parse::<HotKey>().ok())
+            .is_some_and(|(capture, recording)| capture == recording);
+        if shortcuts_match {
+            ui.label(
+                egui::RichText::new(
+                    self.language
+                        .text("ショートカットの重複を解消してください。"),
+                )
+                .color(egui::Color32::from_rgb(190, 52, 67))
+                .strong(),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(self.language.text(
+                    "撮影と録画のキーは別々に登録してください。OSや他のアプリとの競合は保存時に確認します。",
+                ))
+                .size(11.0)
+                .color(TEXT_MUTED),
+            );
+        }
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(self.language.text("詳細入力"))
+                .size(14.0)
+                .strong(),
+        );
         egui::Grid::new("shortcut_settings")
             .num_columns(2)
             .spacing([12.0, 10.0])
@@ -15957,6 +16194,40 @@ impl MacShot {
         {
             self.apply_hotkey_settings();
         }
+    }
+
+    fn handle_shortcut_capture_input(&mut self, ctx: &egui::Context) -> bool {
+        let Some(target) = self.shortcut_capture_target else {
+            return false;
+        };
+        let events = ctx.input(|input| input.events.clone());
+        for event in events {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                repeat: false,
+                modifiers,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if key == egui::Key::Escape {
+                self.shortcut_capture_target = None;
+                self.status = self.language.text("キー入力登録をキャンセルしました。");
+                return true;
+            }
+            if let Some(value) = shortcut_text_from_key_event(key, modifiers) {
+                match target {
+                    ShortcutCaptureTarget::Screenshot => self.capture_hotkey_text = value,
+                    ShortcutCaptureTarget::Recording => self.recording_hotkey_text = value,
+                }
+                self.shortcut_capture_target = None;
+                self.settings_error = None;
+                return true;
+            }
+        }
+        true
     }
 
     fn recording_estimate_dimensions(&self) -> (u32, u32, bool) {
@@ -16697,7 +16968,9 @@ impl eframe::App for MacShot {
         self.initialize_hotkey(ctx);
         self.initialize_tray(ctx);
         self.update_tray_capture_target();
-        self.handle_hotkey_requests(ctx);
+        if !self.handle_shortcut_capture_input(ctx) {
+            self.handle_hotkey_requests(ctx);
+        }
         self.handle_tray_actions(ctx);
         self.handle_capture_results(ctx);
         self.handle_region_snapshot(ctx);
