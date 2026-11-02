@@ -8154,7 +8154,20 @@ fn glass_frame() -> egui::Frame {
 }
 
 fn settings_card_frame(padding: SettingsCardPadding) -> egui::Frame {
-    glass_frame_with_margin(padding.margin())
+    egui::Frame::new()
+        .fill(egui::Color32::WHITE)
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_rgb(220, 215, 230),
+        ))
+        .corner_radius(egui::CornerRadius::same(16))
+        .inner_margin(egui::Margin::same(padding.margin()))
+        .shadow(egui::Shadow {
+            offset: [0, 2],
+            blur: 12,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(16),
+        })
 }
 
 fn glass_frame_with_margin(margin: i8) -> egui::Frame {
@@ -15685,6 +15698,8 @@ impl MacShot {
     }
 
     fn show_settings_card_columns(&mut self, ui: &mut egui::Ui, cards: &[SettingsCardLayout]) {
+        let previous_spacing = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = 18.0;
         ui.columns(2, |columns| {
             for card in cards.iter().copied() {
                 let left_y = columns[0].cursor().min.y;
@@ -15693,6 +15708,7 @@ impl MacShot {
                 self.show_settings_card(&mut columns[target], card);
             }
         });
+        ui.spacing_mut().item_spacing.x = previous_spacing;
         ui.add_space(12.0);
     }
 

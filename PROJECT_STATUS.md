@@ -1,5 +1,11 @@
 # Project Status
 
+## 設定カードの境界を見やすく調整 — 2026-11-02
+
+- 設定カードの外周に淡い紫灰色の線を追加し、控えめな影と左右のカード間隔を設けました。設定カード同士や背景との境目を見分けやすくしています。
+- `cargo fmt --all`、`git diff --check`、`cargo check --all-targets --locked`、`cargo build --release --locked` が成功しました。xcapの既存非推奨API警告3件があります。自動テストは実行していません。
+- 確認用アプリ `output/review-settings-card-boundaries-20261102/MacShot.app` の署名・プライバシー説明文検証とrelease UUID一致を確認しました。設定画面を起動し、撮影・録画カードの境界線と間隔を実画面で確認しました。ユーザー確認後、置換前アプリを `output/backups/MacShot-before-settings-card-boundaries-20261102.app` に保存し、`/Applications/MacShot.app` を更新して再起動しました。署名・プライバシー説明文、実行ファイル一致、起動中プロセス、インストール済みアプリのカード表示を確認しました。公開・commit・pushはしていません。
+
 ## v1.9.0 Release — 2026-11-02
 
 - 録画ページの対象操作をスクリーンショットページに揃え、録画対象ごとの検索、範囲・選択対象・ウィンドウ録画、対象一覧の更新を提供します。録画対象検索はスクリーンショット検索から独立しています。メイン画面とメニューバーの対象・ショートカット表示も整理しました。
