@@ -1,5 +1,60 @@
 # Project Status
 
+## 録画ページの対象UIをスクリーンショット画面に統一 — 2026-11-02
+
+- メイン画面の対象見出しを「選択中のスクショ対象」「選択中の録画対象」に変更しました。録画ページをスクリーンショット画面と同じ流れにし、検索、対象一覧、範囲録画、選択対象の録画、ウィンドウ選択、一覧更新、ショートカット動作、録画設定を並べました。録画対象検索はスクリーンショット検索と別に保持します。
+- `cargo fmt --all`、`git diff --check`、macOS `cargo check --all-targets`、`cargo build --release --locked` が成功しました。Windows向けcheckは `x86_64-pc-windows-gnu` ターゲット未導入のため実行できていません。xcapの既存非推奨警告3件があります。
+- 確認用アプリ `output/review-recording-target-layout-20261102/MacShot.app` を作成し、署名・プライバシー説明文検証とrelease UUID一致を確認しました。ユーザー確認後、置換前アプリを `output/backups/MacShot-before-recording-target-layout-20261102.app` に保存し、`/Applications/MacShot.app` を更新して再起動しました。インストール先と確認用アプリの実行ファイル一致、署名、起動中プロセスを確認しました。実際の録画ページで「選択中の録画対象」と各操作の配置をアクセシビリティ表示で確認しました。公開・commit・pushはしていません。
+
+## メニューバーの選択操作名と区切り線を調整 — 2026-11-02
+
+- 「撮影対象選択を優先」を「選択モード即スクショ」、「録画対象選択を優先」を「選択モード即録画」に変更しました。メイン画面、メニューバー、設定後の表示にも同じ名称を使います。メニューバーの最初の区切り線を「MacShotを開く」の直下へ移動しました。設定値・撮影録画ロジックは変更していません。
+- `cargo fmt --all`、`git diff --check`、`cargo check --all-targets`、`cargo build --release --locked` が成功しました。確認用アプリ `output/review-menubar-target-labels-20261102/MacShot.app` の署名・プライバシー説明文検証とrelease UUID一致も成功しました。vendor/xcapの既存非推奨警告3件があります。
+- ユーザー確認後、置換前のアプリを `output/backups/MacShot-before-menubar-target-labels-20261102.app` に保存し、確認用アプリを `/Applications/MacShot.app` へ反映して再起動しました。インストール先の署名・プライバシー説明文検証、確認用実行ファイルとの一致、起動中プロセスを確認しました。メイン画面のスクリーンショット／録画の選択操作名はアクセシビリティ表示で確認済みです。メニューバーポップオーバーの実画面は未確認です。公開・commit・pushはしていません。
+
+## 撮影・録画ショートカット項目名を調整 — 2026-11-02
+
+- 項目名のみを変更しました。撮影の「各モード優先」は「スクリーンショット対象選択優先」、録画の「録画方法優先」は「録画対象選択優先」です。保存値とショートカット動作は変更していません。
+- `cargo fmt --all`、`git diff --check`、`cargo check --all-targets`、`cargo build --release --locked` が成功しました。確認用アプリ `output/review-priority-labels-20261102/MacShot.app` の署名・プライバシー説明文検証とrelease UUID一致が成功しました。vendor/xcapの既存非推奨警告3件があります。
+- ユーザー確認後、置き換え前のアプリを `output/backups/MacShot-before-priority-labels-20261102.app` に保存し、`/Applications/MacShot.app` へ反映して再起動しました。署名、プライバシー説明文、release UUID一致、起動を確認し、メイン画面の撮影・録画双方で新しい項目名が表示されることをアクセシビリティ表示で確認しました。公開・commit・pushはしていません。
+
+## メニューバーの選択状態と色分けを改善 — 2026-11-02
+
+- スクリーンショット／録画の見出しと現在対象の案内にカラーアイコンを加えました。対象・ショートカット優先方式・録画の画質／解像度／FPSで、現在選択中の行に「🟣 選択中」を表示します。音声録音のオン／オフも色付きマーカーで区別します。選択表示は4言語の「選択中」訳を使います。
+- `cargo fmt --all`、`git diff --check`、`cargo check --all-targets`、`cargo build --release --locked` が成功しました。xcapのCoreGraphics／NSWorkspace非推奨API警告3件は既存のままです。Apple Development署名とプライバシー説明文検証に成功し、確認用アプリの実行ファイルUUIDはrelease buildと一致します。
+- 確認用アプリは `output/review-menu-selection-20261102/MacShot.app`。ユーザー確認後、旧 `/Applications/MacShot.app` を `output/backups/MacShot-before-menu-selection-20261102.app` に保存し、更新版へ置き換えて再起動しました。署名、プライバシー説明文、release UUID一致、起動中プロセスを確認しました。メニューバーポップオーバー自体の実画面はCUAから開けず未確認です。公開・commit・pushはしていません。
+
+## 全機能監査 — 画像注釈の保存とプレビュー一致 — 2026-11-01
+
+- 専用の960×640 PNGを証跡一覧から開き、拡大編集で楕円・テキスト「QA」・撮影時刻・モザイクを追加し、別名保存したPNGに全4種が反映されることを画像で確認しました。CUAのドラッグでは描画できず、アプリが提供する2点クリックで楕円・モザイクを指定しました。新しいツールの物理ドラッグはこの確認に含めません。
+- 別名保存で元PNGのSHA-256が保持されました。編集コピーへ楕円を追加し、上書き確認のキャンセル後にコピーのbyte一致を確認、再度上書きを選ぶと同じPNGへ追加描画され、画像寸法960×640は維持されました。ユーザーの既存画像は操作していません。
+- テキストのプレビューが赤文字、保存後は白文字＋色背景へ変わる不一致を実画面で再現しました。画像編集プレビューを保存と同じ `annotated_image` 処理へ統一し、描画結果を注釈・画像パス・色・線幅・時刻背景でキャッシュします。修正版で保存前から白文字＋赤背景の表示を確認し、保存後PNGでも同じ表示になりました。
+- 全113テスト（FFmpeg結合テストを含む）、Clippy、macOS release build、Windows x64 GNU check、整形・差分・署名検査が成功しました。インストール版とrelease buildのUUIDは `18F1467F-E95A-3584-96C7-821773F431C5` で一致します。vendor/xcapの既存非推奨警告は残っています。
+- 更新前は `output/backups/MacShot-before-annotation-preview-20261101.app`、確認用バンドルは `output/review-annotation-preview-20261101.app`。テスト画像3枚は `output/qa-audit-20261101/images/` に移して通常の保存先から片付けました。公開・commit・pushはしていません。
+
+## 全機能監査 — 動画編集の入口と保存完了表示 — 2026-11-01
+
+- 録画一覧の「編集」をメニューにし、「切り抜き・注釈」と「録画名を編集」を選べるようにしました。従来は一覧の編集が名前変更のみで、動画編集は自動非表示のプレイヤー操作部にしか入口がありませんでした。既存の4言語ラベルを使っています。再生画面からの動画編集も同じ処理へまとめ、プレイヤーを閉じて本体の編集画面へ移ります。
+- 同じ署名とbundle IDでインストール版を更新し、一覧の編集メニュー→動画編集→開始1秒・終了3秒→テキスト注釈追加→「別動画として保存」を実操作しました。生成物はH.264/AAC、320×240、2.000秒で、抽出フレームに注釈を確認し、音声は平均−21.1 dBFS、元ファイルのSHA-256は変わっていません。抽出フレームは `output/qa-audit-20261101/ui-edited-frame.png` に保存しました。
+- 保存完了後も入力するまで「書き出し中…」が残る不具合を再現し、書き出しworkerから完了時の再描画通知を追加しました。修正版を再ビルド・署名してインストールし、追加の入力を一切行わず「別動画として保存」から完了表示・一覧12件への追加に自動で進むことを実機確認しました。再書き出しは `-edited-2.mp4` となり最初の編集動画は保持されました。Clippy、全113テスト、Windows x64 GNU check、macOS release build、署名・整形・差分検査が成功しました。vendor/xcapの非推奨警告は既存のままです。
+- 録画モードを滑らかさ優先→画質優先へ変えると、1440p・24 Mbps・30 fps、予想185 MB/分がUIと設定ファイルへ反映されました。滑らかさ優先へ戻し、設定ファイルが検証前とbyte単位で一致することを確認しました。録画ファイルによる実効画質・fps確認は別項目です。
+- 更新前アプリは `output/backups/MacShot-before-video-edit-entry-20261101.app`、確認用バンドルは `output/review-video-edit-entry-20261101/MacShot.app` に保存しています。公開・commit・pushはしていません。現行版の全機能検証は未完了です。
+- この実操作で使った素材と2本の編集動画は `output/qa-audit-20261101/interactive/` へ移動し、通常の保存先から片付けました。
+
+## 全機能監査 — コード検査の指摘を解消 — 2026-11-01
+
+- 前回のClippy指摘9件を解消しました。不要なString変換と入れ子ifを整理し、複数ディスプレイのキャプチャ型に名前を付け、モザイク平均計算のゼロ除算防止をNonZeroU64で表しました。動画書き出しは時刻範囲と画像寸法を引数としてまとめ、メニュー追加処理は完成したラベルを受け取るよう整理しました。
+- `cargo test --all-targets --locked -- --include-ignored` は113件全て成功（FFmpegの実書き出し結合テストを含む）。`cargo clippy --all-targets --locked -- -D warnings`、Windows x64 GNU `cargo check --all-targets --locked`、macOS `cargo build --release --locked`、整形・差分検査が成功しました。vendor/xcapの既存非推奨API警告3件は残っています。今回の成果物は `target/release/macshot` で、インストール済みアプリは置き換えていません。
+- この検証では機能UIの新しい実機合格を追加していません。前節の動画編集UI、各録画対象・形式、4言語の追加表示、Windows実機などの未確認範囲を維持します。
+
+## 全機能監査をv1.8.0で再開 — 2026-11-01
+
+- 対象はHEAD `ebae02e`、起動中の `/Applications/MacShot.app` v1.8.0です。既存112テストは全件成功し、インストール済みアプリの署名・プライバシー説明文検査が成功しました。旧v1.0.0の確認表は現行版全体の証明には使いません。
+- 合成した4秒H.264/AAC動画を証跡一覧から開き、映像の表示とEscでの本体復帰を確認しました。画面録画ページの「更新」は一覧を再読込し、テスト動画を移動すると10件から9件に戻りました。テスト素材は `output/qa-audit-20261101/qa-audit-video-editor-20261101.mp4` に移し、ユーザーの画像・録画は編集していません。
+- FFmpegを実行する結合テスト `edited_video_export_trims_adds_overlay_and_preserves_audio_and_source` を追加し、明示実行して成功しました。実際の書き出し関数で3秒素材の1〜2秒を切り抜き、約1秒のMP4、赤枠の映像画素、AACとデコード後の非無音PCM、元ファイルのバイト保持、再書き出し時の別名保存、一時overlayファイル削除を検証しました。FFmpeg依存のため通常テストではignoreされ、`cargo test --locked edited_video_export_trims_adds_overlay_and_preserves_audio_and_source -- --ignored` で実行します。これはMac環境での書き出し処理の証拠で、編集UI全操作・Windows経路は未確認です。
+- `cargo fmt --all -- --check` と `git diff --check` は成功。Clippyの警告エラー扱い検査は既存製品コードに9件の指摘（複雑な型、引数数、手動除算チェック、不要な変換、入れ子if）があり失敗しました。vendor/xcapにも非推奨API警告があります。
+- 次の現行版確認: 動画編集UIからの書き出し、追加注釈と上書き保存、録画モード・対象・音声設定の実出力、メニューバー操作、権限変更後の再起動案内、4言語の新規表示。Windows実機も未確認です。今回の変更は検証用コードとこの記録のみで、アプリ更新・公開・commit・pushはしていません。
+
 ## v1.8.0 Release — 2026-11-01
 
 - 画面収録の許可が実行中に有効になったことを検知すると、MacShotの再起動確認を表示します。「あとで」を選んだ場合は設定画面から再表示できます。録画中は停止・保存を待ってから再起動します。権限案内も確認後に再起動する説明へ統一しました。

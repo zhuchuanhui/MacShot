@@ -229,6 +229,7 @@ struct MacShot {
     monitors: Vec<Monitor>,
     windows: Vec<WindowChoice>,
     window_search_query: String,
+    recording_window_search_query: String,
     capture_target_popup_was_open: bool,
     capture_target: CaptureTarget,
     recording_target: CaptureTarget,
@@ -406,8 +407,8 @@ struct MacShot {
     right_texture: Option<egui::TextureHandle>,
     diff_texture: Option<egui::TextureHandle>,
     overlay_texture: Option<egui::TextureHandle>,
-    mosaic_preview_texture: Option<egui::TextureHandle>,
-    mosaic_preview_key: Option<(Vec<Annotation>, Option<PathBuf>)>,
+    annotation_preview_texture: Option<egui::TextureHandle>,
+    annotation_preview_key: Option<AnnotationPreviewKey>,
     crop_selection: Option<egui::Rect>,
     crop_drag_start: Option<egui::Pos2>,
     edit_tool: EditTool,
@@ -537,6 +538,15 @@ enum EditTool {
     Text,
     Timestamp,
     Mosaic,
+}
+
+#[derive(PartialEq)]
+struct AnnotationPreviewKey {
+    annotations: Vec<Annotation>,
+    path: Option<PathBuf>,
+    color: [u8; 3],
+    line_width: f32,
+    timestamp_background: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -671,19 +681,28 @@ impl AppLanguage {
             "画像を拡大して編集" => {
                 ["Enlarged Image Editor", "放大图片并编辑", "放大圖片並編輯"]
             }
-            "スクリーンショットの撮影対象" => {
-                ["◉ Screenshot Target", "◉ 截图目标", "◉ 螢幕截圖目標"]
-            }
-            "画面録画の対象" => [
-                "● Screen Recording Target",
-                "● 屏幕录制目标",
-                "● 螢幕錄影目標",
+            "選択中のスクショ対象" => [
+                "◉ Selected Screenshot Target",
+                "◉ 当前截图目标",
+                "◉ 目前截圖目標",
+            ],
+            "選択中の録画対象" => [
+                "● Selected Recording Target",
+                "● 当前录制目标",
+                "● 目前錄影目標",
             ],
             "ショートカットの動作" => ["Shortcut Behavior", "快捷键行为", "快速鍵行為"],
             "この対象を撮影" => ["Capture This Target", "截取此目标", "擷取此目標"],
-            "撮影対象選択を優先" => {
-                ["Prioritize Selected Target", "优先所选目标", "優先所選目標"]
-            }
+            "選択モード即スクショ" => [
+                "Capture Selected Target Immediately",
+                "立即截取所选目标",
+                "立即擷取所選目標",
+            ],
+            "スクリーンショット対象選択優先" => [
+                "Prioritize Screenshot Target",
+                "优先选择截图目标",
+                "優先選擇螢幕截圖目標",
+            ],
             "各モード優先" => [
                 "Choose a Capture Mode",
                 "优先选择截图模式",
@@ -699,10 +718,15 @@ impl AppLanguage {
                 "按下快捷键后选择截图模式。",
                 "按下快速鍵後選擇截圖模式。",
             ],
-            "録画対象選択を優先" => [
-                "Prioritize Selected Recording Target",
-                "优先所选录制目标",
-                "優先所選錄影目標",
+            "選択モード即録画" => [
+                "Record Selected Target Immediately",
+                "立即录制所选目标",
+                "立即錄製所選目標",
+            ],
+            "録画対象選択優先" => [
+                "Prioritize Recording Target",
+                "优先选择录制目标",
+                "優先選擇錄影目標",
             ],
             "録画方法優先" => [
                 "Choose a Recording Mode",
@@ -2856,7 +2880,7 @@ impl AppLanguage {
         match (self, key) {
             (Self::Japanese, "show") => "MacShotを開く",
             (Self::Japanese, "capture") => "スクリーンショット",
-            (Self::Japanese, "capture_section") => "◉  スクリーンショット — 撮影",
+            (Self::Japanese, "capture_section") => "📸  スクリーンショット — 撮影",
             (Self::Japanese, "area") => "範囲を選択して撮影…",
             (Self::Japanese, "active") => "アクティブウィンドウを撮影",
             (Self::Japanese, "primary") => "デスクトップ（メイン画面）を撮影",
@@ -2864,8 +2888,8 @@ impl AppLanguage {
             (Self::Japanese, "window_select") => "ウィンドウを選んで撮影…",
             (Self::Japanese, "selected") => "選択中の撮影対象で撮影",
             (Self::Japanese, "choose_mode") => "撮影方法を選んで撮影…",
-            (Self::Japanese, "shortcut_target") => "撮影対象選択を優先",
-            (Self::Japanese, "shortcut_mode") => "各モード優先",
+            (Self::Japanese, "shortcut_target") => "選択モード即スクショ",
+            (Self::Japanese, "shortcut_mode") => "スクリーンショット対象選択優先",
             (Self::Japanese, "current_target") => "現在のスクリーンショット対象",
             (Self::Japanese, "target_menu") => "スクリーンショット対象を選択",
             (Self::Japanese, "continuous_start") => "連続撮影を開始",
@@ -2874,11 +2898,11 @@ impl AppLanguage {
             (Self::Japanese, "capture_stopped") => "連続撮影 — 停止中",
             (Self::Japanese, "record_time") => "録画時間 00:00",
             (Self::Japanese, "recording") => "録画中",
-            (Self::Japanese, "recording_section") => "●  画面録画 — 動画撮影",
+            (Self::Japanese, "recording_section") => "🎥  画面録画 — 動画撮影",
             (Self::Japanese, "record_start") => "選択中の録画対象で録画",
             (Self::Japanese, "record_choose_mode") => "録画方法を選んで録画…",
-            (Self::Japanese, "record_shortcut_target") => "録画対象選択を優先",
-            (Self::Japanese, "record_shortcut_mode") => "録画方法優先",
+            (Self::Japanese, "record_shortcut_target") => "選択モード即録画",
+            (Self::Japanese, "record_shortcut_mode") => "録画対象選択優先",
             (Self::Japanese, "record_stop") => "録画を停止",
             (Self::Japanese, "record_target") => "録画対象を選択",
             (Self::Japanese, "record_current_target") => "現在の録画対象",
@@ -2896,7 +2920,7 @@ impl AppLanguage {
             (Self::Japanese, "quit") => "終了",
             (Self::English, "show") => "Open MacShot",
             (Self::English, "capture") => "Screenshot",
-            (Self::English, "capture_section") => "◉  SCREENSHOT — CAPTURE",
+            (Self::English, "capture_section") => "📸  SCREENSHOT — CAPTURE",
             (Self::English, "area") => "Select Region…",
             (Self::English, "active") => "Capture Active Window",
             (Self::English, "primary") => "Capture Desktop (Main Display)",
@@ -2904,7 +2928,7 @@ impl AppLanguage {
             (Self::English, "window_select") => "Click a Window to Capture…",
             (Self::English, "selected") => "Capture Selected Target",
             (Self::English, "choose_mode") => "Choose a Capture Mode…",
-            (Self::English, "shortcut_target") => "Prioritize Selected Target",
+            (Self::English, "shortcut_target") => "Capture Selected Target Immediately",
             (Self::English, "shortcut_mode") => "Choose a Capture Mode",
             (Self::English, "current_target") => "Current Screenshot Target",
             (Self::English, "target_menu") => "Select Screenshot Target",
@@ -2914,10 +2938,10 @@ impl AppLanguage {
             (Self::English, "capture_stopped") => "Continuous Capture — Stopped",
             (Self::English, "record_time") => "Recording Time 00:00",
             (Self::English, "recording") => "Recording",
-            (Self::English, "recording_section") => "●  SCREEN RECORDING — VIDEO",
+            (Self::English, "recording_section") => "🎥  SCREEN RECORDING — VIDEO",
             (Self::English, "record_start") => "Record Selected Target",
             (Self::English, "record_choose_mode") => "Choose a Recording Mode…",
-            (Self::English, "record_shortcut_target") => "Prioritize Selected Recording Target",
+            (Self::English, "record_shortcut_target") => "Record Selected Target Immediately",
             (Self::English, "record_shortcut_mode") => "Choose a Recording Mode",
             (Self::English, "record_stop") => "Stop Recording",
             (Self::English, "record_target") => "Select Recording Target",
@@ -2936,7 +2960,7 @@ impl AppLanguage {
             (Self::English, "quit") => "Quit",
             (Self::SimplifiedChinese, "show") => "打开 MacShot",
             (Self::SimplifiedChinese, "capture") => "屏幕截图",
-            (Self::SimplifiedChinese, "capture_section") => "◉  屏幕截图 — 截图",
+            (Self::SimplifiedChinese, "capture_section") => "📸  屏幕截图 — 截图",
             (Self::SimplifiedChinese, "area") => "选择区域并截图…",
             (Self::SimplifiedChinese, "active") => "截取活动窗口",
             (Self::SimplifiedChinese, "primary") => "截取桌面（主显示器）",
@@ -2944,7 +2968,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "window_select") => "点选窗口并截图…",
             (Self::SimplifiedChinese, "selected") => "截取所选目标",
             (Self::SimplifiedChinese, "choose_mode") => "选择截图模式…",
-            (Self::SimplifiedChinese, "shortcut_target") => "优先所选目标",
+            (Self::SimplifiedChinese, "shortcut_target") => "立即截取所选目标",
             (Self::SimplifiedChinese, "shortcut_mode") => "优先选择截图模式",
             (Self::SimplifiedChinese, "current_target") => "当前截图目标",
             (Self::SimplifiedChinese, "target_menu") => "选择截图目标",
@@ -2954,10 +2978,10 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "capture_stopped") => "连续截图 — 已停止",
             (Self::SimplifiedChinese, "record_time") => "录制时间 00:00",
             (Self::SimplifiedChinese, "recording") => "正在录制",
-            (Self::SimplifiedChinese, "recording_section") => "●  屏幕录制 — 视频",
+            (Self::SimplifiedChinese, "recording_section") => "🎥  屏幕录制 — 视频",
             (Self::SimplifiedChinese, "record_start") => "录制所选目标",
             (Self::SimplifiedChinese, "record_choose_mode") => "选择录制方式…",
-            (Self::SimplifiedChinese, "record_shortcut_target") => "优先所选录制目标",
+            (Self::SimplifiedChinese, "record_shortcut_target") => "立即录制所选目标",
             (Self::SimplifiedChinese, "record_shortcut_mode") => "优先选择录制方式",
             (Self::SimplifiedChinese, "record_stop") => "停止录制",
             (Self::SimplifiedChinese, "record_target") => "选择录制目标",
@@ -2976,7 +3000,7 @@ impl AppLanguage {
             (Self::SimplifiedChinese, "quit") => "退出",
             (Self::TraditionalChinese, "show") => "開啟 MacShot",
             (Self::TraditionalChinese, "capture") => "螢幕截圖",
-            (Self::TraditionalChinese, "capture_section") => "◉  螢幕截圖 — 擷取",
+            (Self::TraditionalChinese, "capture_section") => "📸  螢幕截圖 — 擷取",
             (Self::TraditionalChinese, "area") => "選取區域並截圖…",
             (Self::TraditionalChinese, "active") => "擷取作用中視窗",
             (Self::TraditionalChinese, "primary") => "擷取桌面（主要顯示器）",
@@ -2984,7 +3008,7 @@ impl AppLanguage {
             (Self::TraditionalChinese, "window_select") => "點選視窗並截圖…",
             (Self::TraditionalChinese, "selected") => "擷取所選目標",
             (Self::TraditionalChinese, "choose_mode") => "選擇截圖模式…",
-            (Self::TraditionalChinese, "shortcut_target") => "優先所選目標",
+            (Self::TraditionalChinese, "shortcut_target") => "立即擷取所選目標",
             (Self::TraditionalChinese, "shortcut_mode") => "優先選擇截圖模式",
             (Self::TraditionalChinese, "current_target") => "目前螢幕截圖目標",
             (Self::TraditionalChinese, "target_menu") => "選擇螢幕截圖目標",
@@ -2994,10 +3018,10 @@ impl AppLanguage {
             (Self::TraditionalChinese, "capture_stopped") => "連續截圖 — 已停止",
             (Self::TraditionalChinese, "record_time") => "錄製時間 00:00",
             (Self::TraditionalChinese, "recording") => "正在錄製",
-            (Self::TraditionalChinese, "recording_section") => "●  螢幕錄影 — 影片",
+            (Self::TraditionalChinese, "recording_section") => "🎥  螢幕錄影 — 影片",
             (Self::TraditionalChinese, "record_start") => "錄製所選目標",
             (Self::TraditionalChinese, "record_choose_mode") => "選擇錄影方式…",
-            (Self::TraditionalChinese, "record_shortcut_target") => "優先所選錄影目標",
+            (Self::TraditionalChinese, "record_shortcut_target") => "立即錄製所選目標",
             (Self::TraditionalChinese, "record_shortcut_mode") => "優先選擇錄影方式",
             (Self::TraditionalChinese, "record_stop") => "停止錄製",
             (Self::TraditionalChinese, "record_target") => "選擇錄影目標",
@@ -3965,6 +3989,7 @@ impl Default for MacShot {
             monitors,
             windows,
             window_search_query: String::new(),
+            recording_window_search_query: String::new(),
             capture_target_popup_was_open: false,
             capture_target,
             recording_target,
@@ -4142,8 +4167,8 @@ impl Default for MacShot {
             right_texture: None,
             diff_texture: None,
             overlay_texture: None,
-            mosaic_preview_texture: None,
-            mosaic_preview_key: None,
+            annotation_preview_texture: None,
+            annotation_preview_key: None,
             crop_selection: None,
             crop_drag_start: None,
             edit_tool: EditTool::Crop,
@@ -4437,6 +4462,12 @@ fn default_save_folder() -> PathBuf {
     home.join("Pictures").join("MacShot")
 }
 
+#[cfg(test)]
+fn settings_path() -> PathBuf {
+    tests::isolated_settings_path()
+}
+
+#[cfg(not(test))]
 fn settings_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME")
@@ -6845,9 +6876,11 @@ fn recording_target_uses_window_capture(target: CaptureTarget) -> bool {
     )
 }
 
+type PositionedDisplayCapture = (i32, i32, u32, u32, f32, DisplayCapture);
+
 struct RecordingCapture {
     display: Option<DisplayCapture>,
-    displays: Option<Vec<(i32, i32, u32, u32, f32, DisplayCapture)>>,
+    displays: Option<Vec<PositionedDisplayCapture>>,
     region: Option<[f32; 4]>,
     #[cfg(target_os = "macos")]
     window: Option<WindowRecordingCapture>,
@@ -7892,7 +7925,7 @@ fn draw_annotation(
                             count += 1;
                         }
                     }
-                    if count > 0 {
+                    if let Some(count) = std::num::NonZeroU64::new(count) {
                         let average = Rgba([
                             (totals[0] / count) as u8,
                             (totals[1] / count) as u8,
@@ -7937,15 +7970,15 @@ fn annotated_image(
 
 fn export_edited_recording(
     source: &Path,
-    start_seconds: f64,
-    end_seconds: f64,
-    width: u32,
-    height: u32,
+    time_range: std::ops::Range<f64>,
+    dimensions: (u32, u32),
     annotations: &[Annotation],
     color: [u8; 3],
     annotation_width: f32,
     timestamp_background: &str,
 ) -> Result<PathBuf, String> {
+    let (start_seconds, end_seconds) = (time_range.start, time_range.end);
+    let (width, height) = dimensions;
     if end_seconds <= start_seconds || width == 0 || height == 0 {
         return Err("切り抜きの開始・終了時刻を確認してください。".into());
     }
@@ -8179,7 +8212,7 @@ fn tray_capture_method_label(
     selected: bool,
     hotkey: &str,
 ) -> String {
-    let marker = if selected { "✓ " } else { "" };
+    let marker = tray_selection_marker(language, selected);
     let shortcut = if selected && !hotkey.is_empty() {
         format!("  ({})", hotkey_badge_text(hotkey))
     } else {
@@ -8188,10 +8221,18 @@ fn tray_capture_method_label(
     format!("{marker}{}{shortcut}", language.tray_label(label_key))
 }
 
+fn tray_selection_marker(language: AppLanguage, selected: bool) -> String {
+    if selected {
+        format!("🟣 {}  ·  ", language.text("選択中"))
+    } else {
+        String::new()
+    }
+}
+
 fn tray_audio_setting_label(language: AppLanguage, key: &str, enabled: bool) -> String {
     format!(
         "{}{}: {}",
-        if enabled { "✓  " } else { "    " },
+        if enabled { "🟢 " } else { "⚪ " },
         language.tray_label(key),
         language.text(if enabled { "オン" } else { "オフ" })
     )
@@ -8227,7 +8268,7 @@ fn tray_target_choice_label(
             .unwrap_or_else(|| language.text("Window")),
     };
     if selected {
-        format!("✓ {label}")
+        format!("{}{}", tray_selection_marker(language, true), label)
     } else {
         label
     }
@@ -8238,17 +8279,9 @@ fn append_tray_target_item(
     items: &mut Vec<(MenuItem, CaptureTarget)>,
     id: String,
     target: CaptureTarget,
-    selected: CaptureTarget,
-    language: AppLanguage,
-    monitors: &[Monitor],
-    windows: &[WindowChoice],
+    label: String,
 ) -> Result<(), String> {
-    let item = MenuItem::with_id(
-        id,
-        tray_target_choice_label(language, target, selected == target, monitors, windows),
-        true,
-        None,
-    );
+    let item = MenuItem::with_id(id, label, true, None);
     submenu.append(&item).map_err(|error| error.to_string())?;
     items.push((item, target));
     Ok(())
@@ -8275,10 +8308,7 @@ fn build_tray_target_submenu(
             &mut items,
             format!("{item_prefix}.{id}"),
             target,
-            selected,
-            language,
-            monitors,
-            windows,
+            tray_target_choice_label(language, target, selected == target, monitors, windows),
         )?;
     }
 
@@ -8292,10 +8322,13 @@ fn build_tray_target_submenu(
                 &mut items,
                 format!("{item_prefix}.display.{index}"),
                 CaptureTarget::Display(index),
-                selected,
-                language,
-                monitors,
-                windows,
+                tray_target_choice_label(
+                    language,
+                    CaptureTarget::Display(index),
+                    selected == CaptureTarget::Display(index),
+                    monitors,
+                    windows,
+                ),
             )?;
         }
     }
@@ -8310,10 +8343,13 @@ fn build_tray_target_submenu(
                 &mut items,
                 format!("{item_prefix}.window.{}", window.id),
                 CaptureTarget::Window(window.id),
-                selected,
-                language,
-                monitors,
-                windows,
+                tray_target_choice_label(
+                    language,
+                    CaptureTarget::Window(window.id),
+                    selected == CaptureTarget::Window(window.id),
+                    monitors,
+                    windows,
+                ),
             )?;
         }
     }
@@ -9189,7 +9225,7 @@ impl MacShot {
         let capture_target_item = MenuItem::with_id(
             "macshot.capture.target",
             format!(
-                "{}: {}",
+                "📸 🎯 {}: {}",
                 self.language.tray_label("current_target"),
                 self.target_caption()
             ),
@@ -9214,7 +9250,7 @@ impl MacShot {
         let recording_target_item = MenuItem::with_id(
             "macshot.recording.current-target",
             format!(
-                "{}: {}",
+                "🎥 🎯 {}: {}",
                 self.language.tray_label("record_current_target"),
                 tray_target_choice_label(
                     self.language,
@@ -9295,11 +9331,10 @@ impl MacShot {
             "macshot.capture.shortcut-target",
             format!(
                 "{}{}",
-                if self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
+                ),
                 self.language.tray_label("shortcut_target")
             ),
             true,
@@ -9309,11 +9344,10 @@ impl MacShot {
             "macshot.capture.shortcut-mode",
             format!(
                 "{}{}",
-                if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                ),
                 self.language.tray_label("shortcut_mode")
             ),
             true,
@@ -9377,11 +9411,10 @@ impl MacShot {
             "macshot.recording.shortcut-target",
             format!(
                 "{}{}",
-                if self.recording_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.recording_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
+                ),
                 self.language.tray_label("record_shortcut_target")
             ),
             recording_target_enabled,
@@ -9391,11 +9424,10 @@ impl MacShot {
             "macshot.recording.shortcut-mode",
             format!(
                 "{}{}",
-                if self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                ),
                 self.language.tray_label("record_shortcut_mode")
             ),
             recording_target_enabled,
@@ -9457,11 +9489,7 @@ impl MacShot {
                 format!("macshot.recording.profile.{}", profile.setting()),
                 format!(
                     "{}{}",
-                    if self.recording_quality.profile == profile {
-                        "✓  "
-                    } else {
-                        "    "
-                    },
+                    tray_selection_marker(self.language, self.recording_quality.profile == profile,),
                     self.language.text(profile.label())
                 ),
                 recording_target_enabled,
@@ -9484,11 +9512,10 @@ impl MacShot {
                 format!("macshot.recording.resolution.{}", resolution.setting()),
                 format!(
                     "{}{}",
-                    if self.recording_quality.resolution == resolution {
-                        "✓  "
-                    } else {
-                        "    "
-                    },
+                    tray_selection_marker(
+                        self.language,
+                        self.recording_quality.resolution == resolution,
+                    ),
                     self.language.text(resolution.label())
                 ),
                 recording_target_enabled,
@@ -9519,11 +9546,7 @@ impl MacShot {
                 format!("macshot.recording.frame-rate.{frame_rate}"),
                 format!(
                     "{}{} fps",
-                    if selected_frame_rate == *frame_rate {
-                        "✓  "
-                    } else {
-                        "    "
-                    },
+                    tray_selection_marker(self.language, selected_frame_rate == *frame_rate),
                     frame_rate
                 ),
                 recording_target_enabled,
@@ -9580,10 +9603,10 @@ impl MacShot {
         let quit_separator = PredefinedMenuItem::separator();
         let menu = match Menu::with_items(&[
             &show_window_item,
+            &capture_separator,
             &capture_section_item,
             &capture_target_item,
             &target_selection_submenu,
-            &capture_separator,
             &capture_area_item,
             &capture_active_item,
             &capture_primary_item,
@@ -9904,7 +9927,7 @@ impl MacShot {
             return;
         }
         let target_label = format!(
-            "{}{}",
+            "🎥 🎯 {}{}",
             self.language.text("現在の録画対象: "),
             tray_target_choice_label(
                 self.language,
@@ -9956,11 +9979,7 @@ impl MacShot {
         for (item, profile) in &self.tray_recording_profile_items {
             item.set_text(format!(
                 "{}{}",
-                if self.recording_quality.profile == *profile {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(self.language, self.recording_quality.profile == *profile),
                 self.language.text(profile.label())
             ));
             item.set_enabled(!active);
@@ -9977,11 +9996,10 @@ impl MacShot {
         if let Some(item) = &self.tray_recording_shortcut_target_item {
             item.set_text(format!(
                 "{}{}",
-                if self.recording_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.recording_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
+                ),
                 self.language.tray_label("record_shortcut_target")
             ));
             item.set_enabled(!active);
@@ -9989,11 +10007,10 @@ impl MacShot {
         if let Some(item) = &self.tray_recording_shortcut_mode_item {
             item.set_text(format!(
                 "{}{}",
-                if self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                ),
                 self.language.tray_label("record_shortcut_mode")
             ));
             item.set_enabled(!active);
@@ -10001,11 +10018,10 @@ impl MacShot {
         for (item, resolution) in &self.tray_recording_resolution_items {
             item.set_text(format!(
                 "{}{}",
-                if self.recording_quality.resolution == *resolution {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(
+                    self.language,
+                    self.recording_quality.resolution == *resolution,
+                ),
                 self.language.text(resolution.label())
             ));
             item.set_enabled(!active);
@@ -10013,11 +10029,7 @@ impl MacShot {
         for (item, frame_rate) in &self.tray_recording_frame_rate_items {
             item.set_text(format!(
                 "{}{} fps",
-                if selected_frame_rate == *frame_rate {
-                    "✓  "
-                } else {
-                    "    "
-                },
+                tray_selection_marker(self.language, selected_frame_rate == *frame_rate),
                 frame_rate
             ));
             item.set_enabled(!active);
@@ -10046,7 +10058,7 @@ impl MacShot {
     fn update_tray_capture_target(&mut self) {
         let selected_target = self.target_caption();
         let status_label = format!(
-            "{}: {}",
+            "📸 🎯 {}: {}",
             self.language.tray_label("current_target"),
             selected_target
         );
@@ -10099,22 +10111,20 @@ impl MacShot {
             if let Some(item) = &self.tray_capture_shortcut_target_item {
                 item.set_text(format!(
                     "{}{}",
-                    if self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget {
-                        "✓  "
-                    } else {
-                        "    "
-                    },
+                    tray_selection_marker(
+                        self.language,
+                        self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
+                    ),
                     self.language.tray_label("shortcut_target")
                 ));
             }
             if let Some(item) = &self.tray_capture_shortcut_mode_item {
                 item.set_text(format!(
                     "{}{}",
-                    if self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
-                        "✓  "
-                    } else {
-                        "    "
-                    },
+                    tray_selection_marker(
+                        self.language,
+                        self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                    ),
                     self.language.tray_label("shortcut_mode")
                 ));
             }
@@ -10341,8 +10351,8 @@ impl MacShot {
                 self.status = format!(
                     "ショートカットの動作を「{}」に変更しました。",
                     self.language.text(match behavior {
-                        CaptureShortcutBehavior::SelectedTarget => "撮影対象選択を優先",
-                        CaptureShortcutBehavior::ChooseMode => "各モード優先",
+                        CaptureShortcutBehavior::SelectedTarget => "選択モード即スクショ",
+                        CaptureShortcutBehavior::ChooseMode => "スクリーンショット対象選択優先",
                     })
                 );
             }
@@ -10787,8 +10797,8 @@ impl MacShot {
                 self.status = format!(
                     "録画ショートカットの動作を「{}」に変更しました。",
                     self.language.text(match behavior {
-                        CaptureShortcutBehavior::SelectedTarget => "録画対象選択を優先",
-                        CaptureShortcutBehavior::ChooseMode => "録画方法優先",
+                        CaptureShortcutBehavior::SelectedTarget => "選択モード即録画",
+                        CaptureShortcutBehavior::ChooseMode => "録画対象選択優先",
                     })
                 );
             }
@@ -11337,8 +11347,7 @@ impl MacShot {
             self.region_select_for_recording = false;
             self.status = self
                 .language
-                .text("編集内容を保存するか消去してから撮影してください。")
-                .into();
+                .text("編集内容を保存するか消去してから撮影してください。");
             return;
         }
         if self.recording || self.recording_starting || self.capture_in_progress {
@@ -11771,8 +11780,7 @@ impl MacShot {
         if self.has_pending_edit() {
             self.status = self
                 .language
-                .text("編集内容を保存するか消去してから撮影してください。")
-                .into();
+                .text("編集内容を保存するか消去してから撮影してください。");
             return;
         }
         let active_window_request = matches!(target, CaptureTarget::ActiveWindow);
@@ -11797,17 +11805,18 @@ impl MacShot {
             );
             return;
         }
-        if !interactive_window_selection && !active_window_request {
-            if let Some(message) = capture_target_preflight_error(
+        if !interactive_window_selection
+            && !active_window_request
+            && let Some(message) = capture_target_preflight_error(
                 target,
                 self.recording,
                 self.recording_starting,
                 self.monitors.len(),
                 &self.windows,
-            ) {
-                self.report_capture_failure(message);
-                return;
-            }
+            )
+        {
+            self.report_capture_failure(message);
+            return;
         }
 
         self.capture_sequence += 1;
@@ -12177,8 +12186,8 @@ impl MacShot {
         }
         self.left_image = Some(DynamicImage::ImageRgba8(output));
         self.left_texture = None;
-        self.mosaic_preview_texture = None;
-        self.mosaic_preview_key = None;
+        self.annotation_preview_texture = None;
+        self.annotation_preview_key = None;
         self.annotations.clear();
         self.live_annotation = None;
         self.refresh_diff();
@@ -12494,8 +12503,8 @@ impl MacShot {
                             .clamp(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                     }
                     self.annotation_move_origin = Some(point);
-                    self.mosaic_preview_key = None;
-                    self.mosaic_preview_texture = None;
+                    self.annotation_preview_key = None;
+                    self.annotation_preview_texture = None;
                 }
                 if response.drag_stopped() {
                     self.annotation_move_index = None;
@@ -12599,39 +12608,44 @@ impl MacShot {
             }
         }
 
-        let mosaic_annotations: Vec<_> = self
+        let preview_annotations: Vec<_> = self
             .annotations
             .iter()
             .chain(self.live_annotation.iter())
-            .filter(|annotation| annotation.tool == EditTool::Mosaic)
             .cloned()
             .collect();
-        if mosaic_annotations.is_empty() {
-            self.mosaic_preview_key = None;
-            self.mosaic_preview_texture = None;
+        if preview_annotations.is_empty() {
+            self.annotation_preview_key = None;
+            self.annotation_preview_texture = None;
         } else {
-            let cache_key = (mosaic_annotations.clone(), self.left_path.clone());
-            if self.mosaic_preview_key.as_ref() != Some(&cache_key)
-                || self.mosaic_preview_texture.is_none()
+            let cache_key = AnnotationPreviewKey {
+                annotations: preview_annotations.clone(),
+                path: self.left_path.clone(),
+                color: annotation_rgb(&self.annotation_color),
+                line_width: self.annotation_width,
+                timestamp_background: self.timestamp_background.clone(),
+            };
+            if self.annotation_preview_key.as_ref() != Some(&cache_key)
+                || self.annotation_preview_texture.is_none()
             {
                 let preview = annotated_image(
                     image,
-                    &mosaic_annotations,
+                    &preview_annotations,
                     annotation_rgb(&self.annotation_color),
                     self.annotation_width,
                     &self.timestamp_background,
                 );
                 let color = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
-                self.mosaic_preview_texture = Some(ui.ctx().load_texture(
-                    "mosaic-annotation-preview",
+                self.annotation_preview_texture = Some(ui.ctx().load_texture(
+                    "annotation-preview",
                     color,
                     egui::TextureOptions::LINEAR,
                 ));
-                self.mosaic_preview_key = Some(cache_key);
+                self.annotation_preview_key = Some(cache_key);
             }
         }
         let preview_texture = self
-            .mosaic_preview_texture
+            .annotation_preview_texture
             .as_ref()
             .or(self.left_texture.as_ref())
             .expect("capture preview texture is initialized");
@@ -12668,87 +12682,6 @@ impl MacShot {
                 egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(25, 125, 255)),
                 egui::StrokeKind::Inside,
             );
-        }
-        for annotation in self.annotations.iter().chain(self.live_annotation.iter()) {
-            let start = rect.min
-                + egui::vec2(
-                    annotation.start.x * rect.width(),
-                    annotation.start.y * rect.height(),
-                );
-            let end = rect.min
-                + egui::vec2(
-                    annotation.end.x * rect.width(),
-                    annotation.end.y * rect.height(),
-                );
-            let rgb = annotation_rgb(&self.annotation_color);
-            let stroke = egui::Stroke::new(
-                self.annotation_width,
-                egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-            );
-            match annotation.tool {
-                EditTool::Rectangle => {
-                    ui.painter().rect_stroke(
-                        egui::Rect::from_two_pos(start, end),
-                        0.0,
-                        stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                }
-                EditTool::Ellipse => {
-                    let bounds = egui::Rect::from_two_pos(start, end);
-                    let points: Vec<_> = (0..=48)
-                        .map(|step| {
-                            let angle = std::f32::consts::TAU * step as f32 / 48.0;
-                            egui::pos2(
-                                bounds.center().x + bounds.width() * 0.5 * angle.cos(),
-                                bounds.center().y + bounds.height() * 0.5 * angle.sin(),
-                            )
-                        })
-                        .collect();
-                    ui.painter().add(egui::Shape::line(points, stroke));
-                }
-                EditTool::Arrow => {
-                    ui.painter().line_segment([start, end], stroke);
-                    let angle = (end.y - start.y).atan2(end.x - start.x);
-                    let head = 14.0 * (self.annotation_width / 3.0);
-                    for side in [-0.55_f32, 0.55_f32] {
-                        let head_angle = angle + std::f32::consts::PI + side;
-                        let tip =
-                            end + egui::vec2(head * head_angle.cos(), head * head_angle.sin());
-                        ui.painter().line_segment([end, tip], stroke);
-                    }
-                }
-                EditTool::Text => {
-                    ui.painter().text(
-                        start,
-                        egui::Align2::LEFT_TOP,
-                        &annotation.text,
-                        egui::FontId::proportional(18.0 * (self.annotation_width / 3.0)),
-                        egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-                    );
-                }
-                EditTool::Timestamp => {
-                    let galley = ui.painter().layout_no_wrap(
-                        annotation.text.clone(),
-                        egui::FontId::proportional(15.0),
-                        egui::Color32::WHITE,
-                    );
-                    let padding = egui::vec2(5.0, 3.0);
-                    let label_rect =
-                        egui::Rect::from_min_size(start - padding, galley.size() + padding * 2.0);
-                    ui.painter().rect_filled(
-                        label_rect,
-                        3.0,
-                        egui::Color32::from_black_alpha(timestamp_background_alpha(
-                            &self.timestamp_background,
-                        )),
-                    );
-                    ui.painter().galley(start, galley, egui::Color32::WHITE);
-                }
-                EditTool::Mosaic => {}
-                EditTool::Crop => {}
-                EditTool::Select => {}
-            }
         }
         if let Some(annotation) = self
             .selected_annotation
@@ -13350,16 +13283,15 @@ impl MacShot {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(self.language.text("スクリーンショットの撮影対象")).size(11.0).color(TEXT_MUTED));
+                        ui.label(egui::RichText::new(self.language.text("選択中のスクショ対象")).size(11.0).color(TEXT_MUTED));
                         ui.add_space(4.0);
                         let target_popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
                         let combo_id = ui.make_persistent_id("capture_target");
                         let popup_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
-                        if popup_open && !self.capture_target_popup_was_open {
-                            if let Ok(windows) = discover_windows() {
+                        if popup_open && !self.capture_target_popup_was_open
+                            && let Ok(windows) = discover_windows() {
                                 self.windows = windows;
                             }
-                        }
                         self.capture_target_popup_was_open = popup_open;
                         ui.add_space(6.0);
                         ui.horizontal_wrapped(|ui| {
@@ -13473,14 +13405,14 @@ impl MacShot {
                     );
                     let target_priority = ui.selectable_label(
                         self.capture_shortcut_behavior == CaptureShortcutBehavior::SelectedTarget,
-                        self.language.text("撮影対象選択を優先"),
+                        self.language.text("選択モード即スクショ"),
                     );
                     if target_priority.clicked() {
                         self.set_capture_shortcut_behavior(CaptureShortcutBehavior::SelectedTarget);
                     }
                     let mode_priority = ui.selectable_label(
                         self.capture_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
-                        self.language.text("各モード優先"),
+                        self.language.text("スクリーンショット対象選択優先"),
                     );
                     if mode_priority.clicked() {
                         self.set_capture_shortcut_behavior(CaptureShortcutBehavior::ChooseMode);
@@ -14011,6 +13943,39 @@ impl MacShot {
         self.status.clear();
     }
 
+    fn open_recording_editor(&mut self, path: &Path) {
+        let Some(duration) = recording_duration(path).filter(|duration| !duration.is_zero()) else {
+            self.status = self.language.text("録画情報を読み込めません");
+            return;
+        };
+        match recording_preview(path) {
+            Ok((preview, _)) => {
+                self.close_recording_player();
+                let duration_seconds = duration.as_secs_f64();
+                self.recording_edit_dialog = Some(RecordingEditDialog {
+                    path: path.to_path_buf(),
+                    preview,
+                    texture: None,
+                    duration_seconds,
+                    start_seconds: 0.0,
+                    end_seconds: duration_seconds,
+                    tool: EditTool::Select,
+                    annotations: Vec::new(),
+                    live_annotation: None,
+                    drag_start: None,
+                    text: self.annotation_text.clone(),
+                    error: None,
+                });
+            }
+            Err(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language.text("録画情報を読み込めません")
+                );
+            }
+        }
+    }
+
     fn show_capture_editor_viewport(&mut self, ctx: &egui::Context) {
         if !self.capture_editor_expanded {
             return;
@@ -14407,34 +14372,35 @@ impl MacShot {
         if !open {
             self.recording_edit_dialog = None;
         }
-        if export && !self.recording_exporting {
-            if let Some(dialog) = &self.recording_edit_dialog {
-                let source = dialog.path.clone();
-                let start = dialog.start_seconds;
-                let end = dialog.end_seconds;
-                let width = dialog.preview.width();
-                let height = dialog.preview.height();
-                let annotations = dialog.annotations.clone();
-                let color = annotation_rgb(&self.annotation_color);
-                let line_width = self.annotation_width;
-                let timestamp_background = self.timestamp_background.clone();
-                let sender = self.recording_export_tx.clone();
-                self.recording_exporting = true;
-                thread::spawn(move || {
-                    let result = export_edited_recording(
-                        &source,
-                        start,
-                        end,
-                        width,
-                        height,
-                        &annotations,
-                        color,
-                        line_width,
-                        &timestamp_background,
-                    );
-                    let _ = sender.send(result);
-                });
-            }
+        if export
+            && !self.recording_exporting
+            && let Some(dialog) = &self.recording_edit_dialog
+        {
+            let source = dialog.path.clone();
+            let start = dialog.start_seconds;
+            let end = dialog.end_seconds;
+            let width = dialog.preview.width();
+            let height = dialog.preview.height();
+            let annotations = dialog.annotations.clone();
+            let color = annotation_rgb(&self.annotation_color);
+            let line_width = self.annotation_width;
+            let timestamp_background = self.timestamp_background.clone();
+            let sender = self.recording_export_tx.clone();
+            let repaint = ctx.clone();
+            self.recording_exporting = true;
+            thread::spawn(move || {
+                let result = export_edited_recording(
+                    &source,
+                    start..end,
+                    (width, height),
+                    &annotations,
+                    color,
+                    line_width,
+                    &timestamp_background,
+                );
+                let _ = sender.send(result);
+                repaint.request_repaint();
+            });
         }
     }
 
@@ -14714,6 +14680,7 @@ impl MacShot {
                             }
                             if ui.button(self.language.text("切り抜き・注釈")).clicked() {
                                 open_editor = true;
+                                player_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                                         });
                         // Keep seeking at the bottom edge of the video so it remains the primary control.
@@ -14762,31 +14729,8 @@ impl MacShot {
                 player_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
-        if open_editor
-            && let (Some(preview), Some(playback)) = (
-                self.recording_preview_image.clone(),
-                self.recording_playback.as_mut(),
-            )
-        {
-            playback.playing = false;
-            if let Some(player) = &playback.audio_player {
-                player.pause();
-            }
-            let duration_seconds = playback.duration.as_secs_f64().max(0.1);
-            self.recording_edit_dialog = Some(RecordingEditDialog {
-                path: path.clone(),
-                preview,
-                texture: None,
-                duration_seconds,
-                start_seconds: 0.0,
-                end_seconds: duration_seconds,
-                tool: EditTool::Select,
-                annotations: Vec::new(),
-                live_annotation: None,
-                drag_start: None,
-                text: self.annotation_text.clone(),
-                error: None,
-            });
+        if open_editor {
+            self.open_recording_editor(&path);
         }
         if close {
             self.close_recording_player();
@@ -15035,7 +14979,7 @@ impl MacShot {
         }
     }
 
-    fn show_recording_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn show_recording_page(&mut self, ui: &mut egui::Ui) {
         let language = self.language;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         ui.horizontal(|ui| {
@@ -15067,48 +15011,53 @@ impl MacShot {
         });
         ui.add_space(14.0);
         glass_frame().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(language.text("画面録画の対象"))
-                            .size(11.0)
-                            .color(TEXT_MUTED),
-                    );
-                    let previous_target = self.recording_target;
-                    egui::ComboBox::from_id_salt("recording_page_target")
-                        .selected_text(tray_target_choice_label(
-                            language,
-                            self.recording_target,
-                            false,
-                            &self.monitors,
-                            &self.windows,
-                        ))
-                        .width(320.0)
-                        .height((ui.ctx().content_rect().height() * 0.7).min(680.0))
-                        .show_ui(ui, |ui| {
-                            for (target, label) in [
-                                (
-                                    CaptureTarget::ActiveWindow,
-                                    language.text("アクティブウィンドウ"),
-                                ),
-                                (
-                                    CaptureTarget::PrimaryDisplay,
-                                    language.text("デスクトップ（メイン画面）"),
-                                ),
-                                (
-                                    CaptureTarget::AllDisplays,
-                                    language.text("全画面（全ディスプレイ）"),
-                                ),
-                            ] {
-                                selectable_capture_target(
-                                    ui,
-                                    &mut self.recording_target,
-                                    target,
-                                    label,
-                                );
-                            }
-                            if !self.monitors.is_empty() {
-                                ui.separator();
+            ui.vertical(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(language.text("選択中の録画対象"))
+                                .size(11.0)
+                                .color(TEXT_MUTED),
+                        );
+                        ui.add_space(4.0);
+                        let popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
+                        let previous_target = self.recording_target;
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                egui::RichText::new(language.text("ウィンドウ検索"))
+                                    .size(11.0)
+                                    .color(TEXT_MUTED),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.recording_window_search_query)
+                                    .desired_width(280.0)
+                                    .hint_text(language.text("アプリ名・ウィンドウ名を検索")),
+                            );
+                        });
+                        egui::ComboBox::from_id_salt("recording_page_target")
+                            .selected_text(tray_target_choice_label(
+                                language,
+                                self.recording_target,
+                                false,
+                                &self.monitors,
+                                &self.windows,
+                            ))
+                            .width(320.0)
+                            .height(popup_height)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show_ui(ui, |ui| {
+                                for (target, label) in [
+                                    (CaptureTarget::ActiveWindow, "アクティブウィンドウ"),
+                                    (CaptureTarget::PrimaryDisplay, "デスクトップ（メイン画面）"),
+                                    (CaptureTarget::AllDisplays, "全画面（全ディスプレイ）"),
+                                ] {
+                                    selectable_capture_target(
+                                        ui,
+                                        &mut self.recording_target,
+                                        target,
+                                        language.text(label),
+                                    );
+                                }
                                 for index in 0..self.monitors.len() {
                                     let name = self.monitors[index].name().unwrap_or_else(|_| {
                                         format!("{} {}", language.text("Display"), index + 1)
@@ -15120,39 +15069,101 @@ impl MacShot {
                                         format!("{} — {name}", language.text("Full Display")),
                                     );
                                 }
-                            }
-                            if !self.windows.is_empty() {
+                                let query = self.recording_window_search_query.trim().to_lowercase();
+                                let windows: Vec<_> = self
+                                    .windows
+                                    .iter()
+                                    .filter(|window| window_search_matches(window, &query))
+                                    .cloned()
+                                    .collect();
                                 ui.separator();
-                                for window in &self.windows {
-                                    selectable_capture_target(
-                                        ui,
-                                        &mut self.recording_target,
-                                        CaptureTarget::Window(window.id),
-                                        format!("{} — {}", window.app_name, window.title),
-                                    );
+                                if windows.is_empty() {
+                                    ui.label(language.text("一致するウィンドウがありません"));
+                                }
+                                for window in &windows {
+                                    show_window_choice(ui, &mut self.recording_target, window);
+                                }
+                            });
+                        if self.recording_target != previous_target {
+                            self.select_recording_target(self.recording_target);
+                        }
+                    });
+                    if ui.add(primary_button(language.text("範囲を選んで録画…"))).clicked() {
+                        self.region_select_for_recording = true;
+                        self.begin_region_selection(ui.ctx());
+                    }
+                    let recording = self.recording || self.recording_starting;
+                    let record_label = if recording {
+                        language.text("■  録画を終了")
+                    } else {
+                        language.text("この対象を録画")
+                    };
+                    if ui.add(primary_button(record_label)).clicked() {
+                        if recording {
+                            self.stop_recording();
+                        } else {
+                            self.begin_recording_for_target(ui.ctx(), self.recording_target, None);
+                        }
+                    }
+                    if ui.button(language.text("ウィンドウを選んで録画")).clicked() {
+                        self.open_recording_target_picker(ui.ctx());
+                    }
+                    if ui.button(language.text("↻  ウィンドウ一覧を更新")).clicked() {
+                        match discover_windows() {
+                            Ok(windows) => {
+                                self.windows = windows;
+                                self.reset_tray_menu();
+                                self.status = format!("{}個のウィンドウを確認しました。", self.windows.len());
+                                if matches!(self.recording_target, CaptureTarget::Window(id) if !self.windows.iter().any(|window| window.id == id)) {
+                                    self.select_recording_target(CaptureTarget::PrimaryDisplay);
                                 }
                             }
-                        });
-                    if self.recording_target != previous_target {
-                        match self.save_preferences() {
-                            Ok(()) => {
-                                self.status = language.text("録画対象を保存しました。");
-                                self.reset_tray_menu();
-                            }
-                            Err(error) => {
-                                self.recording_target = previous_target;
-                                self.settings_error =
-                                    Some(format!("録画対象を保存できません: {error}"));
-                            }
+                            Err(error) => self.status = capture_failure_message(&error),
                         }
                     }
                 });
-                ui.vertical(|ui| {
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        egui::RichText::new(language.text("録画設定"))
+                        egui::RichText::new(language.text("ショートカットの動作"))
                             .size(11.0)
                             .color(TEXT_MUTED),
                     );
+                    let target_priority = ui.add_enabled(
+                        !self.recording && !self.recording_starting,
+                        egui::Button::new(language.text("選択モード即録画")).selected(
+                            self.recording_shortcut_behavior
+                                == CaptureShortcutBehavior::SelectedTarget,
+                        ),
+                    );
+                    if target_priority.clicked() {
+                        self.set_recording_shortcut_behavior(CaptureShortcutBehavior::SelectedTarget);
+                    }
+                    let mode_priority = ui.add_enabled(
+                        !self.recording && !self.recording_starting,
+                        egui::Button::new(language.text("録画対象選択優先")).selected(
+                            self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
+                        ),
+                    );
+                    if mode_priority.clicked() {
+                        self.set_recording_shortcut_behavior(CaptureShortcutBehavior::ChooseMode);
+                    }
+                    ui.label(
+                        egui::RichText::new(language.text(match self.recording_shortcut_behavior {
+                            CaptureShortcutBehavior::SelectedTarget => "選択中の録画対象をすぐ録画します",
+                            CaptureShortcutBehavior::ChooseMode => "ショートカット後に録画方法を選びます",
+                        }))
+                        .size(10.0)
+                        .color(TEXT_MUTED),
+                    );
+                });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(language.text("追加の操作")).size(11.0).color(TEXT_MUTED));
+                    if ui.button(language.text("録画設定を開く")).clicked() {
+                        switch_page(&mut self.page, Page::Settings, &mut self.status);
+                    }
+                    ui.separator();
                     ui.label(format!(
                         "{} · {} · {} fps",
                         language.text(self.recording_format.label()),
@@ -15166,86 +15177,16 @@ impl MacShot {
                         ui.label(format!(
                             "{}: {}  ·  {}: {}",
                             language.text("システム音声を録音"),
-                            language.text(if self.record_system_audio {
-                                "オン"
-                            } else {
-                                "オフ"
-                            }),
+                            language.text(if self.record_system_audio { "オン" } else { "オフ" }),
                             language.text("マイク音声を録音"),
-                            language.text(if self.record_microphone_audio {
-                                "オン"
-                            } else {
-                                "オフ"
-                            }),
+                            language.text(if self.record_microphone_audio { "オン" } else { "オフ" }),
                         ));
                     } else {
                         ui.label(language.text("GIFは音声なしです。"));
                     }
-                    if ui.button(language.text("録画設定を開く")).clicked() {
-                        switch_page(&mut self.page, Page::Settings, &mut self.status);
-                    }
-                    ui.add_space(8.0);
-                    let active = self.recording || self.recording_starting;
-                    if ui
-                        .add_enabled(
-                            !self.capture_in_progress,
-                            primary_button(language.text(if active {
-                                "■  録画を終了"
-                            } else {
-                                "●  録画"
-                            })),
-                        )
-                        .clicked()
-                    {
-                        if active {
-                            self.stop_recording();
-                        } else {
-                            self.toggle_recording(ctx);
-                        }
-                    }
-                });
-                ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new(language.text("ショートカットの動作"))
-                            .size(11.0)
-                            .color(TEXT_MUTED),
-                    );
-                    let target_priority = ui.add_enabled(
-                        !self.recording && !self.recording_starting,
-                        egui::Button::new(language.text("録画対象選択を優先")).selected(
-                            self.recording_shortcut_behavior
-                                == CaptureShortcutBehavior::SelectedTarget,
-                        ),
-                    );
-                    if target_priority.clicked() {
-                        self.set_recording_shortcut_behavior(
-                            CaptureShortcutBehavior::SelectedTarget,
-                        );
-                    }
-                    let mode_priority = ui.add_enabled(
-                        !self.recording && !self.recording_starting,
-                        egui::Button::new(language.text("録画方法優先")).selected(
-                            self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode,
-                        ),
-                    );
-                    if mode_priority.clicked() {
-                        self.set_recording_shortcut_behavior(CaptureShortcutBehavior::ChooseMode);
-                    }
-                    ui.label(
-                        egui::RichText::new(language.text(
-                            match self.recording_shortcut_behavior {
-                                CaptureShortcutBehavior::SelectedTarget => {
-                                    "選択中の録画対象をすぐ録画します"
-                                }
-                                CaptureShortcutBehavior::ChooseMode => {
-                                    "ショートカット後に録画方法を選びます"
-                                }
-                            },
-                        ))
-                        .size(10.0)
-                        .color(TEXT_MUTED),
-                    );
+                    ui.separator();
+                    ui.label(language.text("録画"));
+                    ui.label(hotkey_badge_text(self.recording_hotkey_text.as_str()));
                 });
             });
         });
@@ -15319,9 +15260,19 @@ impl MacShot {
                                         );
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.small_button(language.text("編集")).clicked() {
-                                            self.begin_recording_rename(path.clone());
-                                        }
+                                        ui.menu_button(language.text("編集"), |ui| {
+                                            if ui.add_enabled(
+                                                !self.recording_exporting && self.recording_edit_dialog.is_none() && (!is_native_mov || cfg!(target_os = "macos")),
+                                                egui::Button::new(language.text("切り抜き・注釈")),
+                                            ).clicked() {
+                                                self.open_recording_editor(&path);
+                                                ui.close();
+                                            }
+                                            if ui.button(language.text("録画名を編集")).clicked() {
+                                                self.begin_recording_rename(path.clone());
+                                                ui.close();
+                                            }
+                                        });
                                         if ui
                                             .add_enabled(
                                                 !is_native_mov || cfg!(target_os = "macos"),
@@ -16812,7 +16763,7 @@ impl eframe::App for MacShot {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
                         Page::Capture => self.show_capture_page(ui, ctx),
-                        Page::Recording => self.show_recording_page(ui, ctx),
+                        Page::Recording => self.show_recording_page(ui),
                         Page::Evidence => self.show_evidence_page(ui),
                         Page::Notifications => self.show_notifications_page(ui),
                         Page::Compare => self.show_compare_page(ui),
@@ -17038,6 +16989,142 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        static SETTINGS_DIRECTORY: TestDirectory = TestDirectory::new("isolated-settings");
+    }
+
+    pub(super) fn isolated_settings_path() -> PathBuf {
+        SETTINGS_DIRECTORY.with(|directory| directory.path().join("settings.txt"))
+    }
+
+    #[test]
+    fn notification_history_uses_isolated_storage_and_round_trips_fields() {
+        let path = notifications_path();
+        assert!(path.starts_with(std::env::temp_dir()));
+        assert!(load_notifications().is_empty());
+        let notification = AppNotification {
+            kind: NotificationKind::Capture(7),
+            timestamp: "2026-11-01 12:34:56".into(),
+            path: PathBuf::from("画像 with spaces/測試.png"),
+            width: Some(960),
+            height: Some(640),
+            detail: Some("first\tfield\nsecond % field".into()),
+        };
+        save_notifications(&[notification]).unwrap();
+        let loaded = load_notifications();
+        assert_eq!(loaded.len(), 1);
+        assert!(matches!(loaded[0].kind, NotificationKind::Capture(7)));
+        assert_eq!(loaded[0].path, PathBuf::from("画像 with spaces/測試.png"));
+        assert_eq!(
+            loaded[0].detail.as_deref(),
+            Some("first\tfield\nsecond % field")
+        );
+        assert_eq!((loaded[0].width, loaded[0].height), (Some(960), Some(640)));
+        save_notifications(&[]).unwrap();
+        assert!(load_notifications().is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with libx264; runs an actual annotated MP4 export"]
+    fn edited_video_export_trims_adds_overlay_and_preserves_audio_and_source() {
+        let directory = TestDirectory::new("video-export-integration");
+        let source = directory.path().join("source with spaces.mp4");
+        let fixture = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+            .arg("color=c=black:size=160x120:rate=10")
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"])
+            .args([
+                "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            ])
+            .arg(&source)
+            .output()
+            .expect("FFmpeg must be installed to run this integration test");
+        assert!(
+            fixture.status.success(),
+            "{}",
+            String::from_utf8_lossy(&fixture.stderr)
+        );
+        let original = std::fs::read(&source).unwrap();
+        let annotations = [Annotation {
+            tool: EditTool::Rectangle,
+            start: egui::pos2(0.25, 0.25),
+            end: egui::pos2(0.75, 0.75),
+            text: String::new(),
+        }];
+        let output = export_edited_recording(
+            &source,
+            1.0..2.0,
+            (160, 120),
+            &annotations,
+            [255, 0, 0],
+            12.0,
+            "black",
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(!output.with_extension("overlay.png").exists());
+        let file = std::fs::File::open(&output).unwrap();
+        let size = file.metadata().unwrap().len();
+        let reader = mp4::Mp4Reader::read_header(file, size).unwrap();
+        assert!((reader.duration().as_secs_f64() - 1.0).abs() < 0.15);
+        assert!(
+            reader
+                .tracks()
+                .values()
+                .any(|t| t.media_type().unwrap() == mp4::MediaType::AAC)
+        );
+        let decoded = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(&output)
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .output()
+            .unwrap();
+        assert!(decoded.status.success());
+        assert_eq!(decoded.stdout.len(), 160 * 120 * 3);
+        let red = &decoded.stdout[(31 * 160 + 50) * 3..][..3];
+        assert!(
+            red[0] > 150 && red[1] < 80 && red[2] < 80,
+            "overlay pixel: {red:?}"
+        );
+        let audio = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(&output)
+            .args(["-vn", "-f", "f32le", "-ac", "1", "-ar", "48000", "pipe:1"])
+            .output()
+            .unwrap();
+        assert!(audio.status.success());
+        let samples: Vec<f32> = audio
+            .stdout
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
+            .collect();
+        assert!(samples.len() >= 48_000);
+        assert!(samples.iter().any(|value| value.abs() > 0.05));
+        let first_export = std::fs::read(&output).unwrap();
+        let second = export_edited_recording(
+            &source,
+            0.0..0.5,
+            (160, 120),
+            &[],
+            [255, 0, 0],
+            4.0,
+            "black",
+        )
+        .unwrap();
+        assert_ne!(second, output);
+        assert_eq!(std::fs::read(output).unwrap(), first_export);
+    }
 
     #[test]
     fn app_bundle_path_finds_the_running_app_container() {
