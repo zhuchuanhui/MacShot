@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.10.0 Release — 2026-11-02
+
+- ショートカットをキー入力で簡単登録できるようにし、おすすめ入力、撮影・録画間の重複表示、OSや他アプリとの登録競合時に以前の設定を維持する処理を追加しました。録画一覧の空状態表示も見直しました。利用者向けの操作追加のためminor更新としました。
+- `Cargo.toml` と `Cargo.lock` を1.10.0へ更新しました。macOS arm64/Windows x64 GNUの`cargo check --all-targets --locked`と`--release --locked` build、`cargo fmt --all -- --check`、`git diff --check`が成功しました。自動テストは実行していません。GitHub Actions workflow/CI runはありません。
+- 完成済み.appは`output/release/MacShot-v1.10.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.10.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルUUIDはmacOS release buildと一致します。正確なReleaseバンドルを起動し、設定画面の簡単登録と詳細入力、および起動バージョンを確認しました。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.10.0-macos-arm64.zip`（SHA-256 `3f78e3daaa7bcb55ee23e4f6b3495f80bbcf4d43d05a0b91c6eb6fa61dcde4eb`）と`output/release/MacShot-v1.10.0-windows-x64.zip`（SHA-256 `ebc592e4563e345f4c39f2e564df0c849c06574432a7ddec4ad88f5a16b95cde`）。両ZIPとチェックサムをGitHub Releaseから再取得して照合し、ZIP整合性とWindows実行ファイル形式（PE32+ x86-64 GUI）を確認しました。
+- [GitHub Release v1.10.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.10.0)を公開し、タグを機能コミット`ed304bc63776c22227bf8c838e53861ac9aeee3b`に付けました。GitHub上でpublished・非prereleaseと添付4ファイルを確認しました。xcapの既存非推奨API警告3件、Windows cross-buildで`rust-objcopy`の`libLLVM.dylib`不足によるデバッグ情報除去の警告がありますが、ビルドと配布は成功しました。Windows実機動作は未確認です。production deploymentは行いません。
+
 ## ショートカット登録と録画一覧の表示を改善 — 2026-11-02
 
 - スクリーンショット画面の追加操作から録画ショートカット表示を外しました。録画画面の空状態では録画一覧パネルを広く使い、中央に案内を表示します。
