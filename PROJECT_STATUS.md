@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.11.1 Release — 2026-11-04
+
+- v1.11.0の範囲選択機能へ、スクリーンショット／録画の対象メニューから直接入れる操作を追加しました。既存機能へのアクセス改善としてパッチ更新にしました。
+- `Cargo.toml` と `Cargo.lock` は1.11.1です。`cargo fmt --all -- --check`、`git diff --check`、macOS arm64とWindows x64 GNUの`cargo check --all-targets --locked`および`cargo build --release --locked`が成功しました（依存関係はローカルキャッシュを使用）。xcapの既存非推奨API警告3件があります。自動テストは実行していません。
+- 完成済み.appは`output/release/MacShot-v1.11.1-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.11.1`、arm64）です。Apple Development署名、プライバシー説明、deep/strict署名検証とrelease実行ファイルとのUUID一致を確認し、この配布バンドルを起動しました。公証はしていません。メニューから範囲選択へ進む操作は同ソースの確認ビルドでスクショ／録画の両方を確認済みです。Windows実機動作は未確認です。
+- macOS arm64 ZIPのSHA-256は`a4f973e2f3ddcac0243882613ab2595a78e584cac18a67f9f3dcc905f56c91f7`、Windows x64 ZIPは`a591ba609acd779324cb4462d4e73e8ad993b6e086bd3f703603fcf5ba9f4ece`です。各ZIPの整合性を確認し、GitHub Releaseから再取得したファイルもチェックサムと一致しました。Windows実行ファイル形式はPE32+ x86-64 GUIです。
+- [GitHub Release v1.11.1](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.11.1)を公開し、published・非prerelease・Latest、添付4ファイルを確認しました。タグは機能コミット`25848bae9ccc9b575102c95f8da07e1fca870185`です。GitHub Actions workflow/CI runはありません。production deploymentは行っていません。
+
 ## スクショ・録画対象メニューから範囲選択 — 2026-11-04
 
 - スクリーンショット対象プルダウンに「範囲を選択して撮影…」、録画対象プルダウンに「範囲を選んで録画…」を追加しました。選ぶと現在の対象設定を変更せず、それぞれの範囲選択画面へ進みます。既存のプルダウン外の範囲ボタンも残しています。
