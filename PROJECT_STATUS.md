@@ -8,11 +8,13 @@
 - macOS arm64 ZIPのSHA-256は`a4f973e2f3ddcac0243882613ab2595a78e584cac18a67f9f3dcc905f56c91f7`、Windows x64 ZIPは`a591ba609acd779324cb4462d4e73e8ad993b6e086bd3f703603fcf5ba9f4ece`です。各ZIPの整合性を確認し、GitHub Releaseから再取得したファイルもチェックサムと一致しました。Windows実行ファイル形式はPE32+ x86-64 GUIです。
 - [GitHub Release v1.11.1](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.11.1)を公開し、published・非prerelease・Latest、添付4ファイルを確認しました。タグは機能コミット`25848bae9ccc9b575102c95f8da07e1fca870185`です。GitHub Actions workflow/CI runはありません。production deploymentは行っていません。
 
-## スクショ・録画対象メニューから範囲選択 — 2026-11-04
+## 対象メニューの範囲モードを選択式に変更 — 2026-11-04
 
-- スクリーンショット対象プルダウンに「範囲を選択して撮影…」、録画対象プルダウンに「範囲を選んで録画…」を追加しました。選ぶと現在の対象設定を変更せず、それぞれの範囲選択画面へ進みます。既存のプルダウン外の範囲ボタンも残しています。
-- `cargo fmt --all`、`cargo check --all-targets --locked`、`cargo build --release --locked`、`git diff --check` が成功しました。vendor/xcapの非推奨警告3件は既存です。自動テストとWindows実機検証は行っていません。
-- 同じアプリ識別子の確認ビルドを`/Applications/MacShot.app`へ反映して起動しました。スクショ／録画の両方でプルダウンに範囲選択が表示され、選択後に範囲選択画面へ進むこと、Escで各モードに戻ることを確認しました。撮影・録画ファイルは作成していません。更新前のアプリは`output/backups/MacShot-before-target-region-20261104.app`に保存しています。v1.11.0の公開Releaseは変更していません。
+- スクショ／録画対象メニューの「範囲を選択…」は、クリック時に範囲指定を開始せず、対象として選ぶだけにしました。選択後に通常の撮影・録画ボタン、または対象優先ショートカットを実行すると範囲指定が始まります。選択状態は設定に保存し、通常の対象を選ぶと解除します。メニュー外の範囲ボタンとメニューバーの直接実行項目は従来どおりです。
+- 設定シリアライズへの範囲モード2項目の追加と読戻しを確認する既存テストを拡張しました。`cargo fmt --all`と`cargo check --all-targets --locked`が成功しました。vendor/xcapの既存非推奨警告3件があります。自動テストは実行していません。
+- `cargo fmt --all -- --check`、macOS上の`cargo check --all-targets --locked`、`cargo build --release --locked`、`git diff --check`が成功しました。その後、安定版ツールチェーンを明示してWindows x64の`cargo check`とrelease buildも行い、成功しました。xcapの既存非推奨警告3件があります。自動テストは実行していません。
+- 確認用アプリ`output/review-range-target-selection-20261104/MacShot.app`を作成し、Apple Development署名・権限説明文の検査・release実行ファイルとのUUID一致が成功しました。同版を`/Applications/MacShot.app`へ反映して再起動し、更新前のアプリは`output/backups/MacShot-before-range-target-selection-20261104.app`へ退避しました。
+- 実画面でスクショ／録画の各範囲項目を選んだ直後は範囲選択画面へ進まず、現在対象表示が範囲へ切り替わることを確認しました。その後、それぞれの実行ボタンで範囲選択画面が開き、Escで戻れることを確認しました。撮影・録画ファイルは作成せず、検証後にスクショ／録画対象をメインディスプレイへ戻しました。Windows実機動作は未確認です。
 
 ## v1.11.0 Release — 2026-11-03
 

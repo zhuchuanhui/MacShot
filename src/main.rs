@@ -233,6 +233,8 @@ struct MacShot {
     capture_target_popup_was_open: bool,
     capture_target: CaptureTarget,
     recording_target: CaptureTarget,
+    capture_region_selected: bool,
+    recording_region_selected: bool,
     region_select_for_recording: bool,
     #[cfg(target_os = "windows")]
     last_external_window_id: Option<u32>,
@@ -3991,6 +3993,9 @@ impl Default for MacShot {
             &windows,
             CaptureTarget::PrimaryDisplay,
         );
+        let capture_region_selected = load_setting("capture_region_selected", "false") == "true";
+        let recording_region_selected =
+            load_setting("recording_region_selected", "false") == "true";
         let capture_shortcut_behavior = CaptureShortcutBehavior::from_setting(&load_setting(
             "capture_shortcut_behavior",
             "selected_target",
@@ -4065,6 +4070,8 @@ impl Default for MacShot {
             capture_target_popup_was_open: false,
             capture_target,
             recording_target,
+            capture_region_selected,
+            recording_region_selected,
             region_select_for_recording: false,
             #[cfg(target_os = "windows")]
             last_external_window_id: initial_external_window_id,
@@ -4502,7 +4509,11 @@ fn has_annotation_drag_distance(start: egui::Pos2, end: egui::Pos2) -> bool {
     start.distance(end) >= 0.002
 }
 
-fn show_window_choice(ui: &mut egui::Ui, target: &mut CaptureTarget, window: &WindowChoice) {
+fn show_window_choice(
+    ui: &mut egui::Ui,
+    target: &mut CaptureTarget,
+    window: &WindowChoice,
+) -> bool {
     let selected = *target == CaptureTarget::Window(window.id);
     let description = format!(
         "{} — {}\n{} × {} px",
@@ -4514,6 +4525,9 @@ fn show_window_choice(ui: &mut egui::Ui, target: &mut CaptureTarget, window: &Wi
     {
         *target = CaptureTarget::Window(window.id);
         egui::Popup::close_all(ui.ctx());
+        true
+    } else {
+        false
     }
 }
 
@@ -4522,10 +4536,13 @@ fn selectable_capture_target(
     target: &mut CaptureTarget,
     value: CaptureTarget,
     label: impl Into<egui::WidgetText>,
-) {
+) -> bool {
     if ui.selectable_label(*target == value, label).clicked() {
         *target = value;
         egui::Popup::close_all(ui.ctx());
+        true
+    } else {
+        false
     }
 }
 
@@ -4732,6 +4749,8 @@ struct Preferences<'a> {
     recording_hotkey: &'a str,
     capture_target: &'a str,
     recording_target: &'a str,
+    capture_region_selected: bool,
+    recording_region_selected: bool,
     capture_shortcut_behavior: CaptureShortcutBehavior,
     recording_shortcut_behavior: CaptureShortcutBehavior,
     timestamp_enabled: bool,
@@ -4773,6 +4792,18 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         .map_err(|error| error.to_string())?;
     writeln!(file, "recording_target={}", preferences.recording_target)
         .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "capture_region_selected={}",
+        preferences.capture_region_selected
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "recording_region_selected={}",
+        preferences.recording_region_selected
+    )
+    .map_err(|error| error.to_string())?;
     writeln!(
         file,
         "capture_shortcut_behavior={}",
@@ -11099,6 +11130,15 @@ impl MacShot {
         } else if self.recording_shortcut_behavior == CaptureShortcutBehavior::ChooseMode {
             self.open_recording_target_picker(ctx);
         } else {
+            self.begin_selected_recording_target(ctx);
+        }
+    }
+
+    fn begin_selected_recording_target(&mut self, ctx: &egui::Context) {
+        if self.recording_region_selected {
+            self.region_select_for_recording = true;
+            self.begin_region_selection(ctx);
+        } else {
             self.begin_recording_for_target(ctx, self.recording_target, None);
         }
     }
@@ -11119,7 +11159,9 @@ impl MacShot {
 
     fn select_recording_target(&mut self, target: CaptureTarget) {
         let previous_target = self.recording_target;
+        let previous_region_selected = self.recording_region_selected;
         self.recording_target = target;
+        self.recording_region_selected = false;
         match self.save_preferences() {
             Ok(()) => {
                 self.reset_tray_menu();
@@ -11127,7 +11169,35 @@ impl MacShot {
             }
             Err(error) => {
                 self.recording_target = previous_target;
+                self.recording_region_selected = previous_region_selected;
                 self.settings_error = Some(format!("録画対象を保存できません: {error}"));
+            }
+        }
+    }
+
+    fn set_region_target_selected(&mut self, recording: bool, selected: bool) {
+        let previous = if recording {
+            self.recording_region_selected
+        } else {
+            self.capture_region_selected
+        };
+        if recording {
+            self.recording_region_selected = selected;
+        } else {
+            self.capture_region_selected = selected;
+        }
+        match self.save_preferences() {
+            Ok(()) => {
+                self.settings_error = None;
+                self.reset_tray_menu();
+            }
+            Err(error) => {
+                if recording {
+                    self.recording_region_selected = previous;
+                } else {
+                    self.capture_region_selected = previous;
+                }
+                self.settings_error = Some(format!("撮影対象を保存できません: {error}"));
             }
         }
     }
@@ -11407,6 +11477,8 @@ impl MacShot {
             recording_hotkey: &self.recording_hotkey_text,
             capture_target: &self.capture_target_setting(),
             recording_target: &self.recording_target_setting(),
+            capture_region_selected: self.capture_region_selected,
+            recording_region_selected: self.recording_region_selected,
             capture_shortcut_behavior: self.capture_shortcut_behavior,
             recording_shortcut_behavior: self.recording_shortcut_behavior,
             timestamp_enabled: self.timestamp_enabled,
@@ -11662,6 +11734,10 @@ impl MacShot {
         );
         if let Some(region) = retained_region {
             self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(region));
+            return;
+        }
+        if self.capture_region_selected {
+            self.begin_region_selection(ctx);
             return;
         }
         let region = None;
@@ -13361,7 +13437,9 @@ impl MacShot {
 
     fn select_capture_target(&mut self, target: CaptureTarget) {
         let previous_target = self.capture_target;
+        let previous_region_selected = self.capture_region_selected;
         self.capture_target = target;
+        self.capture_region_selected = false;
         match self.save_preferences() {
             Ok(()) => {
                 self.tray_capture_target_text = None;
@@ -13369,6 +13447,7 @@ impl MacShot {
             }
             Err(error) => {
                 self.capture_target = previous_target;
+                self.capture_region_selected = previous_region_selected;
                 self.settings_error = Some(format!("撮影対象を保存できません: {error}"));
             }
         }
@@ -13811,6 +13890,7 @@ impl MacShot {
 
     fn show_capture_target_card(&mut self, ui: &mut egui::Ui) {
         let mut select_region_from_target = false;
+        let mut regular_target_selected = false;
         glass_frame().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -13839,32 +13919,39 @@ impl MacShot {
                             );
                         });
                         egui::ComboBox::from_id_salt("capture_target")
-                            .selected_text(self.target_caption())
+                            .selected_text(if self.capture_region_selected {
+                                self.language.text("範囲を選択して撮影…")
+                            } else {
+                                self.target_caption()
+                            })
                             .width(250.0)
                             .height(target_popup_height)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
                                 if ui
-                                    .button(self.language.text("範囲を選択して撮影…"))
+                                    .selectable_label(
+                                        self.capture_region_selected,
+                                        self.language.text("範囲を選択して撮影…"),
+                                    )
                                     .clicked()
                                 {
                                     select_region_from_target = true;
                                     egui::Popup::close_all(ui.ctx());
                                 }
                                 ui.separator();
-                                selectable_capture_target(
+                                regular_target_selected |= selectable_capture_target(
                                     ui,
                                     &mut self.capture_target,
                                     CaptureTarget::ActiveWindow,
                                     self.language.text("アクティブウィンドウ"),
                                 );
-                                selectable_capture_target(
+                                regular_target_selected |= selectable_capture_target(
                                     ui,
                                     &mut self.capture_target,
                                     CaptureTarget::PrimaryDisplay,
                                     self.language.text("デスクトップ（メイン画面）"),
                                 );
-                                selectable_capture_target(
+                                regular_target_selected |= selectable_capture_target(
                                     ui,
                                     &mut self.capture_target,
                                     CaptureTarget::AllDisplays,
@@ -13875,7 +13962,7 @@ impl MacShot {
                                     let name = monitor
                                         .name()
                                         .unwrap_or_else(|_| format!("{} {}", self.language.text("Display"), index + 1));
-                                    selectable_capture_target(
+                                    regular_target_selected |= selectable_capture_target(
                                         ui,
                                         &mut self.capture_target,
                                         CaptureTarget::Display(index),
@@ -13895,7 +13982,7 @@ impl MacShot {
                                         ui.label(self.language.text("一致するウィンドウがありません"));
                                     }
                                     for window in &windows {
-                                        show_window_choice(
+                                        regular_target_selected |= show_window_choice(
                                             ui,
                                             &mut self.capture_target,
                                             window,
@@ -14009,7 +14096,9 @@ impl MacShot {
             });
         });
         if select_region_from_target {
-            self.begin_region_selection(ui.ctx());
+            self.set_region_target_selected(false, true);
+        } else if regular_target_selected {
+            self.select_capture_target(self.capture_target);
         }
     }
 
@@ -15534,6 +15623,7 @@ impl MacShot {
         let language = self.language;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
         let mut select_region_from_target = false;
+        let mut regular_target_selected = false;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
@@ -15573,7 +15663,6 @@ impl MacShot {
                         );
                         ui.add_space(4.0);
                         let popup_height = (ui.ctx().content_rect().height() * 0.84).min(900.0);
-                        let previous_target = self.recording_target;
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
                                 egui::RichText::new(language.text("ウィンドウ検索"))
@@ -15587,19 +15676,26 @@ impl MacShot {
                             );
                         });
                         egui::ComboBox::from_id_salt("recording_page_target")
-                            .selected_text(tray_target_choice_label(
-                                language,
-                                self.recording_target,
-                                false,
-                                &self.monitors,
-                                &self.windows,
-                            ))
+                            .selected_text(if self.recording_region_selected {
+                                language.text("範囲を選んで録画…")
+                            } else {
+                                tray_target_choice_label(
+                                    language,
+                                    self.recording_target,
+                                    false,
+                                    &self.monitors,
+                                    &self.windows,
+                                )
+                            })
                             .width(320.0)
                             .height(popup_height)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
                                 if ui
-                                    .button(language.text("範囲を選んで録画…"))
+                                    .selectable_label(
+                                        self.recording_region_selected,
+                                        language.text("範囲を選んで録画…"),
+                                    )
                                     .clicked()
                                 {
                                     select_region_from_target = true;
@@ -15611,7 +15707,7 @@ impl MacShot {
                                     (CaptureTarget::PrimaryDisplay, "デスクトップ（メイン画面）"),
                                     (CaptureTarget::AllDisplays, "全画面（全ディスプレイ）"),
                                 ] {
-                                    selectable_capture_target(
+                                    regular_target_selected |= selectable_capture_target(
                                         ui,
                                         &mut self.recording_target,
                                         target,
@@ -15622,7 +15718,7 @@ impl MacShot {
                                     let name = self.monitors[index].name().unwrap_or_else(|_| {
                                         format!("{} {}", language.text("Display"), index + 1)
                                     });
-                                    selectable_capture_target(
+                                    regular_target_selected |= selectable_capture_target(
                                         ui,
                                         &mut self.recording_target,
                                         CaptureTarget::Display(index),
@@ -15641,12 +15737,10 @@ impl MacShot {
                                     ui.label(language.text("一致するウィンドウがありません"));
                                 }
                                 for window in &windows {
-                                    show_window_choice(ui, &mut self.recording_target, window);
+                                    regular_target_selected |=
+                                        show_window_choice(ui, &mut self.recording_target, window);
                                 }
                             });
-                        if self.recording_target != previous_target {
-                            self.select_recording_target(self.recording_target);
-                        }
                     });
                     if ui.add(primary_button(language.text("範囲を選んで録画…"))).clicked() {
                         self.region_select_for_recording = true;
@@ -15662,7 +15756,7 @@ impl MacShot {
                         if recording {
                             self.stop_recording();
                         } else {
-                            self.begin_recording_for_target(ui.ctx(), self.recording_target, None);
+                            self.begin_selected_recording_target(ui.ctx());
                         }
                     }
                     if ui.button(language.text("ウィンドウを選んで録画")).clicked() {
@@ -15751,8 +15845,9 @@ impl MacShot {
             });
         });
         if select_region_from_target {
-            self.region_select_for_recording = true;
-            self.begin_region_selection(ui.ctx());
+            self.set_region_target_selected(true, true);
+        } else if regular_target_selected {
+            self.select_recording_target(self.recording_target);
         }
         let recordings_height = (ui.available_height() - 86.0).max(360.0);
         self.show_recordings_panel(ui, recordings_height);
@@ -18851,6 +18946,8 @@ mod tests {
             recording_hotkey: "Control+Alt+KeyR",
             capture_target: "window:123",
             recording_target: "primary",
+            capture_region_selected: true,
+            recording_region_selected: false,
             capture_shortcut_behavior: CaptureShortcutBehavior::ChooseMode,
             recording_shortcut_behavior: CaptureShortcutBehavior::ChooseMode,
             timestamp_enabled: false,
@@ -18892,6 +18989,14 @@ mod tests {
         assert_eq!(
             parse_setting(&serialized, "capture_target", "active"),
             "window:123"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "capture_region_selected", "false"),
+            "true"
+        );
+        assert_eq!(
+            parse_setting(&serialized, "recording_region_selected", "true"),
+            "false"
         );
         assert_eq!(
             parse_setting(&serialized, "capture_shortcut_behavior", "selected_target"),
