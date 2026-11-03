@@ -1,5 +1,14 @@
 # Project Status
 
+## v1.11.0 Release — 2026-11-03
+
+- 範囲スクリーンショットにクロスヘア、拡大ルーペ、座標、自由／1:1／4:3／16:9の縦横比指定、前回範囲の再利用を追加しました。画像比較での未保存編集保護と証跡一覧のスクロール分離修正も含みます。利用者向け撮影操作の追加のためminor更新としました。
+- `Cargo.toml` と `Cargo.lock` を1.11.0へ更新しました。`cargo fmt --all -- --check`、`git diff --check`、macOS arm64とWindows x64 GNUの`cargo check --all-targets --locked`・`cargo build --release --locked`が成功しました。自動テストはこのRelease作業では実行していません。GitHub Actions workflow/CI runはありません。
+- 完成済み.appは`output/release/MacShot-v1.11.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.11.0`、arm64）です。Apple Development署名、権限説明、deep/strict検証が成功し、実行ファイルUUIDはmacOS release buildと一致します。正確なReleaseバンドルを起動し、範囲選択UIの縦横比、クロスヘア、拡大ルーペを確認しました。Escでキャンセルし、画像は撮影していません。公証はしていません。
+- 配布ZIPは`output/release/MacShot-v1.11.0-macos-arm64.zip`（SHA-256 `b97cc55b1140f8db50d34060e001588704d8b5c9e7fe6b73768ce939812138e0`）と`output/release/MacShot-v1.11.0-windows-x64.zip`（SHA-256 `20e71032d5403925d9e6fb96c54706bd38fe7f8a49c26ced7e9addf505147d1c`）。各ZIPとチェックサムをGitHub Releaseから再取得して照合し、ZIP整合性とWindows実行ファイル形式（PE32+ x86-64 GUI）を確認しました。
+- arm64実行可能なHomebrew `mingw-w64` 14.0.0_3を使ってWindowsクロスビルド・梱包しました。xcapの既存非推奨API警告3件があります。Windows実機動作は未確認です。
+- [GitHub Release v1.11.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.11.0)を公開し、タグを機能コミット`75579d0540d7fe3f206d275e20c86a7ce303b3b6`に付けました。GitHub上でpublished・非prerelease・Latestと添付4ファイルを確認しました。production deploymentは行いません。
+
 ## 範囲スクリーンショットの補助機能を追加 — 2026-11-03
 
 - iShot系の範囲撮影補助として、範囲選択中のクロスヘア・拡大ルーペ・座標表示、任意の縦横比固定（自由／1:1／4:3／16:9）、前回撮影範囲の再呼び出しを追加しました。縦横比は選択中だけ適用され、数字キー0〜3でも切り替えられます。前回範囲はDキーでも再利用できます。
