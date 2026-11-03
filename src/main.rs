@@ -243,10 +243,12 @@ struct MacShot {
     continuous_capture: bool,
     keep_region_in_continuous: bool,
     continuous_region: Option<[f32; 4]>,
+    last_capture_region: Option<[f32; 4]>,
     capture_queue: VecDeque<CaptureRequest>,
     region_selecting: bool,
     region_drag_start: Option<egui::Pos2>,
     region_drag_current: Option<egui::Pos2>,
+    region_aspect_ratio: Option<f32>,
     region_overlay_position: egui::Pos2,
     region_overlay_size: egui::Vec2,
     region_snapshot_tx: Sender<Result<image::RgbaImage, String>>,
@@ -489,6 +491,7 @@ struct CaptureRequest {
 enum PendingEditNavigation {
     Queue { direction: isize },
     OpenEvidence { queue: Vec<PathBuf>, index: usize },
+    ReplaceComparisonBaseline { path: PathBuf },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1764,6 +1767,18 @@ impl AppLanguage {
                 "Drag to select a capture region · Esc to cancel",
                 "拖动以选择截图区域 · 按 Esc 取消",
                 "拖曳以選取截圖範圍 · 按 Esc 取消",
+            ],
+            "縦横比" => ["Aspect ratio", "宽高比", "長寬比"],
+            "自由" => ["Free", "自由", "自由"],
+            "前回の範囲で撮影 (D)" => [
+                "Capture previous area (D)",
+                "使用上次区域截图 (D)",
+                "使用上次範圍截圖 (D)",
+            ],
+            "0 自由　1 1:1　2 4:3　3 16:9" => [
+                "0 Free　1 1:1　2 4:3　3 16:9",
+                "0 自由　1 1:1　2 4:3　3 16:9",
+                "0 自由　1 1:1　2 4:3　3 16:9",
             ],
             "ドラッグして録画範囲を選択　·　Escでキャンセル" => [
                 "Drag to select a recording region · Esc to cancel",
@@ -4055,10 +4070,12 @@ impl Default for MacShot {
             continuous_capture: false,
             keep_region_in_continuous: load_setting("keep_region_in_continuous", "true") != "false",
             continuous_region: None,
+            last_capture_region: parse_region_setting(&load_setting("last_capture_region", "")),
             capture_queue: VecDeque::new(),
             region_selecting: false,
             region_drag_start: None,
             region_drag_current: None,
+            region_aspect_ratio: None,
             region_overlay_position: egui::Pos2::ZERO,
             region_overlay_size: egui::Vec2::ZERO,
             region_snapshot_tx,
@@ -4719,6 +4736,7 @@ struct Preferences<'a> {
     filename_prefix: &'a str,
     show_capture_notice: bool,
     keep_region_in_continuous: bool,
+    last_capture_region: Option<[f32; 4]>,
     annotation_color: &'a str,
     annotation_width: f32,
     annotation_text: &'a str,
@@ -4790,6 +4808,12 @@ fn write_preferences(file: &mut impl Write, preferences: &Preferences<'_>) -> Re
         file,
         "keep_region_in_continuous={}",
         preferences.keep_region_in_continuous
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        file,
+        "last_capture_region={}",
+        region_setting_value(preferences.last_capture_region)
     )
     .map_err(|error| error.to_string())?;
     writeln!(file, "annotation_color={}", preferences.annotation_color)
@@ -7606,6 +7630,184 @@ fn normalized_region_bounds(
     ])
 }
 
+fn parse_region_setting(value: &str) -> Option<[f32; 4]> {
+    let values: Vec<f32> = value
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<f32>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let [left, top, right, bottom] = <[f32; 4]>::try_from(values).ok()?;
+    if ![left, top, right, bottom].into_iter().all(f32::is_finite)
+        || left < 0.0
+        || top < 0.0
+        || right > 1.0
+        || bottom > 1.0
+        || right - left < 0.002
+        || bottom - top < 0.002
+    {
+        return None;
+    }
+    Some([left, top, right, bottom])
+}
+
+fn region_setting_value(region: Option<[f32; 4]>) -> String {
+    region.map_or_else(String::new, |bounds| {
+        format!(
+            "{:.6},{:.6},{:.6},{:.6}",
+            bounds[0], bounds[1], bounds[2], bounds[3]
+        )
+    })
+}
+
+fn constrain_region_endpoint(
+    screen: egui::Rect,
+    start: egui::Pos2,
+    pointer: egui::Pos2,
+    aspect_ratio: f32,
+) -> egui::Pos2 {
+    if !aspect_ratio.is_finite() || aspect_ratio <= 0.0 {
+        return pointer;
+    }
+
+    let dx = pointer.x - start.x;
+    let dy = pointer.y - start.y;
+    let direction_x = if dx < 0.0 { -1.0 } else { 1.0 };
+    let direction_y = if dy < 0.0 { -1.0 } else { 1.0 };
+    let raw_width = dx.abs();
+    let raw_height = dy.abs();
+    let (mut width, mut height) = if raw_width >= raw_height * aspect_ratio {
+        (raw_width, raw_width / aspect_ratio)
+    } else {
+        (raw_height * aspect_ratio, raw_height)
+    };
+    let max_width = if direction_x > 0.0 {
+        screen.right() - start.x
+    } else {
+        start.x - screen.left()
+    }
+    .max(0.0);
+    let max_height = if direction_y > 0.0 {
+        screen.bottom() - start.y
+    } else {
+        start.y - screen.top()
+    }
+    .max(0.0);
+    let fit_scale = 1.0_f32
+        .min(max_width / width.max(1.0))
+        .min(max_height / height.max(1.0));
+    width *= fit_scale;
+    height *= fit_scale;
+    egui::pos2(
+        start.x + direction_x * width,
+        start.y + direction_y * height,
+    )
+}
+
+fn paint_region_cursor_guides(
+    painter: &egui::Painter,
+    screen: egui::Rect,
+    pointer: egui::Pos2,
+    texture: &egui::TextureHandle,
+) -> (u32, u32) {
+    let pixel_size = texture.size();
+    let texture_width = pixel_size[0].max(1) as f32;
+    let texture_height = pixel_size[1].max(1) as f32;
+    let local_x = (pointer.x - screen.left()).clamp(0.0, screen.width());
+    let local_y = (pointer.y - screen.top()).clamp(0.0, screen.height());
+    let pixel_x = ((local_x / screen.width().max(1.0) * texture_width).floor() as u32)
+        .min(pixel_size[0].saturating_sub(1) as u32);
+    let pixel_y = ((local_y / screen.height().max(1.0) * texture_height).floor() as u32)
+        .min(pixel_size[1].saturating_sub(1) as u32);
+
+    let guide = egui::Stroke::new(
+        1.0_f32,
+        egui::Color32::from_rgba_unmultiplied(66, 183, 255, 190),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(pointer.x, screen.top()),
+            egui::pos2(pointer.x, screen.bottom()),
+        ],
+        guide,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(screen.left(), pointer.y),
+            egui::pos2(screen.right(), pointer.y),
+        ],
+        guide,
+    );
+
+    let lens_size = egui::vec2(190.0, 164.0);
+    let lens_x = if pointer.x + lens_size.x + 20.0 <= screen.right() {
+        pointer.x + 20.0
+    } else {
+        pointer.x - lens_size.x - 20.0
+    }
+    .clamp(
+        screen.left() + 8.0,
+        (screen.right() - lens_size.x - 8.0).max(screen.left() + 8.0),
+    );
+    let lens_y = if pointer.y - lens_size.y - 18.0 >= screen.top() {
+        pointer.y - lens_size.y - 18.0
+    } else {
+        pointer.y + 18.0
+    }
+    .clamp(
+        screen.top() + 8.0,
+        (screen.bottom() - lens_size.y - 8.0).max(screen.top() + 8.0),
+    );
+    let lens_rect = egui::Rect::from_min_size(egui::pos2(lens_x, lens_y), lens_size);
+    painter.rect_filled(
+        lens_rect,
+        10.0,
+        egui::Color32::from_rgba_unmultiplied(20, 28, 40, 238),
+    );
+    let image_rect = egui::Rect::from_min_max(
+        lens_rect.min + egui::vec2(7.0, 7.0),
+        egui::pos2(lens_rect.right() - 7.0, lens_rect.bottom() - 32.0),
+    );
+    let center_u = local_x / screen.width().max(1.0);
+    let center_v = local_y / screen.height().max(1.0);
+    let half_u = (10.0 / texture_width).min(0.5);
+    let half_v = (8.0 / texture_height).min(0.5);
+    let uv_rect = egui::Rect::from_min_max(
+        egui::pos2((center_u - half_u).max(0.0), (center_v - half_v).max(0.0)),
+        egui::pos2((center_u + half_u).min(1.0), (center_v + half_v).min(1.0)),
+    );
+    painter.image(texture.id(), image_rect, uv_rect, egui::Color32::WHITE);
+    let center = image_rect.center();
+    painter.line_segment(
+        [
+            egui::pos2(center.x, image_rect.top()),
+            egui::pos2(center.x, image_rect.bottom()),
+        ],
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(42, 170, 255)),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(image_rect.left(), center.y),
+            egui::pos2(image_rect.right(), center.y),
+        ],
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(42, 170, 255)),
+    );
+    painter.rect_stroke(
+        lens_rect,
+        10.0,
+        egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(210)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        egui::pos2(lens_rect.left() + 10.0, lens_rect.bottom() - 7.0),
+        egui::Align2::LEFT_BOTTOM,
+        format!("X {pixel_x}   Y {pixel_y}"),
+        egui::FontId::proportional(13.0),
+        egui::Color32::WHITE,
+    );
+    (pixel_x, pixel_y)
+}
+
 fn retained_continuous_region(
     continuous_capture: bool,
     keep_region: bool,
@@ -8200,6 +8402,25 @@ fn remove_macshot_titlebar_separator() {
             return;
         }
     }
+}
+
+fn isolated_list_scroll<R>(
+    ui: &mut egui::Ui,
+    scroll_area: egui::ScrollArea,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    ui.scope(|ui| {
+        let output = scroll_area.show(ui, add_contents);
+        // Consume wheel input even at either end of the list. Otherwise egui
+        // passes it to the page scroll area and moves both sections together.
+        // The scope includes the scrollbar as well as the list contents.
+        if ui.ui_contains_pointer() {
+            ui.ctx()
+                .input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
+        }
+        output
+    })
+    .inner
 }
 
 fn glass_frame() -> egui::Frame {
@@ -11190,6 +11411,7 @@ impl MacShot {
             filename_prefix: &self.filename_prefix,
             show_capture_notice: self.show_capture_notice,
             keep_region_in_continuous: self.keep_region_in_continuous,
+            last_capture_region: self.last_capture_region,
             annotation_color: &self.annotation_color,
             annotation_width: self.annotation_width,
             annotation_text: &self.annotation_text,
@@ -11384,6 +11606,12 @@ impl MacShot {
             });
 
         if keep_editing {
+            if matches!(
+                navigation,
+                PendingEditNavigation::ReplaceComparisonBaseline { .. }
+            ) {
+                switch_page(&mut self.page, Page::Capture, &mut self.status);
+            }
             open = false;
         }
         if save_and_move || discard_and_move {
@@ -11407,6 +11635,9 @@ impl MacShot {
                     }
                     PendingEditNavigation::OpenEvidence { queue, index } => {
                         self.load_evidence_image(queue, index);
+                    }
+                    PendingEditNavigation::ReplaceComparisonBaseline { path } => {
+                        self.load_comparison_image(path, true);
                     }
                 }
             }
@@ -11493,6 +11724,7 @@ impl MacShot {
             self.report_capture_failure("録画または撮影が終わってから範囲撮影を開始してください。");
             return;
         }
+        self.region_aspect_ratio = None;
         #[cfg(target_os = "windows")]
         self.begin_region_selection_windows(ctx);
         #[cfg(target_os = "macos")]
@@ -11704,25 +11936,88 @@ impl MacShot {
                 .show(viewport_ctx, |ui| {
                     let screen = ui.max_rect();
                     ui.allocate_rect(screen, egui::Sense::click_and_drag());
-                    let (pressed, down, released, pointer, press_origin) =
+                    let cancel_rect = egui::Rect::from_min_size(
+                        egui::pos2(screen.right() - 164.0, screen.top() + 16.0),
+                        egui::vec2(148.0, 38.0),
+                    );
+                    let previous_rect =
+                        (!recording_selection && self.last_capture_region.is_some()).then(|| {
+                            egui::Rect::from_min_size(
+                                egui::pos2(screen.right() - 374.0, screen.top() + 16.0),
+                                egui::vec2(198.0, 38.0),
+                            )
+                        });
+                    let ratio_toolbar_rect = (!recording_selection).then(|| {
+                        egui::Rect::from_min_size(
+                            egui::pos2(screen.left() + 14.0, screen.top() + 14.0),
+                            egui::vec2(354.0, 42.0),
+                        )
+                    });
+                    let (pressed, down, released, pointer, hover_pointer, press_origin, keys) =
                         viewport_ctx.input(|input| {
                             (
                                 input.pointer.button_pressed(egui::PointerButton::Primary),
                                 input.pointer.button_down(egui::PointerButton::Primary),
                                 input.pointer.button_released(egui::PointerButton::Primary),
                                 input.pointer.interact_pos(),
+                                input.pointer.hover_pos(),
                                 input.pointer.press_origin(),
+                                [
+                                    input.key_pressed(egui::Key::Num0),
+                                    input.key_pressed(egui::Key::Num1),
+                                    input.key_pressed(egui::Key::Num2),
+                                    input.key_pressed(egui::Key::Num3),
+                                    input.key_pressed(egui::Key::D),
+                                ],
                             )
                         });
+                    if !recording_selection {
+                        self.region_aspect_ratio = if keys[0] {
+                            None
+                        } else if keys[1] {
+                            Some(1.0)
+                        } else if keys[2] {
+                            Some(4.0 / 3.0)
+                        } else if keys[3] {
+                            Some(16.0 / 9.0)
+                        } else {
+                            self.region_aspect_ratio
+                        };
+                    }
+                    let press_point = press_origin.or(pointer);
+                    let press_over_control = press_point.is_some_and(|point| {
+                        cancel_rect.contains(point)
+                            || previous_rect.is_some_and(|rect| rect.contains(point))
+                            || ratio_toolbar_rect.is_some_and(|rect| rect.contains(point))
+                    });
                     update_region_drag_state(
                         &mut self.region_drag_start,
                         &mut self.region_drag_current,
-                        pressed,
+                        pressed && !press_over_control,
                         down,
                         released,
                         pointer,
                         press_origin,
                     );
+                    if let (Some(start), Some(current), Some(aspect_ratio)) = (
+                        self.region_drag_start,
+                        self.region_drag_current,
+                        self.region_aspect_ratio.filter(|_| !recording_selection),
+                    ) {
+                        self.region_drag_current = Some(constrain_region_endpoint(
+                            screen,
+                            start,
+                            current,
+                            aspect_ratio,
+                        ));
+                    }
+                    if !recording_selection
+                        && keys[4]
+                        && let Some(bounds) = self.last_capture_region
+                    {
+                        action = Some(Some(bounds));
+                        viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     let painter = ui.painter();
                     if let Some(texture) = &self.region_background_texture {
                         painter.image(
@@ -11821,6 +12116,76 @@ impl MacShot {
                             egui::Color32::WHITE,
                         );
                     }
+                    if let Some(pointer) = hover_pointer.filter(|pointer| screen.contains(*pointer))
+                        && let Some(texture) = &self.region_background_texture
+                    {
+                        paint_region_cursor_guides(painter, screen, pointer, texture);
+                    }
+
+                    if let Some(toolbar) = ratio_toolbar_rect {
+                        painter.rect_filled(
+                            toolbar,
+                            9.0,
+                            egui::Color32::from_rgba_unmultiplied(22, 32, 48, 225),
+                        );
+                        let mut x = toolbar.left() + 8.0;
+                        let label_rect = egui::Rect::from_min_size(
+                            egui::pos2(x, toolbar.top() + 4.0),
+                            egui::vec2(52.0, 34.0),
+                        );
+                        ui.put(
+                            label_rect,
+                            egui::Label::new(
+                                egui::RichText::new(language.text("縦横比"))
+                                    .size(12.0)
+                                    .color(egui::Color32::WHITE),
+                            ),
+                        );
+                        x += 54.0;
+                        for (label, width, ratio) in [
+                            ("自由 0", 66.0, None),
+                            ("1:1 1", 60.0, Some(1.0)),
+                            ("4:3 2", 60.0, Some(4.0 / 3.0)),
+                            ("16:9 3", 68.0, Some(16.0 / 9.0)),
+                        ] {
+                            let selected = match (self.region_aspect_ratio, ratio) {
+                                (None, None) => true,
+                                (Some(current), Some(requested)) => {
+                                    (current - requested).abs() < 0.001
+                                }
+                                _ => false,
+                            };
+                            let button_rect = egui::Rect::from_min_size(
+                                egui::pos2(x, toolbar.top() + 4.0),
+                                egui::vec2(width, 34.0),
+                            );
+                            if ui
+                                .put(
+                                    button_rect,
+                                    egui::Button::new(label)
+                                        .selected(selected)
+                                        .min_size(egui::vec2(width, 30.0)),
+                                )
+                                .clicked()
+                            {
+                                self.region_aspect_ratio = ratio;
+                            }
+                            x += width + 2.0;
+                        }
+                    }
+
+                    if let Some(previous_rect) = previous_rect
+                        && ui
+                            .put(
+                                previous_rect,
+                                egui::Button::new(language.text("前回の範囲で撮影 (D)")),
+                            )
+                            .clicked()
+                        && let Some(bounds) = self.last_capture_region
+                    {
+                        action = Some(Some(bounds));
+                        viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     if released
                         && let (Some(start), Some(end)) = (
                             self.region_drag_start.take(),
@@ -11831,10 +12196,6 @@ impl MacShot {
                         action = Some(Some(bounds));
                         viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    let cancel_rect = egui::Rect::from_min_size(
-                        egui::pos2(screen.right() - 164.0, screen.top() + 16.0),
-                        egui::vec2(148.0, 38.0),
-                    );
                     if ui
                         .put(
                             cancel_rect,
@@ -11866,6 +12227,10 @@ impl MacShot {
                     self.continuous_region = Some(bounds);
                 } else {
                     self.continuous_region = None;
+                }
+                self.last_capture_region = Some(bounds);
+                if let Err(error) = self.save_preferences() {
+                    self.settings_error = Some(format!("前回の撮影範囲を保存できません: {error}"));
                 }
                 self.begin_capture_for(ctx, CaptureTarget::PrimaryDisplay, Some(bounds));
             } else {
@@ -12190,27 +12555,51 @@ impl MacShot {
             .add_filter("画像", &["png", "jpg", "jpeg"])
             .pick_file()
         {
-            match image::open(&path) {
-                Ok(image) => {
-                    if left {
-                        self.editing_queue.clear();
-                        self.editing_index = None;
-                        self.left_path = Some(path.clone());
-                        self.left_image = Some(image);
-                        self.left_texture = None;
-                        self.crop_selection = None;
-                        self.crop_drag_start = None;
-                    } else {
-                        self.right_path = Some(path.clone());
-                        self.right_image = Some(image);
-                        self.right_texture = None;
-                        switch_page(&mut self.page, Page::Compare, &mut self.status);
-                    }
-                    self.refresh_diff();
-                    self.status = format!("読み込みました: {}", path.display());
-                }
-                Err(error) => self.status = format!("画像を開けません: {error}"),
+            self.open_comparison_image(path, left);
+        }
+    }
+
+    fn open_comparison_image(&mut self, path: PathBuf, left: bool) {
+        if left {
+            self.commit_live_annotation();
+            if self.has_pending_edit() {
+                self.pending_edit_navigation =
+                    Some(PendingEditNavigation::ReplaceComparisonBaseline { path });
+                return;
             }
+        }
+        self.load_comparison_image(path, left);
+    }
+
+    fn load_comparison_image(&mut self, path: PathBuf, left: bool) {
+        match image::open(&path) {
+            Ok(image) => {
+                if left {
+                    self.editing_queue.clear();
+                    self.editing_index = None;
+                    self.left_path = Some(path.clone());
+                    self.left_image = Some(image);
+                    self.left_texture = None;
+                    self.crop_selection = None;
+                    self.crop_drag_start = None;
+                    self.annotations.clear();
+                    self.live_annotation = None;
+                    self.annotation_preview_texture = None;
+                    self.annotation_preview_key = None;
+                    self.selected_annotation = None;
+                    self.annotation_move_index = None;
+                    self.annotation_move_origin = None;
+                    self.region_annotation_pending = false;
+                } else {
+                    self.right_path = Some(path.clone());
+                    self.right_image = Some(image);
+                    self.right_texture = None;
+                    switch_page(&mut self.page, Page::Compare, &mut self.status);
+                }
+                self.refresh_diff();
+                self.status = format!("読み込みました: {}", path.display());
+            }
+            Err(error) => self.status = format!("画像を開けません: {error}"),
         }
     }
 
@@ -12482,20 +12871,66 @@ impl MacShot {
         ));
     }
 
+    fn capture_preview_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureId> {
+        let image = self.left_image.as_ref()?;
+        let size = [image.width() as usize, image.height() as usize];
+        if self.left_texture.is_none() {
+            let rgba = image.to_rgba8();
+            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            self.left_texture =
+                Some(ctx.load_texture("capture-preview", color, egui::TextureOptions::LINEAR));
+            self.annotation_preview_key = None;
+        }
+        let annotations: Vec<_> = self
+            .annotations
+            .iter()
+            .chain(self.live_annotation.iter())
+            .cloned()
+            .collect();
+        if annotations.is_empty() {
+            self.annotation_preview_key = None;
+            self.annotation_preview_texture = None;
+        } else {
+            let cache_key = AnnotationPreviewKey {
+                annotations,
+                path: self.left_path.clone(),
+                color: annotation_rgb(&self.annotation_color),
+                line_width: self.annotation_width,
+                timestamp_background: self.timestamp_background.clone(),
+            };
+            if self.annotation_preview_key.as_ref() != Some(&cache_key)
+                || self.annotation_preview_texture.is_none()
+            {
+                let preview = annotated_image(
+                    image,
+                    &cache_key.annotations,
+                    cache_key.color,
+                    cache_key.line_width,
+                    &cache_key.timestamp_background,
+                );
+                let color = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
+                self.annotation_preview_texture = Some(ctx.load_texture(
+                    "annotation-preview",
+                    color,
+                    egui::TextureOptions::LINEAR,
+                ));
+                self.annotation_preview_key = Some(cache_key);
+            }
+        }
+        self.annotation_preview_texture
+            .as_ref()
+            .or(self.left_texture.as_ref())
+            .map(egui::TextureHandle::id)
+    }
+
     fn show_clickable_capture_preview(&mut self, ui: &mut egui::Ui) {
         let Some(image) = &self.left_image else {
             return;
         };
         let size = [image.width() as usize, image.height() as usize];
-        if self.left_texture.is_none() {
-            let rgba = image.to_rgba8();
-            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            self.left_texture = Some(ui.ctx().load_texture(
-                "capture-preview",
-                color,
-                egui::TextureOptions::LINEAR,
-            ));
-        }
+        let Some(texture) = self.capture_preview_texture(ui.ctx()) else {
+            return;
+        };
         let available = ui.available_size();
         let scale = (available.x / size[0] as f32)
             .min(available.y / size[1] as f32)
@@ -12503,7 +12938,7 @@ impl MacShot {
         let display_size = egui::vec2(size[0] as f32 * scale, size[1] as f32 * scale);
         let (rect, response) = ui.allocate_exact_size(display_size, egui::Sense::click());
         ui.painter().image(
-            self.left_texture.as_ref().unwrap().id(),
+            texture,
             rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
@@ -12550,15 +12985,6 @@ impl MacShot {
         };
 
         let size = [image.width() as usize, image.height() as usize];
-        if self.left_texture.is_none() {
-            let rgba = image.to_rgba8();
-            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            self.left_texture = Some(ui.ctx().load_texture(
-                "capture-preview",
-                color,
-                egui::TextureOptions::LINEAR,
-            ));
-        }
         let available = ui.available_size();
         let scale = (available.x / size[0] as f32)
             .min(available.y / size[1] as f32)
@@ -12746,49 +13172,11 @@ impl MacShot {
             }
         }
 
-        let preview_annotations: Vec<_> = self
-            .annotations
-            .iter()
-            .chain(self.live_annotation.iter())
-            .cloned()
-            .collect();
-        if preview_annotations.is_empty() {
-            self.annotation_preview_key = None;
-            self.annotation_preview_texture = None;
-        } else {
-            let cache_key = AnnotationPreviewKey {
-                annotations: preview_annotations.clone(),
-                path: self.left_path.clone(),
-                color: annotation_rgb(&self.annotation_color),
-                line_width: self.annotation_width,
-                timestamp_background: self.timestamp_background.clone(),
-            };
-            if self.annotation_preview_key.as_ref() != Some(&cache_key)
-                || self.annotation_preview_texture.is_none()
-            {
-                let preview = annotated_image(
-                    image,
-                    &preview_annotations,
-                    annotation_rgb(&self.annotation_color),
-                    self.annotation_width,
-                    &self.timestamp_background,
-                );
-                let color = egui::ColorImage::from_rgba_unmultiplied(size, preview.as_raw());
-                self.annotation_preview_texture = Some(ui.ctx().load_texture(
-                    "annotation-preview",
-                    color,
-                    egui::TextureOptions::LINEAR,
-                ));
-                self.annotation_preview_key = Some(cache_key);
-            }
-        }
         let preview_texture = self
-            .annotation_preview_texture
-            .as_ref()
-            .or(self.left_texture.as_ref())
-            .expect("capture preview texture is initialized");
+            .capture_preview_texture(ui.ctx())
+            .expect("capture preview image is present");
         ui.painter().image(
-            preview_texture.id(),
+            preview_texture,
             rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
@@ -13781,43 +14169,52 @@ impl MacShot {
                             .desired_width(170.0),
                     );
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !self.annotations.is_empty() {
-                        if ui.button(self.language.text("注釈を消去")).clicked() {
-                            self.annotations.clear();
-                            self.live_annotation = None;
-                        }
-                        if ui
-                            .button(self.language.text("注釈画像を別名で保存"))
-                            .clicked()
-                        {
-                            self.save_annotated_image();
-                        }
-                        if ui
-                            .add_enabled(
-                                self.can_overwrite_current_png(),
-                                egui::Button::new(self.language.text("上書き保存")),
-                            )
-                            .on_hover_text(self.language.text("現在のPNG画像を注釈付きで上書き"))
-                            .clicked()
-                        {
-                            self.overwrite_confirmation = true;
-                        }
-                    }
-                    if self.edit_tool == EditTool::Crop && self.crop_selection.is_some() {
-                        if ui.button(self.language.text("選択解除")).clicked() {
-                            self.crop_selection = None;
-                            self.crop_drag_start = None;
-                        }
-                        if ui
-                            .add(primary_button(self.language.text("切り出しを別名で保存")))
-                            .clicked()
-                        {
-                            self.save_crop();
-                        }
-                    }
-                });
             });
+            if !self.annotations.is_empty()
+                || (self.edit_tool == EditTool::Crop && self.crop_selection.is_some())
+            {
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                    |ui| {
+                        if !self.annotations.is_empty() {
+                            if ui.button(self.language.text("注釈を消去")).clicked() {
+                                self.annotations.clear();
+                                self.live_annotation = None;
+                            }
+                            if ui
+                                .button(self.language.text("注釈画像を別名で保存"))
+                                .clicked()
+                            {
+                                self.save_annotated_image();
+                            }
+                            if ui
+                                .add_enabled(
+                                    self.can_overwrite_current_png(),
+                                    egui::Button::new(self.language.text("上書き保存")),
+                                )
+                                .on_hover_text(
+                                    self.language.text("現在のPNG画像を注釈付きで上書き"),
+                                )
+                                .clicked()
+                            {
+                                self.overwrite_confirmation = true;
+                            }
+                        }
+                        if self.edit_tool == EditTool::Crop && self.crop_selection.is_some() {
+                            if ui.button(self.language.text("選択解除")).clicked() {
+                                self.crop_selection = None;
+                                self.crop_drag_start = None;
+                            }
+                            if ui
+                                .add(primary_button(self.language.text("切り出しを別名で保存")))
+                                .clicked()
+                            {
+                                self.save_crop();
+                            }
+                        }
+                    },
+                );
+            }
         });
         ui.add_space(12.0);
         let preview_height = ui.available_height().max(340.0);
@@ -15367,11 +15764,10 @@ impl MacShot {
                     },
                 );
             } else {
-                egui::ScrollArea::vertical()
+                isolated_list_scroll(ui, egui::ScrollArea::vertical()
                     .id_salt("evidence_recording_list")
                     .min_scrolled_height(list_height)
-                    .max_height(list_height)
-                    .show(ui, |ui| {
+                    .max_height(list_height), |ui| {
                     let files = self.recording_files.clone();
                     for path in files {
                         let selected = self.recording_preview_path.as_ref() == Some(&path);
@@ -15506,10 +15902,9 @@ impl MacShot {
             } else {
                 ui.label(language.message(&format!("{} 枚の画像", self.evidence_files.len())));
                 ui.add_space(8.0);
-                egui::ScrollArea::vertical()
+                isolated_list_scroll(ui, egui::ScrollArea::vertical()
                     .id_salt("evidence_image_list")
-                    .max_height(570.0)
-                    .show(ui, |ui| {
+                    .max_height(570.0), |ui| {
                     let files = self.evidence_files.clone();
                     for (index, path) in files.into_iter().enumerate() {
                         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -17565,6 +17960,226 @@ mod tests {
     }
 
     #[test]
+    fn evidence_lists_keep_wheel_scrolling_local_including_at_their_limits() {
+        let context = egui::Context::default();
+        let mut time = 0.0;
+        let mut frame = |pointer: egui::Pos2, delta: f32| {
+            time += 1.0 / 60.0;
+            let mut snapshot = ([0.0; 3], [egui::Rect::NOTHING; 2]);
+            let _ = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 480.0),
+                    )),
+                    time: Some(time),
+                    events: vec![
+                        egui::Event::PointerMoved(pointer),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, delta),
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |context| {
+                    egui::CentralPanel::default().show(context, |ui| {
+                        let page = egui::ScrollArea::vertical().show(ui, |ui| {
+                            for (index, id) in ["evidence_recording_list", "evidence_image_list"]
+                                .into_iter()
+                                .enumerate()
+                            {
+                                let list = isolated_list_scroll(
+                                    ui,
+                                    egui::ScrollArea::vertical()
+                                        .id_salt(id)
+                                        .max_width(400.0)
+                                        .max_height(120.0),
+                                    |ui| {
+                                        ui.allocate_space(egui::vec2(360.0, 600.0));
+                                    },
+                                );
+                                snapshot.0[index] = list.state.offset.y;
+                                snapshot.1[index] = list.inner_rect;
+                                ui.add_space(30.0);
+                            }
+                            ui.allocate_space(egui::vec2(400.0, 600.0));
+                        });
+                        snapshot.0[2] = page.state.offset.y;
+                    });
+                },
+            );
+            snapshot
+        };
+
+        let (_, rects) = frame(egui::Pos2::ZERO, 0.0);
+        let first = rects[0].center();
+        let second = rects[1].center();
+        // Continue past the bottom, then past the top of each independent list.
+        for (index, pointer) in [first, second].into_iter().enumerate() {
+            for delta in [-80.0, 80.0] {
+                let mut moved = false;
+                for _ in 0..30 {
+                    let (offsets, _) = frame(pointer, delta);
+                    moved |= offsets[index] > 0.0;
+                    assert_eq!(offsets[1 - index], 0.0, "other list moved");
+                    assert_eq!(offsets[2], 0.0, "page scrolled at a list boundary");
+                }
+                if delta < 0.0 {
+                    assert!(moved, "hovered list did not scroll");
+                }
+            }
+            assert_eq!(frame(pointer, 80.0).0[index], 0.0);
+        }
+        // Scrolling outside the two lists still scrolls the page normally.
+        let mut page_moved = false;
+        for _ in 0..10 {
+            let (offsets, _) = frame(egui::pos2(200.0, 420.0), -80.0);
+            page_moved |= offsets[2] > 0.0;
+            assert_eq!(offsets[..2], [0.0, 0.0]);
+        }
+        assert!(page_moved);
+    }
+
+    #[test]
+    fn capture_and_expanded_previews_show_the_saved_annotation_pixels_and_refresh() {
+        fn render(app: &mut MacShot, ctx: &egui::Context, expanded: bool) -> egui::FullOutput {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if expanded {
+                            app.show_croppable_image(ui);
+                        } else {
+                            app.show_clickable_capture_preview(ui);
+                        }
+                    });
+                },
+            )
+        }
+        fn assert_painted(output: &egui::FullOutput, texture: egui::TextureId) {
+            assert!(
+                output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == texture)),
+                "the actual preview widget must paint the annotated texture"
+            );
+        }
+        fn assert_uploaded(
+            output: &egui::FullOutput,
+            texture: egui::TextureId,
+            expected: &image::RgbaImage,
+        ) {
+            let delta = &output
+                .textures_delta
+                .set
+                .iter()
+                .find(|(id, _)| *id == texture)
+                .expect("preview upload")
+                .1;
+            let egui::ImageData::Color(actual) = &delta.image;
+            assert_eq!(
+                actual.as_ref(),
+                &egui::ColorImage::from_rgba_unmultiplied(
+                    [expected.width() as usize, expected.height() as usize],
+                    expected.as_raw()
+                )
+            );
+        }
+        let original = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            160,
+            100,
+            Rgba([220, 230, 240, 255]),
+        ));
+        let annotation = Annotation {
+            tool: EditTool::Text,
+            start: egui::pos2(0.1, 0.1),
+            end: egui::pos2(0.5, 0.4),
+            text: "QA".into(),
+        };
+        let mut app = MacShot {
+            left_image: Some(original.clone()),
+            left_path: Some(PathBuf::from("same.png")),
+            annotations: vec![annotation],
+            live_annotation: Some(Annotation {
+                tool: EditTool::Rectangle,
+                start: egui::pos2(0.4, 0.4),
+                end: egui::pos2(0.9, 0.9),
+                text: String::new(),
+            }),
+            annotation_color: "red".into(),
+            annotation_width: 3.0,
+            ..MacShot::default()
+        };
+        let ctx = egui::Context::default();
+        let annotations: Vec<_> = app
+            .annotations
+            .iter()
+            .chain(app.live_annotation.iter())
+            .cloned()
+            .collect();
+        let expected = annotated_image(
+            &original,
+            &annotations,
+            annotation_rgb(&app.annotation_color),
+            app.annotation_width,
+            &app.timestamp_background,
+        );
+        let output = render(&mut app, &ctx, false);
+        let texture = app.annotation_preview_texture.as_ref().unwrap().id();
+        assert_painted(&output, texture);
+        assert_uploaded(&output, texture, &expected);
+        let output = render(&mut app, &ctx, true);
+        assert_painted(&output, texture);
+        assert!(
+            output
+                .textures_delta
+                .set
+                .iter()
+                .all(|(id, _)| *id != texture),
+            "switching views must reuse the same preview"
+        );
+
+        app.annotations.clear();
+        app.live_annotation = None;
+        let output = render(&mut app, &ctx, false);
+        assert!(app.annotation_preview_texture.is_none());
+        assert_painted(&output, app.left_texture.as_ref().unwrap().id());
+        assert_eq!(
+            app.left_image.as_ref().unwrap().to_rgba8(),
+            original.to_rgba8()
+        );
+
+        // Reloading a different source at the same path must invalidate its raster.
+        app.annotations = annotations;
+        render(&mut app, &ctx, false);
+        let replacement =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(160, 100, Rgba([30, 60, 90, 255])));
+        app.left_image = Some(replacement.clone());
+        app.left_texture = None;
+        let output = render(&mut app, &ctx, true);
+        let texture = app.annotation_preview_texture.as_ref().unwrap().id();
+        assert_painted(&output, texture);
+        assert_uploaded(
+            &output,
+            texture,
+            &annotated_image(
+                &replacement,
+                &app.annotations,
+                annotation_rgb(&app.annotation_color),
+                app.annotation_width,
+                &app.timestamp_background,
+            ),
+        );
+    }
+
+    #[test]
     fn recording_preview_widget_keeps_its_size_when_vertical_space_is_low() {
         let context = egui::Context::default();
         let input = egui::RawInput {
@@ -18215,6 +18830,7 @@ mod tests {
             filename_prefix: "案件_β",
             show_capture_notice: false,
             keep_region_in_continuous: true,
+            last_capture_region: Some([0.1, 0.2, 0.6, 0.7]),
             annotation_color: "blue",
             annotation_width: 3.5,
             annotation_text: "確認",
@@ -19665,6 +20281,64 @@ mod tests {
             app.pending_edit_navigation,
             Some(PendingEditNavigation::Queue { direction: 1 })
         ));
+    }
+
+    #[test]
+    fn replacing_comparison_baseline_protects_edits_and_clears_them_only_after_loading() {
+        let directory = TestDirectory::new("comparison-edits");
+        let original = directory.path().join("original.png");
+        let replacement = directory.path().join("replacement.png");
+        let invalid = directory.path().join("invalid.png");
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(20, 10, Rgba([20, 40, 60, 255])))
+            .save(&original)
+            .unwrap();
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(30, 10, Rgba([60, 40, 20, 255])))
+            .save(&replacement)
+            .unwrap();
+        std::fs::write(&invalid, b"invalid image").unwrap();
+        let original_bytes = std::fs::read(&original).unwrap();
+        let mut app = MacShot::default();
+        app.load_evidence_image(vec![original.clone()], 0);
+        app.crop_selection = Some(egui::Rect::from_min_max(
+            egui::pos2(0.1, 0.1),
+            egui::pos2(0.9, 0.9),
+        ));
+        app.live_annotation = Some(Annotation {
+            tool: EditTool::Rectangle,
+            start: egui::pos2(0.2, 0.2),
+            end: egui::pos2(0.8, 0.8),
+            text: String::new(),
+        });
+
+        app.open_comparison_image(replacement.clone(), true);
+        assert_eq!(app.left_path.as_ref(), Some(&original));
+        assert_eq!(app.left_image.as_ref().unwrap().width(), 20);
+        assert_eq!(app.annotations.len(), 1, "live annotation must be retained");
+        assert!(app.crop_selection.is_some());
+        assert!(matches!(app.pending_edit_navigation.as_ref(),
+            Some(PendingEditNavigation::ReplaceComparisonBaseline { path }) if path == &replacement));
+
+        // A bad replacement must not clear the current source or its edits.
+        app.load_comparison_image(invalid, true);
+        assert_eq!(app.left_path.as_ref(), Some(&original));
+        assert!(app.has_pending_edit());
+        assert!(app.status.starts_with("画像を開けません:"));
+
+        // Choosing the comparison image does not replace the edited baseline.
+        app.open_comparison_image(replacement.clone(), false);
+        assert_eq!(app.left_path.as_ref(), Some(&original));
+        assert!(app.has_pending_edit());
+        assert_eq!(app.right_path.as_ref(), Some(&replacement));
+
+        // This is the load performed after the user resolves the confirmation.
+        app.load_comparison_image(replacement.clone(), true);
+        assert_eq!(app.left_path.as_ref(), Some(&replacement));
+        assert_eq!(app.left_image.as_ref().unwrap().width(), 30);
+        assert!(!app.has_pending_edit());
+        assert!(app.editing_queue.is_empty());
+        assert_eq!(app.editing_index, None);
+        assert_eq!(app.diff_count, 0);
+        assert_eq!(std::fs::read(original).unwrap(), original_bytes);
     }
 
     #[test]
