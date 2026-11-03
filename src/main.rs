@@ -915,6 +915,11 @@ impl AppLanguage {
             ],
             "全画面（全ディスプレイ）" => ["All Displays", "所有显示器", "所有顯示器"],
             "範囲を選択" => ["Select Region", "选择区域", "選取區域"],
+            "範囲を選択して撮影…" => [
+                "Select a Region to Capture…",
+                "选择区域并截图…",
+                "選取範圍並截圖…",
+            ],
             "↻  ウィンドウ一覧を更新" => [
                 "↻  Refresh Window List",
                 "↻  刷新窗口列表",
@@ -13805,6 +13810,7 @@ impl MacShot {
     }
 
     fn show_capture_target_card(&mut self, ui: &mut egui::Ui) {
+        let mut select_region_from_target = false;
         glass_frame().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -13838,6 +13844,14 @@ impl MacShot {
                             .height(target_popup_height)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
+                                if ui
+                                    .button(self.language.text("範囲を選択して撮影…"))
+                                    .clicked()
+                                {
+                                    select_region_from_target = true;
+                                    egui::Popup::close_all(ui.ctx());
+                                }
+                                ui.separator();
                                 selectable_capture_target(
                                     ui,
                                     &mut self.capture_target,
@@ -13994,6 +14008,9 @@ impl MacShot {
                 });
             });
         });
+        if select_region_from_target {
+            self.begin_region_selection(ui.ctx());
+        }
     }
 
     fn show_capture_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -15516,6 +15533,7 @@ impl MacShot {
     fn show_recording_page(&mut self, ui: &mut egui::Ui) {
         let language = self.language;
         let folder = self.save_folder.clone().unwrap_or_else(default_save_folder);
+        let mut select_region_from_target = false;
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
@@ -15580,6 +15598,14 @@ impl MacShot {
                             .height(popup_height)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
+                                if ui
+                                    .button(language.text("範囲を選んで録画…"))
+                                    .clicked()
+                                {
+                                    select_region_from_target = true;
+                                    egui::Popup::close_all(ui.ctx());
+                                }
+                                ui.separator();
                                 for (target, label) in [
                                     (CaptureTarget::ActiveWindow, "アクティブウィンドウ"),
                                     (CaptureTarget::PrimaryDisplay, "デスクトップ（メイン画面）"),
@@ -15724,6 +15750,10 @@ impl MacShot {
                 });
             });
         });
+        if select_region_from_target {
+            self.region_select_for_recording = true;
+            self.begin_region_selection(ui.ctx());
+        }
         let recordings_height = (ui.available_height() - 86.0).max(360.0);
         self.show_recordings_panel(ui, recordings_height);
     }
