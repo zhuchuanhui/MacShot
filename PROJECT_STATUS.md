@@ -8,6 +8,13 @@
 - macOS arm64 ZIPのSHA-256は`ce49757d5cba56e7512fa8df799a5fb615d5237b9ba0e107af0e0803bf69dc84`、Windows x64 ZIPは`8d10f2bc823cc075fa67fc966fb5b7b8cb0607355d7efdb5509e1df38c382bab`です。ZIP整合性を確認し、GitHub Releaseから再取得した両ファイルもチェックサムと一致しました。Windows実行ファイル形式はPE32+ x86-64 GUIです。
 - [GitHub Release v1.12.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.12.0)を公開し、published・非prerelease・Latest、添付4ファイルを確認しました。タグは機能コミット`f07161c1b3677a5c2f51245f7190b466c1669c0b`です。GitHub Actions workflow/CI runはありません。production deploymentは行っていません。
 
+## 撮影画像をクリップボードへコピー — 2026-11-04
+
+- 撮影保存の直後に画像をクリップボードへコピーし、macOSでは⌘V、WindowsではCtrl+Vで貼り付けられるようにしました。注釈編集後もツールバーの「画像をコピー」から、現在の注釈を合成した画像をコピーできます。クリップボードへのコピーに失敗しても撮影済みファイルは保持し、状態欄に理由を表示します。
+- `cargo fmt --all`、`cargo check --all-targets --offline`、`cargo build --release --locked`、Windows x64 GNUの`cargo check --all-targets --locked --offline`、`git diff --check`が成功しました。xcapの既存非推奨警告3件があります。自動テストは実行していません。
+- リリース版はmacOS arm64とWindows x64 GNUで`cargo check --all-targets --locked --offline`および`cargo build --release --locked --offline`が成功しました。完成品は`output/release/MacShot-v1.13.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.13.0`、arm64）。Apple Development署名、権限説明文、deep/strict検査と実行ファイルUUID一致を確認しました。自動テストとWindows実機動作は未確認です。
+- 署名済み確認用アプリは`output/review-clipboard-image-20261104/MacShot.app`（arm64、bundle ID `com.macshot.app`、UUID `59B09715-195E-3454-86B5-43A3ED375F12`）です。署名・プライバシー説明文検査と実行ファイルUUID一致を確認しました。撮影画像の実貼り付けは未確認です。起動中のMacShotに未完了の範囲撮影編集が表示されていたため、既存アプリの終了・置き換えはしていません。
+
 ## v1.11.1 Release — 2026-11-04
 
 - v1.11.0の範囲選択機能へ、スクリーンショット／録画の対象メニューから直接入れる操作を追加しました。既存機能へのアクセス改善としてパッチ更新にしました。

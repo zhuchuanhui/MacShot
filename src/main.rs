@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use ab_glyph::{FontRef, PxScale};
+use arboard::{Clipboard, ImageData};
 #[cfg(target_os = "macos")]
 use block2::RcBlock;
 use bytes::Bytes;
@@ -48,6 +49,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet, VecDeque},
     fs::OpenOptions,
     io::Write,
@@ -1008,6 +1010,26 @@ impl AppLanguage {
                 "請先儲存或清除目前編輯，再進行截圖。",
             ],
             "編集ツール" => ["Editing Tools", "编辑工具", "編輯工具"],
+            "画像をコピー" => ["Copy Image", "复制图像", "複製圖片"],
+            "画像をクリップボードにコピーしました。⌘Vで貼り付けできます。" => {
+                [
+                    "Image copied to the clipboard. Press ⌘V to paste.",
+                    "图像已复制到剪贴板。按 ⌘V 粘贴。",
+                    "圖片已複製到剪貼簿。按 ⌘V 貼上。",
+                ]
+            }
+            "画像をクリップボードにコピーしました。Ctrl+Vで貼り付けできます。" => {
+                [
+                    "Image copied to the clipboard. Press Ctrl+V to paste.",
+                    "图像已复制到剪贴板。按 Ctrl+V 粘贴。",
+                    "圖片已複製到剪貼簿。按 Ctrl+V 貼上。",
+                ]
+            }
+            "クリップボードにコピーできませんでした" => [
+                "Unable to copy the image to the clipboard",
+                "无法将图像复制到剪贴板",
+                "無法將圖片複製到剪貼簿",
+            ],
             "⌗  切り出し" => ["⌗  Crop", "⌗  裁剪", "⌗  裁切"],
             "□  赤枠" => ["□  Red Box", "□  红框", "□  紅框"],
             "↖  選択・移動" => ["↖  Select & Move", "↖  选择并移动", "↖  選取並移動"],
@@ -7880,6 +7902,17 @@ fn capture_saved_status(sequence: u64, timestamp: &str, width: u32, height: u32)
     format!("撮影 {sequence} 枚目を保存しました ({timestamp}) · {width}×{height} px")
 }
 
+fn copy_rgba_to_clipboard(image: &image::RgbaImage) -> Result<(), String> {
+    let mut clipboard = Clipboard::new().map_err(|error| error.to_string())?;
+    clipboard
+        .set_image(ImageData {
+            width: image.width() as usize,
+            height: image.height() as usize,
+            bytes: Cow::Owned(image.as_raw().clone()),
+        })
+        .map_err(|error| error.to_string())
+}
+
 fn normalized_timestamp_format(value: &str) -> String {
     match value {
         "date" | "time" | "datetime_millis" | "japanese" => value.to_string(),
@@ -12531,7 +12564,21 @@ impl MacShot {
                     self.region_annotation_pending = self.active_capture_is_region;
                     self.active_capture_is_region = false;
                     let (width, height) = image.dimensions();
-                    self.status = capture_saved_status(sequence, &timestamp, width, height);
+                    let saved_status = capture_saved_status(sequence, &timestamp, width, height);
+                    self.status = match copy_rgba_to_clipboard(&image) {
+                        Ok(()) => format!(
+                            "{saved_status} · {}",
+                            self.language.text(if cfg!(target_os = "macos") {
+                                "画像をクリップボードにコピーしました。⌘Vで貼り付けできます。"
+                            } else {
+                                "画像をクリップボードにコピーしました。Ctrl+Vで貼り付けできます。"
+                            })
+                        ),
+                        Err(error) => format!(
+                            "{saved_status} · {}: {error}",
+                            self.language.text("クリップボードにコピーできませんでした")
+                        ),
+                    };
                     self.add_notification(AppNotification {
                         kind: NotificationKind::Capture(sequence),
                         timestamp: timestamp.clone(),
@@ -12750,6 +12797,35 @@ impl MacShot {
         self.refresh_diff();
         self.status = format!("切り出して保存しました: {}", path.display());
         true
+    }
+
+    fn copy_current_capture_image(&mut self) {
+        self.commit_live_annotation();
+        let Some(image) = self.left_image.as_ref() else {
+            return;
+        };
+        let output = annotated_image(
+            image,
+            &self.annotations,
+            annotation_rgb(&self.annotation_color),
+            self.annotation_width,
+            &self.timestamp_background,
+        );
+        match copy_rgba_to_clipboard(&output) {
+            Ok(()) => {
+                self.status = self.language.text(if cfg!(target_os = "macos") {
+                    "画像をクリップボードにコピーしました。⌘Vで貼り付けできます。"
+                } else {
+                    "画像をクリップボードにコピーしました。Ctrl+Vで貼り付けできます。"
+                });
+            }
+            Err(error) => {
+                self.status = format!(
+                    "{}: {error}",
+                    self.language.text("クリップボードにコピーできませんでした")
+                );
+            }
+        }
     }
 
     fn can_overwrite_current_png(&self) -> bool {
@@ -14184,6 +14260,15 @@ impl MacShot {
                     self.evidence_files = evidence_images(&folder);
                     self.recording_files = recording_files(&folder);
                 }
+                if ui
+                    .add_enabled(
+                        self.left_image.is_some(),
+                        primary_button(self.language.text("画像をコピー")),
+                    )
+                    .clicked()
+                {
+                    self.copy_current_capture_image();
+                }
                 if self.region_annotation_pending {
                     ui.separator();
                     ui.label(
@@ -14661,6 +14746,15 @@ impl MacShot {
                                 .size(11.0)
                                 .color(TEXT_MUTED),
                             );
+                        }
+                        if ui
+                            .add_enabled(
+                                self.left_image.is_some(),
+                                primary_button(self.language.text("画像をコピー")),
+                            )
+                            .clicked()
+                        {
+                            self.copy_current_capture_image();
                         }
                         if ui.button(self.language.text("閉じる")).clicked() {
                             close = true;
