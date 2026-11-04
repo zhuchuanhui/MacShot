@@ -1,5 +1,13 @@
 # Project Status
 
+## v1.13.0 Release — 2026-11-04
+
+- 撮影後の画像をクリップボードへコピーする機能と、注釈を反映した編集画像を「画像をコピー」で送る機能を追加しました。利用者向け画像共有機能の追加としてminor更新です。
+- `Cargo.toml` と `Cargo.lock` は1.13.0です。`cargo fmt --all -- --check`、`git diff --check`、macOS arm64とWindows x64 GNUの`cargo check --all-targets --locked --offline`および`cargo build --release --locked --offline`が成功しました。既存xcap非推奨API警告3件があります。自動テストは実行していません。
+- 完成済み.appは`output/release/MacShot-v1.13.0-macos-arm64/MacShot.app`（bundle ID `com.macshot.app`、version `1.13.0`、arm64）です。Apple Development署名、プライバシー説明、deep/strict署名検証、release実行ファイルとのUUID一致を確認しました。MacShotには未完了の範囲撮影編集が表示されていたため、配布.appは起動せず既存セッションを維持しています。撮影画像のクリップボード貼り付けは未確認です。公証なし、Windows実機動作未確認です。
+- macOS arm64 ZIPのSHA-256は`794e89888a3e4cfdb206da61c8aaf06c03c761c288b52cfd35a5c2e3c2226261`、Windows x64 ZIPは`12660fb2121da3b5f9748f247404942f7f867bd30ed0e16af2020641caadc9d1`です。ZIP整合性を確認し、GitHub Releaseから再取得した両ファイルもチェックサム一致とZIP検査を確認しました。Windows実行ファイル形式はPE32+ x86-64 GUIです。
+- [GitHub Release v1.13.0](https://github.com/zhuchuanhui/MacShot/releases/tag/v1.13.0)を公開し、published・非prerelease・Latest、添付4ファイルを確認しました。タグは機能コミット`140e05f826e4f2cb1330f16f690979c4f942e073`です。GitHub Actions workflow/CI runはありません。production deploymentは行っていません。
+
 ## v1.12.0 Release — 2026-11-04
 
 - スクリーンショット／録画の対象として範囲モードを選び、次回以降の撮影・録画ボタンや対象優先ショートカットで範囲指定を始められるようにしました。選択状態は保存され、通常の対象へ切り替えると解除されます。利用者向けワークフロー追加のためminor更新です。
